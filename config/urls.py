@@ -17,9 +17,13 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 from django.http import JsonResponse
+import os
 
 def health(_request):
-    return JsonResponse({'status': 'ok'})
+    return JsonResponse({
+        'status': 'ok',
+        'version': os.getenv('APP_VERSION', 'dev'),
+        })
 
 urlpatterns = [
     path('health/', health),
