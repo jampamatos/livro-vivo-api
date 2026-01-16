@@ -1,6 +1,6 @@
 # Python
-___pycache__/
-*.pyc
+__pycache__/
+*.pyc[cod]
 .venv/
 
 # Django
@@ -9,3 +9,5 @@ db.sqlite3
 
 # Env
 .env
+.env.*
+!.env.example
