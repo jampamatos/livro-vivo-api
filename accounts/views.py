@@ -6,8 +6,10 @@ from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.exceptions import AuthenticationFailed
 
+from entitlements.models import Entitlement
+
 from .models import Profile
-from .serializers import RegisterSerializer, LoginSerializer
+from .serializers import RegisterSerializer, LoginSerializer, EntitlementSerializer
 
 User = get_user_model()
 
@@ -78,3 +80,20 @@ class MeView(APIView):
                 'profession': profile.profession,
             }
         )
+    
+class MeEntitlementsView(APIView):
+    def get(self, request):
+        qs = Entitlement.objects.filter(user=request.user).order_by('-created_at')
+
+        data = []
+        for e in qs:
+            data.append({
+                'id': e.id,
+                'product': e.product,
+                'status': e.status,
+                'expires_at': e.expires_at,
+                'is_active': e.is_active(),
+                'source': e.source,
+            })
+
+        return Response({"entitlements": data})

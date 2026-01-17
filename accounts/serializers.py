@@ -1,6 +1,8 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
+from entitlements.models import Entitlement
+
 from .models import Profile
 
 User = get_user_model()
@@ -42,3 +44,11 @@ class MeSerializer(serializers.Serializer):
     email = serializers.EmailField()
     name = serializers.CharField(allow_blank=True)
     profession = serializers.CharField(allow_blank=True)
+
+class EntitlementSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    product = serializers.CharField()
+    status = serializers.CharField()
+    expires_at = serializers.DateTimeField(allow_null=True)
+    is_active = serializers.BooleanField()
+    source = serializers.CharField()
