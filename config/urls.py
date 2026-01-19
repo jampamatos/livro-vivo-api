@@ -30,6 +30,8 @@ def health(_request):
 urlpatterns = [
     path('health/', health),
     path('admin/', admin.site.urls),
+
+    path('', include('library.urls')),
     path('', include('accounts.urls')),
 ]
 
