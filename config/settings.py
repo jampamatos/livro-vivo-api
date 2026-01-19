@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 import dj_database_url
 import os
+import sys
 
 # Load dotenv
 load_dotenv()
@@ -91,6 +92,13 @@ DATABASES = {
         conn_max_age=60,
     )
 }
+
+if 'test' in sys.argv:
+    DATABASES['default'] = {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': '/tmp/livro_vivo_test.sqlite3',
+        'TEST': {'NAME': '/tmp/livro_vivo_test.sqlite3'},
+    }
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
