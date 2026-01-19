@@ -4,13 +4,36 @@ from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
 
+from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.exceptions import NotFound
 
-from .models import Book, BookVersion
-from .serializers import BookSerializer, BookVersionSerializer
+from .models import Book, BookVersion, PageText
+from .serializers import BookSerializer, BookVersionSerializer, SearchResultSerializer
 from .permissions import HasActiveBookEntitlement
+
+def _make_snippet(text: str, q: str, window: int = 140) -> str:
+    if not text: return ''
+
+    lower_text = text.lower()
+    lower_q = q.lower()
+
+    idx = lower_text.find(lower_q)
+    if idx == -1:
+        #fallback: começo do texto
+        snippet = text[: (window * 2)].strip()
+        return (snippet + '...') if len(text) > len(snippet) else snippet
+    
+    start = max(0, idx - window)
+    end = min(len(text), idx + len(q) + window)
+
+    snippet = text[start:end].strip()
+    if start > 0:
+        snippet = '...' + snippet
+    if end < len(text):
+        snippet = snippet + '...'
+    return snippet
 
 class BookListView(APIView):
     permission_classes = [HasActiveBookEntitlement]
@@ -75,3 +98,94 @@ class BookVersionDownloadView(APIView):
         response = FileResponse(bv.pdf.open('rb'), content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
+
+class SearchView(APIView):
+    permission_classes = [HasActiveBookEntitlement]
+
+    def get(self, request):
+        q = (request.query_params.get('q') or '').strip()
+        book_version_id = request.query_params.get('book_version_id')
+        book_id = request.query_params.get('book_id')
+
+        # paginação simples
+        try:
+            limit = int(request.query_params.get('limit', 20))
+        except ValueError:
+            limit = 20
+        try:
+            offset = int(request.query_params.get('offset', 0))
+        except ValueError:
+            offset = 0
+
+        limit = max(1, min(limit, 100))
+        offset = max(0, offset)
+
+        if not q:
+            return Response({'detail': "Query param 'q' is required."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if len(q) < 2:
+            return Response({'detail': "Query param 'q' must have at least 2 character"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not book_version_id and not book_id:
+            return Response(
+                {'detail': "Provide either 'book_version' or 'book_id'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        pts = PageText.objects.select_related('book_version', 'book_version__book')
+
+        # Filtros de visibilidade (usuário comum só vê publicados)
+        if not request.user.is_staff:
+            pts = pts.filter(
+                book_version__status=BookVersion.Status.PUBLISHED,
+                book_version__book__status=Book.Status.PUBLISHED,
+            )
+
+        # escolhe escopo
+        if book_version_id:
+            try:
+                bv_id = int(book_version_id)
+            except ValueError:
+                return Response({'detail': "'book_version_id' must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
+
+            pts = pts.filter(book_version_id=bv_id)
+        
+        elif book_id:
+            try:
+                b_id = int(book_id)
+            except ValueError:
+                return Response({'detail': "'book_id' must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # MVP: busca no livro inteiro (todas as versões visíveis)
+            pts = pts.filter(book_version__book_id=b_id)
+
+        # busca simples
+        qs = pts.filter(text__icontains=q).order_by('book_version_id', 'page_number')
+
+        total = qs.count()
+        page = qs[offset : offset + limit]
+
+        results = []
+        for row in page:
+            bv = row.book_version
+            b = bv.book
+            results.append(
+                {
+                    'book_id': b.id,
+                    'book_title': b.title,
+                    'book_version_id': bv.id,
+                    'version': bv.version,
+                    'page_number': row.page_number,
+                    'snippet': _make_snippet(row.text or '', q),
+                }
+            )
+        
+        data = {
+            'q': q,
+            'count': total,
+            'limit': limit,
+            'offset': offset,
+            'results': SearchResultSerializer(results, many=True).data,
+        }
+
+        return Response(data)

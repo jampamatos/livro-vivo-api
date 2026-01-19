@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
@@ -8,9 +10,65 @@ try:
 except Exception:   # pragma: no cover
     fitz = None
 
-def _normalize(text: str) -> str:
-    # normalização simples para o MVP: remove espaços excessivos
-    return ''.join((text or '').split()).strip()
+import re
+
+def _cleanup(text: str) -> str:
+    if not text: return ''
+
+    # normaliza NBSP e remove zero-width
+    text = text.replace("\u00a0", " ").replace("\u200b", "").replace("\ufeff", "")
+
+    # colapsa espaços por linha, mas mantém \n
+    cleaned_lines = []
+    blank_streak = 0
+    for ln in text.splitlines():
+        ln = re.sub(r'[ \t]+', ' ', ln).strip()
+        if ln == '':
+            blank_streak += 1
+            if blank_streak <= 1: cleaned_lines.append('')
+        else:
+            blank_streak = 0
+            cleaned_lines.append(ln)
+    
+    return '\n'.join(cleaned_lines).strip()
+
+def _extract_page_text(page) -> str:
+    words = page.get_text('words') # (x0,y0,x1,y1, word, block, line, word_no)
+    if not words: return page.get_text('text') or ''
+
+    # ordena por bloco/linha/palavra
+    words.sort(key=lambda w: (w[5], w[6], w[7]))
+
+    out_lines = []
+    current_block = None
+    current_line = None
+    line_words = []
+
+    for w in words:
+        word = w[4]
+        block_no = w[5]
+        line_no = w[6]
+
+        if current_block is None:
+            current_block, current_line = block_no, line_no
+        
+        if (block_no, line_no) != (current_block, current_line):
+            # flush linha anterior
+            if line_words:
+                out_lines.append(' '.join(line_words))
+                line_words = []
+
+            # separa blocos com uma linha em branco
+            if block_no != current_block:
+                out_lines.append('')
+            
+            current_block, current_line = block_no, line_no
+        
+        line_words.append(word)
+    
+    if line_words: out_lines.append(' '.join(line_words))
+        
+    return '\n'.join(out_lines)
 
 class Command(BaseCommand):
     help = 'Extract text frin a BookVersion PDF and store per-page text into PageText.'
@@ -63,8 +121,8 @@ class Command(BaseCommand):
             rows = []
             for page_index in range(num_pages):
                 page = doc.load_page(page_index)
-                raw = page.get_text('text') or ''
-                text = _normalize(raw)
+                raw = _extract_page_text(page)
+                text = _cleanup(raw)
                 rows.append(
                     PageText(
                         book_version=bv,

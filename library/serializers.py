@@ -25,3 +25,11 @@ class BookVersionSerializer(serializers.ModelSerializer):
             'status',
             'created_at',
         ]
+
+class SearchResultSerializer(serializers.Serializer):
+    book_id = serializers.IntegerField()
+    book_title = serializers.CharField()
+    book_version_id = serializers.IntegerField()
+    version = serializers.CharField()
+    page_number = serializers.IntegerField()
+    snippet = serializers.CharField()
