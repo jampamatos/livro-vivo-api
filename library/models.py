@@ -57,3 +57,29 @@ class BookVersion(models.Model):
     
     def __str__(self) -> str:
         return f"{self.book.title} - {self.version}"
+    
+class PageText(models.Model):
+    book_version = models.ForeignKey(
+        BookVersion,
+        on_delete=models.CASCADE,
+        related_name='page_texts',
+    )
+    page_number = models.PositiveIntegerField() # 1-based
+    text = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['page_number']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['book_version', 'page_number'],
+                name='uniq_pagetext_per_version_page'
+            )
+        ]
+        indexes = [
+            models.Index(fields=['book_version', 'page_number']),
+        ]
+    
+    def __str__(self) -> str:
+        return f'{self.book_version} - p.{self.page_number}'
