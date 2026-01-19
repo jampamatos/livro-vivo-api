@@ -4,7 +4,8 @@ from .views import(
     BookVersionListView,
     BookVersionDownloadUrlView,
     BookVersionDownloadView,
-    SearchView
+    SearchView,
+    BookVersionPageTextView,
 )
 
 urlpatterns = [
@@ -21,5 +22,10 @@ urlpatterns = [
         'books/<int:book_id>/versions/<int:version_id>/download/',
         BookVersionDownloadView.as_view(),
         name='book-version-download',
+    ),
+    path(
+        'books/<int:book_id>/versions/<int:version_id>/pages/<int:page_number>/',
+        BookVersionPageTextView.as_view(),
+        name='book-version-page-text',
     ),
 ]

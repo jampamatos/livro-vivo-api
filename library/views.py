@@ -10,7 +10,7 @@ from rest_framework.response import Response
 from rest_framework.exceptions import NotFound
 
 from .models import Book, BookVersion, PageText
-from .serializers import BookSerializer, BookVersionSerializer, SearchResultSerializer
+from .serializers import BookSerializer, BookVersionSerializer, SearchResultSerializer, PageTextSerializer
 from .permissions import HasActiveBookEntitlement
 
 def _make_snippet(text: str, q: str, window: int = 140) -> str:
@@ -189,3 +189,40 @@ class SearchView(APIView):
         }
 
         return Response(data)
+    
+class BookVersionPageTextView(APIView):
+    permission_classes = [HasActiveBookEntitlement]
+
+    def get(self, request, book_id: int, version_id: int, page_number: int):
+        if page_number < 1:
+            return Response(
+                {'detail': "'page_number' must be >= 1."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        bv = get_object_or_404(
+            BookVersion.objects.select_related('book'),
+            pk=version_id,
+            book_id=book_id,
+        )
+
+        # usuário comum só vê publicados
+        if not request.user.is_staff:
+            if bv.status != BookVersion.Status.PUBLISHED or bv.book.status != Book.Status.PUBLISHED:
+                raise NotFound()
+
+        pt = get_object_or_404(
+            PageText,
+            book_version=bv,
+            page_number=page_number,
+        )
+
+        payload = {
+            'book_id': bv.book_id,
+            'book_title': bv.book.title,
+            'book_version_id': bv.id,
+            'version': bv.version,
+            'page_number': pt.page_number,
+            'text': pt.text or '',
+        }
+        return Response(PageTextSerializer(payload).data)

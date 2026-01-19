@@ -33,3 +33,11 @@ class SearchResultSerializer(serializers.Serializer):
     version = serializers.CharField()
     page_number = serializers.IntegerField()
     snippet = serializers.CharField()
+
+class PageTextSerializer(serializers.Serializer):
+    book_id = serializers.IntegerField()
+    book_title = serializers.CharField()
+    book_version_id = serializers.IntegerField()
+    version = serializers.CharField()
+    page_number = serializers.IntegerField()
+    text = serializers.CharField()
