@@ -25,6 +25,10 @@ class BookVersion(models.Model):
         DRAFT = 'draft', 'Draft'
         PUBLISHED = 'published', 'Published'
         ARCHIVED = 'archived', 'Archived'
+    
+    def book_version_pdf_path(instance, filename):
+        # caminho organizado por livro e versão
+        return f"books/{instance.book_id}/versions/{instance.version}/{filename}"
 
     book = models.ForeignKey(Book, on_delete=models.CASCADE, related_name='versions')
     version = models.CharField(max_length=50) # ex: '2026.01.19'
@@ -35,8 +39,12 @@ class BookVersion(models.Model):
         choices=Status.choices,
         default=Status.DRAFT,
     )
-
     created_at = models.DateTimeField(auto_now_add=True)
+    pdf = models.FileField(
+        upload_to=book_version_pdf_path,
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         ordering = ['-created_at']
