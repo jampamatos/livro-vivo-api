@@ -160,6 +160,15 @@ python manage.py createsuperuser
 
 Acessar: [http://127.0.0.1:8000/admin/](http://127.0.0.1:8000/admin/)
 
+### Upload de PDF (BookVersion)
+
+No admin, em uma `BookVersion`, você pode anexar um PDF.
+Em dev, esse arquivo é salvo em:
+
+- `media/books/<book_id>/versions/<version>/<filename>`
+
+> Importante: a pasta `media/` **não deve** ser commitada (contém PDFs reais).
+
 ---
 
 ## Endpoints (MVP)
@@ -181,6 +190,16 @@ Header para endpoints autenticados:
 
 - `GET /me/`: dados do usuário autenticado
 - `GET /me/entitlements/`: lista de entitlements do usuário autenticado
+
+### Biblioteca (requer Entitlement ativo)
+
+- `GET /books/`: lista livros (para usuários não-staff, normalmente apenas `published`)
+- `GET /books/<book_id>/versions/`: lista versões do livro (também para usuários não-staff apenas `published`)
+
+### Download protegido do PDF (requer Entitlement ativo)
+
+- `GET /books/<book_id>/versions/<version_id>/download-url/`: retorna `{"url": "<...>}`
+- `GET /books/<book_id>/versions/<version_id>/download/`: baixa o PDF (Content-Disposition: attachment)
 
 ---
 
@@ -218,7 +237,36 @@ curl -s http://127.0.0.1:8000/me/entitlements/ \
   -H "Authorization: Token $TOKEN" && echo
 ```
 
+### 5) Baixar PDF
+
+```bash
+TOKEN="<seu_token>"
+
+URL="$(
+  curl -s http://127.0.0.1:8000/books/1/versions/1/download-url/ \
+    -H "Authorization: Token $TOKEN" \
+  | jq -r .url
+)"
+
+curl -L -o /tmp/livro.pdf -H "Authorization: Token $TOKEN" "$URL"
+file /tmp/livro.pdf
+```
+
+> Nota: em **DEBUG**, Django também serve `/media`, mas o fluxo recomendado é sempre usar os endpoints protegidos acima.
+
 ---
+
+## Acesso ao livro (Entitlements)
+
+Alguns endpoints do livro exigem que o usuário possua um entitlement ativo:
+
+- `product=book` (ou `subscription`, quando aplicável)
+- `status=active`
+- `expires_at` nulo ou no futuro
+
+Caso contrário, o endpoint responde:
+
+- `403 Forbidden` com mensagfem de acesso negado.
 
 ## Notas de desenvolvimento
 
