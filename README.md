@@ -19,6 +19,7 @@ Backend do app **Livro Vivo**.
 - `python-dotenv` (carrega `.env`)
 - `dj-database-url` (lê `DATABASE_URL`)
 - `TokenAuthentication` (DRF) para o MVP
+- `PyMuPDF` (extração de texto por página do PDF)
 
 ---
 
@@ -171,6 +172,24 @@ Em dev, esse arquivo é salvo em:
 
 ---
 
+## Ingestão de texto do PDF (PageText)
+
+Para habilitar busca e leitura por página, o backend extrai o texto do PDF e salva no banco (uma linha por página).
+
+### Command: extrair texto por página
+
+Após anexar o PDF em uma `BookVersion` no admin:
+
+```bash
+python manage.py extract_pdf_text --book-version-id <version_id> --force
+```
+
+- `--force:` remove os `PageText` existentes daquela versão e reprocessa tudo.
+
+> Nota: o texto pode conter quebras de linha `\n` (normal em JSON). A UI decide como renderizar.
+
+---
+
 ## Endpoints (MVP)
 
 ### Health
@@ -195,6 +214,12 @@ Header para endpoints autenticados:
 
 - `GET /books/`: lista livros (para usuários não-staff, normalmente apenas `published`)
 - `GET /books/<book_id>/versions/`: lista versões do livro (também para usuários não-staff apenas `published`)
+- `GET /search/?q=<termo>&book_version_id=<id>`: busca simples por termo nas páginas (retorna page_number + snippet)
+  - params: `q` (mín. 2 chars), `book_version_id` **ou** `book_id`, `limit` (1–100), `offset` (>=0)
+- `GET /books/<book_id>/versions/<version_id>/pages/<page_number>/`: retorna o texto completo da página
+
+> Importante (visibilidade): usuários não-staff normalmente só acessam conteúdo `published` (Book e BookVersion).  
+> Para testar drafts, use um token de usuário `is_staff=true` ou publique o Book/BookVersion.
 
 ### Download protegido do PDF (requer Entitlement ativo)
 
@@ -223,7 +248,7 @@ curl -s -X POST http://127.0.0.1:8000/auth/login/ \
 
 ### 3) /me (com token)
 
-```basg
+```bash
 TOKEN="COLE_O_TOKEN_AQUI"
 curl -s http://127.0.0.1:8000/me/ \
   -H "Authorization: Token $TOKEN" && echo
@@ -254,6 +279,24 @@ file /tmp/livro.pdf
 
 > Nota: em **DEBUG**, Django também serve `/media`, mas o fluxo recomendado é sempre usar os endpoints protegidos acima.
 
+### 6) Buscar termo em páginas (Search)
+
+```bash
+TOKEN="<seu_token>"
+
+curl -s "http://127.0.0.1:8000/search/?q=duergar&book_version_id=1" \
+  -H "Authorization: Token $TOKEN" | jq
+```
+
+### 7) Obter texto de uma página
+
+```bash
+TOKEN="<seu_token>"
+
+curl -s "http://127.0.0.1:8000/books/1/versions/1/pages/1/" \
+  -H "Authorization: Token $TOKEN" | jq
+```
+
 ---
 
 ## Acesso ao livro (Entitlements)
@@ -266,10 +309,12 @@ Alguns endpoints do livro exigem que o usuário possua um entitlement ativo:
 
 Caso contrário, o endpoint responde:
 
-- `403 Forbidden` com mensagfem de acesso negado.
+- `403 Forbidden` com mensagem de acesso negado.
 
 ## Notas de desenvolvimento
 
 - Por padrão, endpoints DRF exigem autenticação (Token).
 - `register` e `login` são públicos.
 - A autorização (o “que você pode acessar”) será baseada em entitlements.
+- `/search/` usa busca simples (`icontains`) no MVP; a implementação pode evoluir para FTS no Postgres sem mudar o contrato do endpoint.
+- O comando `extract_pdf_text` é manual no MVP (sem jobs/filas).
