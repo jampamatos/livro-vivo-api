@@ -9,7 +9,7 @@ from django.contrib.auth.models import AnonymousUser
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import CommandError, call_command
 from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.test import TestCase, Client
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.authtoken.models import Token
@@ -417,3 +417,13 @@ class ExtractPdfTextCommandTests(LibraryBaseTestCase):
         rows = PageText.objects.filter(book_version=version)
         self.assertEqual(rows.count(), 1)
         self.assertEqual(rows.first().text, 'New')
+
+class TestCorsHealth(TestCase):
+    def setUp(self):
+        self.client = Client()
+
+    def test_health_has_cors_for_expo_web(self):
+        origin = "http://localhost:8081"
+        resp = self.client.get("/health/", HTTP_ORIGIN=origin)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers.get("Access-Control-Allow-Origin"), origin)
