@@ -27,8 +27,11 @@ def _make_snippet(text: str, q: str, window: int = 140) -> str:
         snippet = text[: (window * 2)].strip()
         return (snippet + '...') if len(text) > len(snippet) else snippet
     
-    start = max(0, idx - window)
-    end = min(len(text), idx + len(q) + window)
+    before = min(40, window)
+    after = (window * 2) - before
+
+    start = max(0, idx - before)
+    end = min(len(text), idx + len(q) + after)
 
     snippet = text[start:end].strip()
     if start > 0:
