@@ -11,6 +11,7 @@ from .views import(
 urlpatterns = [
     path('search/', SearchView.as_view(), name='search'),
     path('books/', BookListView.as_view(), name='book-list'),
+    path('books/<int:book_id>/search/', SearchView.as_view(), name='book-search'),
     path('books/<int:book_id>/versions/', BookVersionListView.as_view(), name='book-versions'),
 
     path(

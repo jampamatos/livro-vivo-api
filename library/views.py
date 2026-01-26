@@ -9,6 +9,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.exceptions import NotFound
 
+from typing import Optional
+
 from .models import Book, BookVersion, PageText
 from .serializers import BookSerializer, BookVersionSerializer, SearchResultSerializer, PageTextSerializer
 from .permissions import HasActiveBookEntitlement
@@ -102,10 +104,14 @@ class BookVersionDownloadView(APIView):
 class SearchView(APIView):
     permission_classes = [HasActiveBookEntitlement]
 
-    def get(self, request):
+    def get(self, request, book_id: Optional[int] = None):
         q = (request.query_params.get('q') or '').strip()
         book_version_id = request.query_params.get('book_version_id')
-        book_id = request.query_params.get('book_id')
+        
+        # book_id pode vir do path (/books/<id>/search/) ou da querystring (/search/?book_id=...)
+        book_id_qp = request.query_params.get('book_id')
+        if book_id is not None:
+            book_id_qp = str(book_id)
 
         # paginação simples
         try:
@@ -126,7 +132,7 @@ class SearchView(APIView):
         if len(q) < 2:
             return Response({'detail': "Query param 'q' must have at least 2 character"}, status=status.HTTP_400_BAD_REQUEST)
         
-        if not book_version_id and not book_id:
+        if not book_version_id and not book_id_qp:
             return Response(
                 {'detail': "Provide either 'book_version' or 'book_id'."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -150,9 +156,9 @@ class SearchView(APIView):
 
             pts = pts.filter(book_version_id=bv_id)
         
-        elif book_id:
+        elif book_id_qp:
             try:
-                b_id = int(book_id)
+                b_id = int(book_id_qp)
             except ValueError:
                 return Response({'detail': "'book_id' must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
 

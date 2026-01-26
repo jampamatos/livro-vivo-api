@@ -346,7 +346,35 @@ class LibraryAPITests(LibraryBaseTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['text'], 'Hello page')
+    
+    def test_search_by_book_id_path(self):
+        user = self._create_user()
+        self._grant_entitlement(user)
+        self._auth_client(user)
 
+        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        PageText.objects.create(book_version=version, page_number=1, text='Hello world from page 1')
+
+        response = self.client.get(
+            reverse('book-search', kwargs={'book_id': book.id}),
+            {'q': 'hello'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['book_id'], book.id)
+        self.assertEqual(response.data['results'][0]['page_number'], 1)
+
+    def test_search_requires_q(self):
+        user = self._create_user()
+        self._grant_entitlement(user)
+        self._auth_client(user)
+
+        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+
+        response = self.client.get(reverse('book-search', kwargs={'book_id': book.id}))
+        self.assertEqual(response.status_code, 400)
 
 class ExtractPdfTextCommandTests(LibraryBaseTestCase):
     def test_cleanup_removes_noise(self):
