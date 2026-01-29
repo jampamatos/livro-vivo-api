@@ -1,0 +1,124 @@
+import tempfile
+import uuid
+
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import models
+from django.test import TestCase, override_settings
+from django.utils import timezone
+from django.contrib.auth import get_user_model
+
+from library.models import Book, BookVersion
+from .models import Annotation
+
+
+def _uniq(prefix: str = 'x') -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:10]}"
+
+
+def create_min_instance(model_cls, **overrides):
+    """
+    Cria uma instância preenchendo automaticamente campos obrigatórios básicos.
+    Ajuda a não depender do formato exato dos models do app `library`.
+    """
+    data = {}
+    for field in model_cls._meta.fields:
+        if field.primary_key or field.auto_created:
+            continue
+
+        # Se já veio override, pula
+        if field.name in overrides:
+            continue
+
+        # FK: cria recursivamente se necessário
+        if isinstance(field, models.ForeignKey):
+            rel_model = field.remote_field.model
+            # evita criar User sem querer
+            if rel_model == get_user_model():
+                continue
+            data[field.name] = create_min_instance(rel_model)
+            continue
+
+        # Defaults
+        if field.has_default():
+            data[field.name] = field.get_default()
+            continue
+
+        # Campos opcionais
+        if getattr(field, "null", False):
+            data[field.name] = None
+            continue
+        if getattr(field, "blank", False):
+            # se blank mas não null, manda string vazia
+            if isinstance(field, (models.CharField, models.TextField)):
+                data[field.name] = ""
+                continue
+
+        # Campos obrigatórios sem default
+        if isinstance(field, models.CharField):
+            data[field.name] = _uniq('s')
+        elif isinstance(field, models.TextField):
+            data[field.name] = 'test'
+        elif isinstance(field, (models.IntegerField, models.PositiveIntegerField, models.BigIntegerField)):
+            data[field.name] = 1
+        elif isinstance(field, models.BooleanField):
+            data[field.name] = False
+        elif isinstance(field, models.DateTimeField):
+            data[field.name] = timezone.now()
+        elif isinstance(field, models.DateField):
+            data[field.name] = timezone.now().date()
+        elif isinstance(field, models.JSONField):
+            data[field.name] = []
+        elif isinstance(field, models.DecimalField):
+            data[field.name] = 0
+        elif isinstance(field, models.FileField):
+            data[field.name] = SimpleUploadedFile(
+                'livro.pdf',
+                b"%PDF-1.4\n%...\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n",
+                content_type='application/pdf',
+            )
+        else:
+            # fallback genérico: tenta string
+            data[field.name] = _uniq('v')
+
+    data.update(overrides)
+    return model_cls.objects.create(**data)
+
+
+class AnnotationModelTests(TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._override = override_settings(MEDIA_ROOT=self._tmp.name)
+        self._override.enable()
+
+    def tearDown(self):
+        self._override.disable()
+        self._tmp.cleanup()
+
+    def test_create_annotation(self):
+        User = get_user_model()
+        # Seu projeto não define AUTH_USER_MODEL no settings -> normalmente é User padrão do Django
+        user = User.objects.create_user(
+            username='test@example.com',
+            email='test@example.com',
+            password='StrongPass123',
+        )
+
+        book = create_min_instance(Book)
+        book_version = create_min_instance(BookVersion, book=book)
+
+        ann = Annotation.objects.create(
+            user=user,
+            book_version=book_version,
+            page_number=12,
+            rects_normalizados=[{"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.05}],
+            note="Teste de nota",
+            color="yellow",
+        )
+
+        self.assertEqual(ann.user_id, user.id)
+        self.assertEqual(ann.book_version_id, book_version.id)
+        self.assertEqual(ann.page_number, 12)
+        self.assertEqual(ann.note, "Teste de nota")
+        self.assertEqual(ann.color, "yellow")
+        self.assertIsInstance(ann.rects_normalizados, list)
+        self.assertEqual(len(ann.rects_normalizados), 1)
