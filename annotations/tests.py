@@ -7,6 +7,9 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 
+from rest_framework.test import APIClient
+from rest_framework.authtoken.models import Token
+
 from library.models import Book, BookVersion
 from .models import Annotation
 
@@ -122,3 +125,128 @@ class AnnotationModelTests(TestCase):
         self.assertEqual(ann.color, "yellow")
         self.assertIsInstance(ann.rects_normalizados, list)
         self.assertEqual(len(ann.rects_normalizados), 1)
+
+class AnnotationApiTests(TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._override = override_settings(MEDIA_ROOT=self._tmp.name)
+        self._override.enable()
+
+        User = get_user_model()
+        self.user1 = User.objects.create_user(
+            username="u1@example.com",
+            email="u1@example.com",
+            password="StrongPass123",
+        )
+        self.user2 = User.objects.create_user(
+            username="u2@example.com",
+            email="u2@example.com",
+            password="StrongPass123",
+        )
+
+        self.token1 = Token.objects.create(user=self.user1)
+        self.token2 = Token.objects.create(user=self.user2)
+
+        book = create_min_instance(Book)
+        self.book_version = create_min_instance(BookVersion, book=book)
+
+        self.client = APIClient()
+
+    def tearDown(self):
+        self._override.disable()
+        self._tmp.cleanup()
+
+    def auth1(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {self.token1.key}")
+
+    def auth2(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {self.token2.key}")
+
+    def test_list_only_returns_own_annotations(self):
+        Annotation.objects.create(
+            user=self.user1,
+            book_version=self.book_version,
+            page_number=1,
+            rects_normalizados=[{"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.05}],
+            note="u1",
+            color="yellow",
+        )
+        Annotation.objects.create(
+            user=self.user2,
+            book_version=self.book_version,
+            page_number=1,
+            rects_normalizados=[{"x": 0.2, "y": 0.2, "w": 0.3, "h": 0.05}],
+            note="u2",
+            color="green",
+        )
+
+        self.auth1()
+        resp = self.client.get("/annotations/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 1)
+        self.assertEqual(resp.data[0]["note"], "u1")
+
+    def test_filters_work(self):
+        a1 = Annotation.objects.create(
+            user=self.user1,
+            book_version=self.book_version,
+            page_number=10,
+            rects_normalizados=[],
+            note="p10",
+            color="",
+        )
+        Annotation.objects.create(
+            user=self.user1,
+            book_version=self.book_version,
+            page_number=11,
+            rects_normalizados=[],
+            note="p11",
+            color="",
+        )
+
+        self.auth1()
+        resp = self.client.get(f"/annotations/?book_version_id={self.book_version.id}&page_number=10")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 1)
+        self.assertEqual(resp.data[0]["id"], a1.id)
+
+    def test_cannot_access_other_users_annotation(self):
+        a2 = Annotation.objects.create(
+            user=self.user2,
+            book_version=self.book_version,
+            page_number=1,
+            rects_normalizados=[],
+            note="secret",
+            color="",
+        )
+
+        self.auth1()
+        resp = self.client.get(f"/annotations/{a2.id}/")
+        self.assertEqual(resp.status_code, 404)
+
+        resp = self.client.patch(
+            f"/annotations/{a2.id}/",
+            {"note": "hacked"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 404)
+
+        resp = self.client.delete(f"/annotations/{a2.id}/")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_create_sets_user_automatically(self):
+        self.auth1()
+        payload = {
+            "book_version": self.book_version.id,
+            "page_number": 12,
+            "rects_normalizados": [{"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.05}],
+            "note": "nova nota",
+            "color": "yellow",
+        }
+        resp = self.client.post("/annotations/", payload, format="json")
+        self.assertEqual(resp.status_code, 201)
+        ann_id = resp.data["id"]
+
+        ann = Annotation.objects.get(id=ann_id)
+        self.assertEqual(ann.user_id, self.user1.id)
+        self.assertEqual(ann.page_number, 12)

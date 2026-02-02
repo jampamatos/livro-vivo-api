@@ -31,8 +31,9 @@ urlpatterns = [
     path('health/', health),
     path('admin/', admin.site.urls),
 
-    path('', include('library.urls')),
     path('', include('accounts.urls')),
+    path('', include('annotations.urls')),
+    path('', include('library.urls')),
 ]
 
 if settings.DEBUG:
