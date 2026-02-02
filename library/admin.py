@@ -1,5 +1,7 @@
 from django.contrib import admin
+
 from .models import Book, BookVersion, PageText
+
 
 @admin.register(Book)
 class BookAdmin(admin.ModelAdmin):
@@ -7,11 +9,13 @@ class BookAdmin(admin.ModelAdmin):
     search_fields = ('title',)
     list_filter = ('status',)
 
+
 @admin.register(BookVersion)
 class BookVersionAdmin(admin.ModelAdmin):
     list_display = ('id', 'book', 'version', 'status', 'published_at', 'created_at')
     search_fields = ('book__title', 'version')
     list_filter = ('status', 'book')
+
 
 @admin.register(PageText)
 class PageTextAdmin(admin.ModelAdmin):

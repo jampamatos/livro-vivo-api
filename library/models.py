@@ -1,11 +1,14 @@
 from django.db import models
 
+
 class Book(models.Model):
+    """Catálogo de livros."""
+
     class Status(models.TextChoices):
         DRAFT = 'draft', 'Draft'
         PUBLISHED = 'published', 'Published'
         ARCHIVED = 'archived', 'Archived'
-    
+
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
     status = models.CharField(
@@ -20,18 +23,21 @@ class Book(models.Model):
     def __str__(self) -> str:
         return self.title
 
+
 class BookVersion(models.Model):
+    """Versões publicáveis de um livro."""
+
     class Status(models.TextChoices):
         DRAFT = 'draft', 'Draft'
         PUBLISHED = 'published', 'Published'
         ARCHIVED = 'archived', 'Archived'
-    
+
     def book_version_pdf_path(instance, filename):
         # caminho organizado por livro e versão
         return f"books/{instance.book_id}/versions/{instance.version}/{filename}"
 
     book = models.ForeignKey(Book, on_delete=models.CASCADE, related_name='versions')
-    version = models.CharField(max_length=50) # ex: '2026.01.19'
+    version = models.CharField(max_length=50)  # ex: '2026.01.19'
     published_at = models.DateField(null=True, blank=True)
     changelog = models.TextField(blank=True)
     status = models.CharField(
@@ -54,17 +60,20 @@ class BookVersion(models.Model):
                 name='uniq_book_version_per_book'
             )
         ]
-    
+
     def __str__(self) -> str:
         return f"{self.book.title} - {self.version}"
-    
+
+
 class PageText(models.Model):
+    """Texto extraído de uma página específica de uma versão."""
+
     book_version = models.ForeignKey(
         BookVersion,
         on_delete=models.CASCADE,
         related_name='page_texts',
     )
-    page_number = models.PositiveIntegerField() # 1-based
+    page_number = models.PositiveIntegerField()  # 1-based
     text = models.TextField(blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -80,6 +89,6 @@ class PageText(models.Model):
         indexes = [
             models.Index(fields=['book_version', 'page_number']),
         ]
-    
+
     def __str__(self) -> str:
         return f'{self.book_version} - p.{self.page_number}'

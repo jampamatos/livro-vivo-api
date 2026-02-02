@@ -1,16 +1,17 @@
 import tempfile
 import uuid
 
+from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import models
 from django.test import TestCase, override_settings
 from django.utils import timezone
-from django.contrib.auth import get_user_model
 
-from rest_framework.test import APIClient
 from rest_framework.authtoken.models import Token
+from rest_framework.test import APIClient
 
 from library.models import Book, BookVersion
+
 from .models import Annotation
 
 

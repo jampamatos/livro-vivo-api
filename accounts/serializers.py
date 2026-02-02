@@ -1,13 +1,14 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from entitlements.models import Entitlement
-
 from .models import Profile
 
 User = get_user_model()
 
+
 class RegisterSerializer(serializers.Serializer):
+    """Valida dados de cadastro e cria usuário+perfil."""
+
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
     name = serializers.CharField(required=False, allow_blank=True)
@@ -18,7 +19,7 @@ class RegisterSerializer(serializers.Serializer):
         if User.objects.filter(email__iexact=email).exists():
             raise serializers.ValidationError("Email já cadastrado.")
         return email
-    
+
     def create(self, validated_data):
         email = validated_data['email']
         password = validated_data['password']
@@ -34,18 +35,27 @@ class RegisterSerializer(serializers.Serializer):
         profile.save()
 
         return user
-    
+
+
 class LoginSerializer(serializers.Serializer):
+    """Valida login por email e senha."""
+
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
 
+
 class MeSerializer(serializers.Serializer):
+    """Serializer de leitura para o endpoint /me/."""
+
     id = serializers.IntegerField()
     email = serializers.EmailField()
     name = serializers.CharField(allow_blank=True)
     profession = serializers.CharField(allow_blank=True)
 
+
 class EntitlementSerializer(serializers.Serializer):
+    """Serializer de entitlements do usuário."""
+
     id = serializers.IntegerField()
     product = serializers.CharField()
     status = serializers.CharField()

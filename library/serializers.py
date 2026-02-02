@@ -1,7 +1,11 @@
 from rest_framework import serializers
+
 from .models import Book, BookVersion
 
+
 class BookSerializer(serializers.ModelSerializer):
+    """Serializer para listagem de livros."""
+
     class Meta:
         model = Book
         fields = [
@@ -13,7 +17,10 @@ class BookSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
 
+
 class BookVersionSerializer(serializers.ModelSerializer):
+    """Serializer para listagem de versões de livros."""
+
     class Meta:
         model = BookVersion
         fields = [
@@ -26,7 +33,10 @@ class BookVersionSerializer(serializers.ModelSerializer):
             'created_at',
         ]
 
+
 class SearchResultSerializer(serializers.Serializer):
+    """Serializer do payload de resultados de busca."""
+
     book_id = serializers.IntegerField()
     book_title = serializers.CharField()
     book_version_id = serializers.IntegerField()
@@ -34,7 +44,10 @@ class SearchResultSerializer(serializers.Serializer):
     page_number = serializers.IntegerField()
     snippet = serializers.CharField()
 
+
 class PageTextSerializer(serializers.Serializer):
+    """Serializer do payload de texto de página."""
+
     book_id = serializers.IntegerField()
     book_title = serializers.CharField()
     book_version_id = serializers.IntegerField()

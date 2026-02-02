@@ -1,7 +1,11 @@
 from rest_framework import serializers
+
 from .models import Annotation
 
+
 class AnnotationSerializer(serializers.ModelSerializer):
+    """Serializer para criação e leitura de anotações."""
+
     class Meta:
         model = Annotation
         fields = [

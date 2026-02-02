@@ -4,6 +4,7 @@ from rest_framework.permissions import BasePermission
 
 from entitlements.models import Entitlement
 
+
 class HasActiveBookEntitlement(BasePermission):
     """
     MVP: acesso liberado se o usuário tiver entitlement ativo de:
@@ -12,14 +13,15 @@ class HasActiveBookEntitlement(BasePermission):
     message = 'Você não tem direito de acesso à esse livro.'
 
     def has_permission(self, request, view):
+        """Permite acesso com entitlement ativo (ou staff)."""
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        
+
         # staff/admin bypass (para teste)
         if getattr(user, 'is_staff', False):
             return True
-        
+
         now = timezone.now()
 
         return (

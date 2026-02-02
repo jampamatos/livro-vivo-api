@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.db import models
 
+
 class Annotation(models.Model):
     """
     Destaques/Notas do usuário em uma página específica de um BookVersion.
@@ -36,6 +37,6 @@ class Annotation(models.Model):
             models.Index(fields=['user', 'book_version', 'page_number']),
         ]
         ordering = ['-updated_at', '-created_at']
-    
+
     def __str__(self) -> str:
         return f"Annotation(u={self.user_id}, v={self.book_version_id}, p={self.page_number})"

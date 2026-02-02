@@ -2,7 +2,10 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
+
 class Entitlement(models.Model):
+    """Direitos de acesso do usuário a produtos."""
+
     class Product(models.TextChoices):
         BOOK = 'book', 'Livro'
         SUBSCRIPTION = 'subscription', 'Assinatura'
@@ -10,7 +13,7 @@ class Entitlement(models.Model):
     class Status(models.TextChoices):
         ACTIVE = 'active', 'Ativo'
         REVOKED = 'revoked', 'Revogado'
-    
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -21,17 +24,17 @@ class Entitlement(models.Model):
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
     expires_at = models.DateTimeField(null=True, blank=True)
 
-    source = models.CharField(max_length=32, blank=True, default='') # ex: 'admin', 'import', 'payment'
+    source = models.CharField(max_length=32, blank=True, default='')  # ex: 'admin', 'import', 'payment'
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def is_active(self) -> bool:
+        """Retorna True se o entitlement estiver ativo e não expirado."""
         if self.status != self.Status.ACTIVE:
             return False
         if self.expires_at is None:
             return True
         return self.expires_at > timezone.now()
-    
-    def __str__(self):
-        return f"Entitlement(user_id={self.user_id}, product={self.product}, status={self.status})"
 
+    def __str__(self) -> str:
+        return f"Entitlement(user_id={self.user_id}, product={self.product}, status={self.status})"

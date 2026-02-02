@@ -9,13 +9,15 @@ from django.contrib.auth.models import AnonymousUser
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import CommandError, call_command
 from django.db import IntegrityError, transaction
-from django.test import TestCase, Client
+from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
+
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient, APIRequestFactory
 
 from entitlements.models import Entitlement
+
 from .models import Book, BookVersion, PageText
 from .permissions import HasActiveBookEntitlement
 from .views import _make_snippet
