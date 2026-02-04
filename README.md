@@ -6,8 +6,7 @@ Backend do app **Livro Vivo**.
 - **Banco:** PostgreSQL  
 - **Config:** `.env` + `DATABASE_URL`
 
-> **RDS (Request-Driven Scaffolding):** só adicionamos estrutura quando um Byte exigir.  
-> Este repositório está em fase MVP inicial (auth + entitlements + health/admin).
+> Este repositório está em fase MVP inicial (auth + entitlements + biblioteca + leitor/busca + anotações + jurisprudência v0).
 
 ---
 
@@ -38,7 +37,7 @@ Backend do app **Livro Vivo**.
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-```
+````
 
 ### 2) Instalar dependências
 
@@ -101,40 +100,6 @@ python manage.py runserver
 
 ---
 
-## Troubleshooting (Postgres)
-
-### Verificar se o Postgres está rodando
-
-```bash
-pg_isready
-```
-
-### Ver cluster ativo e porta
-
-```bash
-pg_lsclusters
-```
-
-### Onde fica o `pg_hba.conf`
-
-Geralmente:
-`/etc/postgresql/<versao>/main/pg_hba.conf`
-
-Se você precisar que o usuário Linux `postgres` consiga entrar no DB sem senha (dev local), as regras úteis são:
-
-```conf
-local   all   postgres   peer
-local   all   all       scram-sha-256
-```
-
-Depois de alterar o arquivo:
-
-```bash
-sudo systemctl restart postgresql@<versao>-main
-```
-
----
-
 ## Healthcheck
 
 Com o servidor rodando:
@@ -169,6 +134,10 @@ Em dev, esse arquivo é salvo em:
 - `media/books/<book_id>/versions/<version>/<filename>`
 
 > Importante: a pasta `media/` **não deve** ser commitada (contém PDFs reais).
+
+### Jurisprudência
+
+No MVP, a base de jurisprudência é gerenciada via Django Admin (CRUD), e o app consome via API (listagem + busca).
 
 ---
 
@@ -215,16 +184,43 @@ Header para endpoints autenticados:
 - `GET /books/`: lista livros (para usuários não-staff, normalmente apenas `published`)
 - `GET /books/<book_id>/versions/`: lista versões do livro (também para usuários não-staff apenas `published`)
 - `GET /search/?q=<termo>&book_version_id=<id>`: busca simples por termo nas páginas (retorna page_number + snippet)
+
   - params: `q` (mín. 2 chars), `book_version_id` **ou** `book_id`, `limit` (1–100), `offset` (>=0)
 - `GET /books/<book_id>/versions/<version_id>/pages/<page_number>/`: retorna o texto completo da página
 
-> Importante (visibilidade): usuários não-staff normalmente só acessam conteúdo `published` (Book e BookVersion).  
+> Importante (visibilidade): usuários não-staff normalmente só acessam conteúdo `published` (Book e BookVersion).
 > Para testar drafts, use um token de usuário `is_staff=true` ou publique o Book/BookVersion.
 
 ### Download protegido do PDF (requer Entitlement ativo)
 
 - `GET /books/<book_id>/versions/<version_id>/download-url/`: retorna `{"url": "<...>}`
 - `GET /books/<book_id>/versions/<version_id>/download/`: baixa o PDF (Content-Disposition: attachment)
+
+### Anotações (Destaques/Notas)
+
+- `GET /annotations/?book_version=<id>&page_number=<n>`: lista (do usuário)
+- `POST /annotations/`: cria anotação (do usuário)
+
+### Jurisprudência (CaseLaw)
+
+- `GET /caselaw/`: lista/pesquisa jurisprudências
+
+  - querystring:
+
+    - `q` (opcional): termo de busca (ex.: "bagagem")
+    - `limit` / `offset` (paginação, quando aplicável)
+
+Resposta típica:
+
+```json
+{
+  "q": "bagagem",
+  "count": 0,
+  "limit": 20,
+  "offset": 0,
+  "results": []
+}
+```
 
 ---
 
@@ -277,8 +273,6 @@ curl -L -o /tmp/livro.pdf -H "Authorization: Token $TOKEN" "$URL"
 file /tmp/livro.pdf
 ```
 
-> Nota: em **DEBUG**, Django também serve `/media`, mas o fluxo recomendado é sempre usar os endpoints protegidos acima.
-
 ### 6) Buscar termo em páginas (Search)
 
 ```bash
@@ -288,12 +282,12 @@ curl -s "http://127.0.0.1:8000/search/?q=duergar&book_version_id=1" \
   -H "Authorization: Token $TOKEN" | jq
 ```
 
-### 7) Obter texto de uma página
+### 7) Jurisprudência (CaseLaw)
 
 ```bash
 TOKEN="<seu_token>"
 
-curl -s "http://127.0.0.1:8000/books/1/versions/1/pages/1/" \
+curl -s "http://127.0.0.1:8000/caselaw/?q=bagagem" \
   -H "Authorization: Token $TOKEN" | jq
 ```
 
@@ -318,3 +312,4 @@ Caso contrário, o endpoint responde:
 - A autorização (o “que você pode acessar”) será baseada em entitlements.
 - `/search/` usa busca simples (`icontains`) no MVP; a implementação pode evoluir para FTS no Postgres sem mudar o contrato do endpoint.
 - O comando `extract_pdf_text` é manual no MVP (sem jobs/filas).
+- Jurisprudência v0: vínculo por âncora/trecho e alertas por tema entram depois (Gate JIT).
