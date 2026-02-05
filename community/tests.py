@@ -108,7 +108,36 @@ class CommunityApiTests(APITestCase):
         self.auth(self.user_token.key)
         res = self.client.get("/community/comments/")
         self.assertEqual(res.status_code, 200)
-    
+
+    def test_posts_filter_by_category(self):
+        other_category = Category.objects.create(name="Outros", slug="outros")
+        Post.objects.create(author=self.user, category=self.category, title="G1", body="B1")
+        Post.objects.create(author=self.user, category=other_category, title="O1", body="B2")
+
+        self.auth(self.user_token.key)
+        res = self.client.get(f"/community/posts/?category={self.category.id}")
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(all(p["category"]["id"] == self.category.id for p in res.data))
+
+    def test_comment_update_delete_permissions(self):
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+        comment = Comment.objects.create(post=post, author=self.user, body="C1")
+
+        # outro usuário não pode editar
+        self.auth(self.other_token.key)
+        res = self.client.patch(f"/community/comments/{comment.id}/", {"body": "HACK"})
+        self.assertEqual(res.status_code, 403)
+
+        # autor pode editar
+        self.auth(self.user_token.key)
+        res = self.client.patch(f"/community/comments/{comment.id}/", {"body": "C2"})
+        self.assertEqual(res.status_code, 200)
+
+        # staff pode deletar
+        self.auth(self.staff_token.key)
+        res = self.client.delete(f"/community/comments/{comment.id}/")
+        self.assertEqual(res.status_code, 204)
+
     def test_report_create_post(self):
         post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
 
@@ -154,3 +183,19 @@ class CommunityApiTests(APITestCase):
         self.auth(self.staff_token.key)
         res = self.client.get("/community/reports/")
         self.assertEqual(res.status_code, 200)
+
+    def test_report_update_staff_only(self):
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+        report = Report.objects.create(reporter=self.user, post=post, reason="spam")
+
+        # usuário comum não pode atualizar
+        self.auth(self.user_token.key)
+        res = self.client.patch(f"/community/reports/{report.id}/", {"status": Report.Status.RESOLVED})
+        self.assertEqual(res.status_code, 403)
+
+        # staff pode atualizar
+        self.auth(self.staff_token.key)
+        res = self.client.patch(f"/community/reports/{report.id}/", {"status": Report.Status.RESOLVED})
+        self.assertEqual(res.status_code, 200)
+        report.refresh_from_db()
+        self.assertEqual(report.status, Report.Status.RESOLVED)

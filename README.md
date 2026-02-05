@@ -6,7 +6,7 @@ Backend do app **Livro Vivo**.
 - **Banco:** PostgreSQL  
 - **Config:** `.env` + `DATABASE_URL`
 
-> Este repositório está em fase MVP inicial (auth + entitlements + biblioteca + leitor/busca + anotações + jurisprudência v0).
+> Este repositório está em fase MVP inicial (auth + entitlements + biblioteca + leitor/busca + anotações + jurisprudência v0 + comunidade).
 
 ---
 
@@ -184,6 +184,7 @@ Header para endpoints autenticados:
 - `GET /books/`: lista livros (para usuários não-staff, normalmente apenas `published`)
 - `GET /books/<book_id>/versions/`: lista versões do livro (também para usuários não-staff apenas `published`)
 - `GET /search/?q=<termo>&book_version_id=<id>`: busca simples por termo nas páginas (retorna page_number + snippet)
+  - também disponível por livro: `GET /books/<book_id>/search/?q=<termo>`
 
   - params: `q` (mín. 2 chars), `book_version_id` **ou** `book_id`, `limit` (1–100), `offset` (>=0)
 - `GET /books/<book_id>/versions/<version_id>/pages/<page_number>/`: retorna o texto completo da página
@@ -221,6 +222,35 @@ Resposta típica:
   "results": []
 }
 ```
+
+### Comunidade (requer auth)
+
+Categorias:
+
+- `GET /community/categories/`: lista categorias (auth)
+- `POST /community/categories/`: cria categoria (staff)
+
+Posts:
+
+- `GET /community/posts/`: lista posts (auth)
+  - filtro: `?category=<id>`
+- `POST /community/posts/`: cria post (auth)
+- `PATCH /community/posts/<id>/`: autor ou staff
+- `DELETE /community/posts/<id>/`: autor ou staff
+
+Comentários:
+
+- `GET /community/comments/?post=<id>`: lista comentários de um post (auth)
+- `POST /community/comments/`: cria comentário (auth)
+- `PATCH /community/comments/<id>/`: autor ou staff
+- `DELETE /community/comments/<id>/`: autor ou staff
+
+Denúncias (reports):
+
+- `POST /community/reports/`: cria denúncia (auth)
+  - body: `post_id` **ou** `comment_id` (exatamente um)
+- `GET /community/reports/`: lista denúncias (staff)
+- `PATCH /community/reports/<id>/`: atualiza status (staff)
 
 ---
 

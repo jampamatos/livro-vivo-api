@@ -103,9 +103,35 @@ class LibraryPermissionTests(LibraryBaseTestCase):
 
         self.assertTrue(permission.has_permission(request, None))
 
+    def test_permission_allows_active_subscription_entitlement(self):
+        user = self._create_user()
+        self._grant_entitlement(
+            user,
+            product=Entitlement.Product.SUBSCRIPTION,
+            expires_at=timezone.now() + timedelta(days=1),
+        )
+        request = self.factory.get('/books/')
+        request.user = user
+        permission = HasActiveBookEntitlement()
+
+        self.assertTrue(permission.has_permission(request, None))
+
     def test_permission_denies_expired_entitlement(self):
         user = self._create_user()
         self._grant_entitlement(user, expires_at=timezone.now() - timedelta(days=1))
+        request = self.factory.get('/books/')
+        request.user = user
+        permission = HasActiveBookEntitlement()
+
+        self.assertFalse(permission.has_permission(request, None))
+
+    def test_permission_denies_revoked_entitlement(self):
+        user = self._create_user()
+        self._grant_entitlement(
+            user,
+            status=Entitlement.Status.REVOKED,
+            expires_at=timezone.now() + timedelta(days=1),
+        )
         request = self.factory.get('/books/')
         request.user = user
         permission = HasActiveBookEntitlement()
@@ -259,6 +285,20 @@ class LibraryAPITests(LibraryBaseTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('attachment; filename="test.pdf"', response.headers.get('Content-Disposition', ''))
+
+    def test_download_file_returns_404_when_no_pdf(self):
+        user = self._create_user()
+        self._grant_entitlement(user)
+        self._auth_client(user)
+
+        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+
+        response = self.client.get(
+            reverse('book-version-download', kwargs={'book_id': book.id, 'version_id': version.id})
+        )
+
+        self.assertEqual(response.status_code, 404)
 
     def test_search_validation_errors(self):
         user = self._create_user()

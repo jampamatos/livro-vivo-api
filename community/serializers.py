@@ -101,6 +101,11 @@ class ReportSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         post = attrs.get('post')
         comment = attrs.get('comment')
+
+        # Em updates parciais (PATCH), allow mudar status/razão sem reenviar alvo.
+        if self.instance is not None and ('post' not in attrs and 'comment' not in attrs):
+            return attrs
+
         if (post is None and comment is None) or (post is not None and comment is not None):
             raise serializers.ValidationError("Informe exatamente um alvo: post_id OU comment_id.")
         return attrs

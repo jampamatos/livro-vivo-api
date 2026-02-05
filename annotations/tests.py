@@ -211,6 +211,22 @@ class AnnotationApiTests(TestCase):
         self.assertEqual(len(resp.data), 1)
         self.assertEqual(resp.data[0]["id"], a1.id)
 
+    def test_filter_by_book_version_alias(self):
+        a1 = Annotation.objects.create(
+            user=self.user1,
+            book_version=self.book_version,
+            page_number=5,
+            rects_normalizados=[],
+            note="alias",
+            color="",
+        )
+
+        self.auth1()
+        resp = self.client.get(f"/annotations/?book_version={self.book_version.id}")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 1)
+        self.assertEqual(resp.data[0]["id"], a1.id)
+
     def test_cannot_access_other_users_annotation(self):
         a2 = Annotation.objects.create(
             user=self.user2,
@@ -251,3 +267,28 @@ class AnnotationApiTests(TestCase):
         ann = Annotation.objects.get(id=ann_id)
         self.assertEqual(ann.user_id, self.user1.id)
         self.assertEqual(ann.page_number, 12)
+
+    def test_update_and_delete_own_annotation(self):
+        ann = Annotation.objects.create(
+            user=self.user1,
+            book_version=self.book_version,
+            page_number=2,
+            rects_normalizados=[],
+            note="old",
+            color="yellow",
+        )
+
+        self.auth1()
+        resp = self.client.patch(
+            f"/annotations/{ann.id}/",
+            {"note": "new note", "color": "green"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        ann.refresh_from_db()
+        self.assertEqual(ann.note, "new note")
+        self.assertEqual(ann.color, "green")
+
+        resp = self.client.delete(f"/annotations/{ann.id}/")
+        self.assertEqual(resp.status_code, 204)
+        self.assertFalse(Annotation.objects.filter(id=ann.id).exists())
