@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
-from .models import Category, Post, Comment
+from .models import Category, Post, Comment, Report
 
 
 User = get_user_model()
@@ -107,4 +107,50 @@ class CommunityApiTests(APITestCase):
 
         self.auth(self.user_token.key)
         res = self.client.get("/community/comments/")
+        self.assertEqual(res.status_code, 200)
+    
+    def test_report_create_post(self):
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+
+        res = self.client.post("/community/reports/", {"post_id": post.id, "reason": "spam"})
+        self.assertEqual(res.status_code, 401)
+
+        self.auth(self.user_token.key)
+        res = self.client.post("/community/reports/", {"post_id": post.id, "reason": "spam"})
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.data["status"], Report.Status.OPEN)
+
+    def test_report_create_comment(self):
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+        comment = Comment.objects.create(post=post, author=self.other, body="C")
+
+        self.auth(self.user_token.key)
+        res = self.client.post("/community/reports/", {"comment_id": comment.id, "reason": "abuso"})
+        self.assertEqual(res.status_code, 201)
+
+    def test_report_requires_exactly_one_target(self):
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+        comment = Comment.objects.create(post=post, author=self.other, body="C")
+
+        self.auth(self.user_token.key)
+        res = self.client.post("/community/reports/", {"reason": "x"})
+        self.assertEqual(res.status_code, 400)
+
+        res = self.client.post("/community/reports/", {"post_id": post.id, "comment_id": comment.id, "reason": "x"})
+        self.assertEqual(res.status_code, 400)
+
+    def test_reports_list_staff_only(self):
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+
+        self.auth(self.user_token.key)
+        res = self.client.post("/community/reports/", {"post_id": post.id, "reason": "spam"})
+        self.assertEqual(res.status_code, 201)
+
+        # user não pode listar
+        res = self.client.get("/community/reports/")
+        self.assertEqual(res.status_code, 403)
+
+        # staff pode listar
+        self.auth(self.staff_token.key)
+        res = self.client.get("/community/reports/")
         self.assertEqual(res.status_code, 200)

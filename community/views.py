@@ -1,12 +1,13 @@
 from django.db.models import F, Max
 from django.db.models.functions import Coalesce
+
 from rest_framework import filters
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.viewsets import ModelViewSet
 
-from .models import Category, Post, Comment
+from .models import Category, Post, Comment, Report
 from .permissions import IsOwnerOrStaff, IsStaffOrReadOnlyAuthed
-from .serializers import CategorySerializer, PostSerializer, CommentSerializer
+from .serializers import CategorySerializer, PostSerializer, CommentSerializer, ReportSerializer
 
 class CategoryViewSet(ModelViewSet):
     queryset = Category.objects.all()
@@ -55,3 +56,22 @@ class CommentViewSet(ModelViewSet):
     
     def perform_create(self, serializer):
         serializer.save(author=self.request.user)
+
+class ReportViewSet(ModelViewSet):
+    serializer_class = ReportSerializer
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["reason", "reporter__username", "post__title", "comment__body"]
+    ordering_fields = ["created_at", "updated_at", "status"]
+    ordering = ["-created_at"]
+
+    def get_queryset(self):
+        return Report.objects.select_related("reporter", "post", "comment").all()
+
+    def get_permissions(self):
+        if self.action == "create":
+            return [IsAuthenticated()]
+        # list/retrieve/update/delete só staff (via IsAdminUser)
+        return [IsAuthenticated(), IsAdminUser()]
+
+    def perform_create(self, serializer):
+        serializer.save(reporter=self.request.user)

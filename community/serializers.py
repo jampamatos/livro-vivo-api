@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Category, Post, Comment
+from .models import Category, Post, Comment, Report
 
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -61,3 +61,46 @@ class CommentSerializer(serializers.ModelSerializer):
     
     def get_author_display(self, obj) -> str:
         return str(obj.author)
+
+class ReportSerializer(serializers.ModelSerializer):
+    reporter = serializers.PrimaryKeyRelatedField(read_only=True)
+    reporter_display = serializers.CharField(source='reporter.username', read_only=True)
+
+    post_id = serializers.PrimaryKeyRelatedField(
+        queryset=Post.objects.all(),
+        source='post',
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
+    comment_id = serializers.PrimaryKeyRelatedField(
+        queryset=Comment.objects.all(),
+        source='comment',
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
+
+    class Meta:
+        model = Report
+        fields = [
+            'id',
+            'reporter',
+            'reporter_display',
+            'post',
+            'comment',
+            'post_id',
+            'comment_id',
+            'reason',
+            'status',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'reporter', 'reporter_display', 'post', 'comment', 'created_at', 'updated_at']
+
+    def validate(self, attrs):
+        post = attrs.get('post')
+        comment = attrs.get('comment')
+        if (post is None and comment is None) or (post is not None and comment is not None):
+            raise serializers.ValidationError("Informe exatamente um alvo: post_id OU comment_id.")
+        return attrs
