@@ -1,60 +1,110 @@
 from django.contrib.auth import get_user_model
-from django.test import TestCase
-from django.utils import timezone
+from rest_framework.authtoken.models import Token
+from rest_framework.test import APITestCase
 
 from .models import Category, Post, Comment
 
 
-class CommunityModelTests(TestCase):
+User = get_user_model()
+
+
+class CommunityApiTests(APITestCase):
     def setUp(self):
-        User = get_user_model()
-        self.user = User.objects.create_user(username="alice", password="pass1234")
+        self.user = User.objects.create_user(
+            username="u@test.com",
+            email="u@test.com",
+            password="pass1234",
+        )
+        self.other = User.objects.create_user(
+            username="o@test.com",
+            email="o@test.com",
+            password="pass1234",
+        )
+        self.staff = User.objects.create_user(
+            username="s@test.com",
+            email="s@test.com",
+            password="pass1234",
+            is_staff=True,
+        )
+
+        self.user_token = Token.objects.create(user=self.user)
+        self.other_token = Token.objects.create(user=self.other)
+        self.staff_token = Token.objects.create(user=self.staff)
+
         self.category = Category.objects.create(name="Geral", slug="geral")
 
-    def test_create_post(self):
-        post = Post.objects.create(
-            author=self.user,
-            category=self.category,
-            title="Primeiro post",
-            body="Conteúdo do post",
-        )
-        self.assertEqual(post.author, self.user)
-        self.assertEqual(post.category, self.category)
-        self.assertEqual(post.title, "Primeiro post")
-        self.assertIsNotNone(post.created_at)
-        self.assertIsNotNone(post.updated_at)
+    def auth(self, token):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {token}")
 
-    def test_create_comment(self):
-        post = Post.objects.create(
-            author=self.user,
-            category=self.category,
-            title="Post",
-            body="Body",
-        )
-        comment = Comment.objects.create(post=post, author=self.user, body="Comentário")
-        self.assertEqual(comment.post, post)
-        self.assertEqual(comment.author, self.user)
-        self.assertEqual(comment.body, "Comentário")
+    def test_categories_list_requires_auth(self):
+        res = self.client.get("/community/categories/")
+        self.assertEqual(res.status_code, 401)
 
-    def test_delete_post_cascades_comments(self):
-        post = Post.objects.create(
-            author=self.user,
-            category=self.category,
-            title="Post",
-            body="Body",
-        )
-        Comment.objects.create(post=post, author=self.user, body="c1")
-        self.assertEqual(Comment.objects.count(), 1)
-        post.delete()
-        self.assertEqual(Comment.objects.count(), 0)
+        self.auth(self.user_token.key)
+        res = self.client.get("/community/categories/")
+        self.assertEqual(res.status_code, 200)
 
-    def test_post_ordering_latest_first(self):
-        p1 = Post.objects.create(author=self.user, title="p1", body="b1")
-        p2 = Post.objects.create(author=self.user, title="p2", body="b2")
+    def test_category_create_staff_only(self):
+        self.auth(self.user_token.key)
+        res = self.client.post("/community/categories/", {"name": "X", "slug": "x"})
+        self.assertEqual(res.status_code, 403)
 
-        Post.objects.filter(pk=p1.pk).update(created_at=timezone.now() - timezone.timedelta(days=1))
-        Post.objects.filter(pk=p2.pk).update(created_at=timezone.now())
+        self.auth(self.staff_token.key)
+        res = self.client.post("/community/categories/", {"name": "X", "slug": "x"})
+        self.assertEqual(res.status_code, 201)
 
-        posts = list(Post.objects.all())
-        self.assertEqual(posts[0].pk, p2.pk)
-        self.assertEqual(posts[1].pk, p1.pk)
+    def test_post_crud_permissions(self):
+        self.auth(self.user_token.key)
+        res = self.client.post("/community/posts/", {"title": "T1", "body": "B1", "category_id": self.category.id})
+        self.assertEqual(res.status_code, 201)
+        post_id = res.data["id"]
+
+        # other user cannot edit/delete
+        self.auth(self.other_token.key)
+        res = self.client.patch(f"/community/posts/{post_id}/", {"title": "HACK"})
+        self.assertEqual(res.status_code, 403)
+
+        # author can edit
+        self.auth(self.user_token.key)
+        res = self.client.patch(f"/community/posts/{post_id}/", {"title": "T2"})
+        self.assertEqual(res.status_code, 200)
+
+        # staff can delete
+        self.auth(self.staff_token.key)
+        res = self.client.delete(f"/community/posts/{post_id}/")
+        self.assertEqual(res.status_code, 204)
+
+    def test_posts_require_auth(self):
+        res = self.client.get("/community/posts/")
+        self.assertEqual(res.status_code, 401)
+
+        res = self.client.post("/community/posts/", {"title": "T1", "body": "B1", "category_id": self.category.id})
+        self.assertEqual(res.status_code, 401)
+
+        self.auth(self.user_token.key)
+        res = self.client.get("/community/posts/")
+        self.assertEqual(res.status_code, 200)
+
+    def test_comment_create_and_filter(self):
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+
+        self.auth(self.user_token.key)
+        res = self.client.post("/community/comments/", {"post_id": post.id, "body": "C1"})
+        self.assertEqual(res.status_code, 201)
+
+        res = self.client.get(f"/community/comments/?post={post.id}")
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(len(res.data) >= 1)
+
+    def test_comments_require_auth(self):
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+
+        res = self.client.get("/community/comments/")
+        self.assertEqual(res.status_code, 401)
+
+        res = self.client.post("/community/comments/", {"post_id": post.id, "body": "C1"})
+        self.assertEqual(res.status_code, 401)
+
+        self.auth(self.user_token.key)
+        res = self.client.get("/community/comments/")
+        self.assertEqual(res.status_code, 200)
