@@ -8,6 +8,7 @@ class CategorySerializer(serializers.ModelSerializer):
 
 class PostSerializer(serializers.ModelSerializer):
     author_display = serializers.SerializerMethodField(read_only=True)
+    last_activity = serializers.DateTimeField(read_only=True)
     category = CategorySerializer(read_only=True)
     category_id = serializers.PrimaryKeyRelatedField(
         source='category',
@@ -27,6 +28,7 @@ class PostSerializer(serializers.ModelSerializer):
             'category_id',
             'title',
             'body',
+            'last_activity',
             'created_at',
             'updated_at',
         ]

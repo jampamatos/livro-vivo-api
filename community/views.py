@@ -1,3 +1,5 @@
+from django.db.models import F, Max
+from django.db.models.functions import Coalesce
 from rest_framework import filters
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
@@ -20,11 +22,15 @@ class PostViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated, IsOwnerOrStaff]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['title', 'body']
-    ordering_fields = ['created_at', 'updated_at']
-    ordering = ['-created_at']
+    ordering_fields = ['created_at', 'updated_at', 'last_activity']
+    ordering = ['-last_activity', '-created_at']
 
     def get_queryset(self):
-        qs = Post.objects.select_related('author', 'category').all()
+        qs = (
+            Post.objects.select_related('author', 'category')
+            .annotate(last_activity=Coalesce(Max('comments__created_at'), F('created_at')))
+            .all()
+        )
         category_id = self.request.query_params.get('category')
         if category_id:
             qs = qs.filter(category_id=category_id)
