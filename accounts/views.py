@@ -14,6 +14,15 @@ from .serializers import LoginSerializer, RegisterSerializer
 User = get_user_model()
 
 
+def _serialize_user_payload(user, profile: Profile):
+    return {
+        'id': user.id,
+        'email': user.email,
+        'name': profile.full_name,
+        'profession': profile.profession,
+    }
+
+
 class RegisterView(APIView):
     """Cadastro de usuário com criação de token e perfil."""
 
@@ -31,12 +40,7 @@ class RegisterView(APIView):
         return Response(
             {
                 'token': token.key,
-                'user': {
-                    'id': user.id,
-                    'email': user.email,
-                    'name': profile.full_name,
-                    'profession': profile.profession,
-                },
+                'user': _serialize_user_payload(user, profile),
             },
             status=status.HTTP_201_CREATED,
         )
@@ -65,12 +69,7 @@ class LoginView(APIView):
         return Response(
             {
                 'token': token.key,
-                'user': {
-                    'id': user.id,
-                    'email': user.email,
-                    'name': profile.full_name,
-                    'profession': profile.profession,
-                },
+                'user': _serialize_user_payload(user, profile),
             }
         )
 
@@ -82,14 +81,7 @@ class MeView(APIView):
         user = request.user
         profile, _ = Profile.objects.get_or_create(user=user)
 
-        return Response(
-            {
-                'id': user.id,
-                'email': user.email,
-                'name': profile.full_name,
-                'profession': profile.profession,
-            }
-        )
+        return Response(_serialize_user_payload(user, profile))
 
 
 class MeEntitlementsView(APIView):

@@ -18,6 +18,14 @@ from .serializers import (
     SearchResultSerializer,
 )
 
+
+def _parse_int_or_default(value, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _make_snippet(text: str, q: str, window: int = 140) -> str:
     """Gera um trecho contextual da busca, com destaque aproximado do termo."""
     if not text:
@@ -138,14 +146,8 @@ class SearchView(APIView):
             book_id_qp = str(book_id)
 
         # Paginação simples.
-        try:
-            limit = int(request.query_params.get('limit', 20))
-        except ValueError:
-            limit = 20
-        try:
-            offset = int(request.query_params.get('offset', 0))
-        except ValueError:
-            offset = 0
+        limit = _parse_int_or_default(request.query_params.get('limit', 20), 20)
+        offset = _parse_int_or_default(request.query_params.get('offset', 0), 0)
 
         limit = max(1, min(limit, 100))
         offset = max(0, offset)
