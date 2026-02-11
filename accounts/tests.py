@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from entitlements.models import Entitlement
 
@@ -67,8 +68,11 @@ class AccountsAPITests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        token = Token.objects.get(user=user)
-        self.assertEqual(response.data['token'], token.key)
+        self.assertIn('access', response.data)
+        self.assertIn('refresh', response.data)
+        self.assertNotIn('token', response.data)
+        refresh = RefreshToken(response.data['refresh'])
+        self.assertEqual(int(refresh['user_id']), user.id)
 
     def test_login_invalid_credentials_returns_401(self):
         User.objects.create_user(
@@ -84,6 +88,33 @@ class AccountsAPITests(TestCase):
         )
 
         self.assertEqual(response.status_code, 401)
+
+    def test_login_requires_email_and_password(self):
+        response = self.client.post(
+            reverse('auth-login'),
+            {'email': '', 'password': ''},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['detail'], 'email e password são obrigatórios.')
+
+    def test_login_fallback_authenticates_when_username_differs_from_email(self):
+        user = User.objects.create_user(
+            username='custom-username',
+            email='user@example.com',
+            password='StrongPass123',
+        )
+
+        response = self.client.post(
+            reverse('auth-login'),
+            {'email': 'user@example.com', 'password': 'StrongPass123'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        refresh = RefreshToken(response.data['refresh'])
+        self.assertEqual(int(refresh['user_id']), user.id)
 
     def test_me_requires_authentication(self):
         response = self.client.get(reverse('me'))
@@ -107,6 +138,87 @@ class AccountsAPITests(TestCase):
         self.assertEqual(response.data['email'], 'user@example.com')
         self.assertEqual(response.data['name'], '')
         self.assertEqual(response.data['profession'], '')
+
+    def test_me_accepts_jwt_bearer_token(self):
+        user = User.objects.create_user(
+            username='user@example.com',
+            email='user@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.get(reverse('me'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['email'], 'user@example.com')
+
+    def test_auth_refresh_rotates_and_blacklists_old_refresh(self):
+        user = User.objects.create_user(
+            username='user@example.com',
+            email='user@example.com',
+            password='StrongPass123',
+        )
+        old_refresh = str(RefreshToken.for_user(user))
+
+        response = self.client.post(
+            reverse('auth-refresh'),
+            {'refresh': old_refresh},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('access', response.data)
+        self.assertIn('refresh', response.data)
+
+        replay = self.client.post(
+            reverse('auth-refresh'),
+            {'refresh': old_refresh},
+            format='json',
+        )
+        self.assertEqual(replay.status_code, 401)
+
+    def test_logout_requires_refresh_field(self):
+        user = User.objects.create_user(
+            username='user@example.com',
+            email='user@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.post(reverse('auth-logout'), {}, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['detail'], 'Token de refresh é obrigatório.')
+
+    def test_logout_blacklists_refresh_and_is_idempotent_for_invalid_token(self):
+        user = User.objects.create_user(
+            username='user@example.com',
+            email='user@example.com',
+            password='StrongPass123',
+        )
+        refresh_obj = RefreshToken.for_user(user)
+        refresh = str(refresh_obj)
+        access = str(refresh_obj.access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        first = self.client.post(reverse('auth-logout'), {'refresh': refresh}, format='json')
+        self.assertEqual(first.status_code, 204)
+
+        replay = self.client.post(
+            reverse('auth-refresh'),
+            {'refresh': refresh},
+            format='json',
+        )
+        self.assertEqual(replay.status_code, 401)
+
+        invalid = self.client.post(
+            reverse('auth-logout'),
+            {'refresh': 'invalid-refresh-token'},
+            format='json',
+        )
+        self.assertEqual(invalid.status_code, 204)
 
     def test_me_entitlements_returns_sorted_list(self):
         user = User.objects.create_user(

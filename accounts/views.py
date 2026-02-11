@@ -1,9 +1,12 @@
-from django.contrib.auth import get_user_model
+from django.contrib.auth import authenticate, get_user_model
+
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.exceptions import AuthenticationFailed
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework.views import APIView
 
 from entitlements.models import Entitlement
@@ -12,6 +15,13 @@ from .models import Profile
 from .serializers import LoginSerializer, RegisterSerializer
 
 User = get_user_model()
+
+def issue_tokens_for_user(user):
+    refresh = RefreshToken.for_user(user)
+    return {
+        'refresh': str(refresh),
+        'access': str(refresh.access_token),
+    }
 
 
 def _serialize_user_payload(user, profile: Profile):
@@ -52,26 +62,68 @@ class LoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        serializer = LoginSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        email = (request.data.get('email') or '').strip().lower()
+        password = request.data.get('password') or ''
 
-        email = serializer.validated_data['email'].strip().lower()
-        password = serializer.validated_data['password']
+        if not email or not password:
+            return Response({"detail": "email e password são obrigatórios."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Djano autentica por username; aqui a gente trata email como username (padrão simples)
+        user = authenticate(request, username=email, password=password)
 
-        # Autenticação manual para manter o fluxo simples do MVP.
-        user = User.objects.filter(email__iexact=email).first()
-        if not user or not user.check_password(password):
-            raise AuthenticationFailed("Credenciais inválidas.")
+        if not user:
+            # fallback: tenta achar email e autentica com username real, se existir
+            User = get_user_model()
+            try:
+                u = User.objects.get(email=email)
+            except User.DoesNotExist:
+                u = None
+            if u:
+                user = authenticate(request, username=u.username, password=password)
+        
+        if not user:
+            return Response({"detail": "Credenciais inválidas."}, status=status.HTTP_401_UNAUTHORIZED)
+        
+        tokens = issue_tokens_for_user(user)
+        return Response(tokens, status=status.HTTP_200_OK)
+    
+    class RegisterView(APIView):
+        permission_classes = [AllowAny]
 
-        token, _ = Token.objects.get_or_create(user=user)
-        profile, _ = Profile.objects.get_or_create(user=user)
+        def post(self, request):
+            email = (request.data.get('email') or '').strip().lower()
+            password = request.data.get('password') or ''
 
-        return Response(
-            {
-                'token': token.key,
-                'user': _serialize_user_payload(user, profile),
-            }
-        )
+            if not email or not password:
+                return Response({"detail": "email e password são obrigatórios."}, status=status.HTTP_400_BAD_REQUEST)
+            
+            User = get_user_model()
+
+            # padrão ismples: username = email
+            if User.objects.filter(username=email).exists() or User.objects.filter(email=email).exists():
+                return Response({"detail": "Usuário com este email já existe."}, status=status.HTTP_400_BAD_REQUEST)
+            
+            user = User.objects.create_user(username=email, email=email, password=password)
+
+            tokens = issue_tokens_for_user(user)
+            return Response(tokens, status=status.HTTP_201_CREATED)
+    
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self,request):
+        refresh = request.data.get('refresh')
+        if not refresh:
+            return Response({"detail": "Token de refresh é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            token = RefreshToken(refresh)
+            token.blacklist()
+        except TokenError:
+            # não vaza detalhe: se já expirou ou é inválido, tratamos como logout idempotente
+            pass
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class MeView(APIView):
