@@ -7,8 +7,8 @@ from django.db import models
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from library.models import Book, BookVersion
 
@@ -145,8 +145,8 @@ class AnnotationApiTests(TestCase):
             password="StrongPass123",
         )
 
-        self.token1 = Token.objects.create(user=self.user1)
-        self.token2 = Token.objects.create(user=self.user2)
+        self.access1 = str(RefreshToken.for_user(self.user1).access_token)
+        self.access2 = str(RefreshToken.for_user(self.user2).access_token)
 
         book = create_min_instance(Book)
         self.book_version = create_min_instance(BookVersion, book=book)
@@ -158,10 +158,10 @@ class AnnotationApiTests(TestCase):
         self._tmp.cleanup()
 
     def auth1(self):
-        self.client.credentials(HTTP_AUTHORIZATION=f"Token {self.token1.key}")
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.access1}")
 
     def auth2(self):
-        self.client.credentials(HTTP_AUTHORIZATION=f"Token {self.token2.key}")
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.access2}")
 
     def test_list_only_returns_own_annotations(self):
         Annotation.objects.create(

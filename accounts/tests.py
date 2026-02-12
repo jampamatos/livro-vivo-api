@@ -5,7 +5,6 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -18,7 +17,7 @@ class AccountsAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()
 
-    def test_register_creates_user_profile_and_token(self):
+    def test_register_creates_user_profile_and_jwt(self):
         payload = {
             'email': 'Test@Example.com',
             'password': 'StrongPass123',
@@ -31,12 +30,15 @@ class AccountsAPITests(TestCase):
         self.assertEqual(response.status_code, 201)
         user = User.objects.get(email='test@example.com')
         profile = user.profile
-        token = Token.objects.get(user=user)
 
         self.assertEqual(user.username, 'test@example.com')
         self.assertEqual(profile.full_name, 'Test User')
         self.assertEqual(profile.profession, 'Writer')
-        self.assertEqual(response.data['token'], token.key)
+        self.assertIn('access', response.data)
+        self.assertIn('refresh', response.data)
+        self.assertNotIn('token', response.data)
+        refresh = RefreshToken(response.data['refresh'])
+        self.assertEqual(int(refresh['user_id']), user.id)
 
     def test_register_rejects_duplicate_email(self):
         User.objects.create_user(
@@ -127,8 +129,8 @@ class AccountsAPITests(TestCase):
             email='user@example.com',
             password='StrongPass123',
         )
-        token = Token.objects.create(user=user)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
 
         response = self.client.get(reverse('me'))
 
@@ -226,8 +228,8 @@ class AccountsAPITests(TestCase):
             email='user@example.com',
             password='StrongPass123',
         )
-        token = Token.objects.create(user=user)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
 
         other_user = User.objects.create_user(
             username='other@example.com',

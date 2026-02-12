@@ -1,6 +1,6 @@
 from django.contrib.auth import get_user_model
-from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import Category, Post, Comment, Report
 
@@ -27,50 +27,50 @@ class CommunityApiTests(APITestCase):
             is_staff=True,
         )
 
-        self.user_token = Token.objects.create(user=self.user)
-        self.other_token = Token.objects.create(user=self.other)
-        self.staff_token = Token.objects.create(user=self.staff)
+        self.user_access = str(RefreshToken.for_user(self.user).access_token)
+        self.other_access = str(RefreshToken.for_user(self.other).access_token)
+        self.staff_access = str(RefreshToken.for_user(self.staff).access_token)
 
         self.category = Category.objects.create(name="Geral", slug="geral")
 
-    def auth(self, token):
-        self.client.credentials(HTTP_AUTHORIZATION=f"Token {token}")
+    def auth(self, access):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
 
     def test_categories_list_requires_auth(self):
         res = self.client.get("/community/categories/")
         self.assertEqual(res.status_code, 401)
 
-        self.auth(self.user_token.key)
+        self.auth(self.user_access)
         res = self.client.get("/community/categories/")
         self.assertEqual(res.status_code, 200)
 
     def test_category_create_staff_only(self):
-        self.auth(self.user_token.key)
+        self.auth(self.user_access)
         res = self.client.post("/community/categories/", {"name": "X", "slug": "x"})
         self.assertEqual(res.status_code, 403)
 
-        self.auth(self.staff_token.key)
+        self.auth(self.staff_access)
         res = self.client.post("/community/categories/", {"name": "X", "slug": "x"})
         self.assertEqual(res.status_code, 201)
 
     def test_post_crud_permissions(self):
-        self.auth(self.user_token.key)
+        self.auth(self.user_access)
         res = self.client.post("/community/posts/", {"title": "T1", "body": "B1", "category_id": self.category.id})
         self.assertEqual(res.status_code, 201)
         post_id = res.data["id"]
 
         # other user cannot edit/delete
-        self.auth(self.other_token.key)
+        self.auth(self.other_access)
         res = self.client.patch(f"/community/posts/{post_id}/", {"title": "HACK"})
         self.assertEqual(res.status_code, 403)
 
         # author can edit
-        self.auth(self.user_token.key)
+        self.auth(self.user_access)
         res = self.client.patch(f"/community/posts/{post_id}/", {"title": "T2"})
         self.assertEqual(res.status_code, 200)
 
         # staff can delete
-        self.auth(self.staff_token.key)
+        self.auth(self.staff_access)
         res = self.client.delete(f"/community/posts/{post_id}/")
         self.assertEqual(res.status_code, 204)
 
@@ -81,14 +81,14 @@ class CommunityApiTests(APITestCase):
         res = self.client.post("/community/posts/", {"title": "T1", "body": "B1", "category_id": self.category.id})
         self.assertEqual(res.status_code, 401)
 
-        self.auth(self.user_token.key)
+        self.auth(self.user_access)
         res = self.client.get("/community/posts/")
         self.assertEqual(res.status_code, 200)
 
     def test_comment_create_and_filter(self):
         post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
 
-        self.auth(self.user_token.key)
+        self.auth(self.user_access)
         res = self.client.post("/community/comments/", {"post_id": post.id, "body": "C1"})
         self.assertEqual(res.status_code, 201)
 
@@ -105,7 +105,7 @@ class CommunityApiTests(APITestCase):
         res = self.client.post("/community/comments/", {"post_id": post.id, "body": "C1"})
         self.assertEqual(res.status_code, 401)
 
-        self.auth(self.user_token.key)
+        self.auth(self.user_access)
         res = self.client.get("/community/comments/")
         self.assertEqual(res.status_code, 200)
 
@@ -114,7 +114,7 @@ class CommunityApiTests(APITestCase):
         Post.objects.create(author=self.user, category=self.category, title="G1", body="B1")
         Post.objects.create(author=self.user, category=other_category, title="O1", body="B2")
 
-        self.auth(self.user_token.key)
+        self.auth(self.user_access)
         res = self.client.get(f"/community/posts/?category={self.category.id}")
         self.assertEqual(res.status_code, 200)
         self.assertTrue(all(p["category"]["id"] == self.category.id for p in res.data))
@@ -124,17 +124,17 @@ class CommunityApiTests(APITestCase):
         comment = Comment.objects.create(post=post, author=self.user, body="C1")
 
         # outro usuário não pode editar
-        self.auth(self.other_token.key)
+        self.auth(self.other_access)
         res = self.client.patch(f"/community/comments/{comment.id}/", {"body": "HACK"})
         self.assertEqual(res.status_code, 403)
 
         # autor pode editar
-        self.auth(self.user_token.key)
+        self.auth(self.user_access)
         res = self.client.patch(f"/community/comments/{comment.id}/", {"body": "C2"})
         self.assertEqual(res.status_code, 200)
 
         # staff pode deletar
-        self.auth(self.staff_token.key)
+        self.auth(self.staff_access)
         res = self.client.delete(f"/community/comments/{comment.id}/")
         self.assertEqual(res.status_code, 204)
 
@@ -144,7 +144,7 @@ class CommunityApiTests(APITestCase):
         res = self.client.post("/community/reports/", {"post_id": post.id, "reason": "spam"})
         self.assertEqual(res.status_code, 401)
 
-        self.auth(self.user_token.key)
+        self.auth(self.user_access)
         res = self.client.post("/community/reports/", {"post_id": post.id, "reason": "spam"})
         self.assertEqual(res.status_code, 201)
         self.assertEqual(res.data["status"], Report.Status.OPEN)
@@ -153,7 +153,7 @@ class CommunityApiTests(APITestCase):
         post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
         comment = Comment.objects.create(post=post, author=self.other, body="C")
 
-        self.auth(self.user_token.key)
+        self.auth(self.user_access)
         res = self.client.post("/community/reports/", {"comment_id": comment.id, "reason": "abuso"})
         self.assertEqual(res.status_code, 201)
 
@@ -161,7 +161,7 @@ class CommunityApiTests(APITestCase):
         post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
         comment = Comment.objects.create(post=post, author=self.other, body="C")
 
-        self.auth(self.user_token.key)
+        self.auth(self.user_access)
         res = self.client.post("/community/reports/", {"reason": "x"})
         self.assertEqual(res.status_code, 400)
 
@@ -171,7 +171,7 @@ class CommunityApiTests(APITestCase):
     def test_reports_list_staff_only(self):
         post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
 
-        self.auth(self.user_token.key)
+        self.auth(self.user_access)
         res = self.client.post("/community/reports/", {"post_id": post.id, "reason": "spam"})
         self.assertEqual(res.status_code, 201)
 
@@ -180,7 +180,7 @@ class CommunityApiTests(APITestCase):
         self.assertEqual(res.status_code, 403)
 
         # staff pode listar
-        self.auth(self.staff_token.key)
+        self.auth(self.staff_access)
         res = self.client.get("/community/reports/")
         self.assertEqual(res.status_code, 200)
 
@@ -189,12 +189,12 @@ class CommunityApiTests(APITestCase):
         report = Report.objects.create(reporter=self.user, post=post, reason="spam")
 
         # usuário comum não pode atualizar
-        self.auth(self.user_token.key)
+        self.auth(self.user_access)
         res = self.client.patch(f"/community/reports/{report.id}/", {"status": Report.Status.RESOLVED})
         self.assertEqual(res.status_code, 403)
 
         # staff pode atualizar
-        self.auth(self.staff_token.key)
+        self.auth(self.staff_access)
         res = self.client.patch(f"/community/reports/{report.id}/", {"status": Report.Status.RESOLVED})
         self.assertEqual(res.status_code, 200)
         report.refresh_from_db()

@@ -13,8 +13,8 @@ from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient, APIRequestFactory
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from entitlements.models import Entitlement
 
@@ -41,8 +41,8 @@ class LibraryBaseTestCase(TestCase):
         return user
 
     def _auth_client(self, user):
-        token, _ = Token.objects.get_or_create(user=user)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
         return self.client
 
     def _grant_entitlement(self, user, product=Entitlement.Product.BOOK, status=Entitlement.Status.ACTIVE, expires_at=None):

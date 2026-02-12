@@ -17,7 +17,7 @@ Backend do app **Livro Vivo**.
 - PostgreSQL
 - `python-dotenv` (carrega `.env`)
 - `dj-database-url` (lê `DATABASE_URL`)
-- `TokenAuthentication` (DRF) para o MVP
+- `JWTAuthentication` (SimpleJWT, access/refresh)
 - `PyMuPDF` (extração de texto por página do PDF)
 
 ---

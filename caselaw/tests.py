@@ -5,8 +5,8 @@ from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.utils import timezone
 
-from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import CaseLaw
 
@@ -69,7 +69,7 @@ class CaseLawApiTests(TestCase):
             email="u1@example.com",
             password="StrongPass123",
         )
-        self.token = Token.objects.create(user=self.user)
+        self.access = str(RefreshToken.for_user(self.user).access_token)
         self.client = APIClient()
 
         CaseLaw.objects.create(
@@ -92,7 +92,7 @@ class CaseLawApiTests(TestCase):
         )
 
     def auth(self):
-        self.client.credentials(HTTP_AUTHORIZATION=f"Token {self.token.key}")
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.access}")
 
     def test_requires_auth(self):
         resp = self.client.get("/caselaw/")
