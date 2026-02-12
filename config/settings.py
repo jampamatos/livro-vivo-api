@@ -11,11 +11,29 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from datetime import timedelta
-from dotenv import load_dotenv
 from pathlib import Path
+
+from django.core.exceptions import ImproperlyConfigured
+from dotenv import load_dotenv
 import dj_database_url
 import os
 import sys
+
+
+def env_bool(key: str, default: bool = False) -> bool:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+def env_list(key: str, default: str = "") -> list[str]:
+    raw = os.getenv(key)
+    value = raw if raw is not None else default
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
 
 # Load dotenv
 load_dotenv()
@@ -23,17 +41,35 @@ load_dotenv()
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+DJANGO_ENV = os.getenv("DJANGO_ENV", "development").strip().lower()
+IS_PRODUCTION = DJANGO_ENV in {"prod", "production"}
+IS_STAGE = DJANGO_ENV in {"stage", "staging"}
+IS_TESTING = "test" in sys.argv
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
+# SECURITY WARNING: don't run with debug turned on in production/stage!
+DEBUG = env_bool("DEBUG", default=not (IS_PRODUCTION or IS_STAGE))
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-insecure-secret-key")
+if IS_PRODUCTION and DEBUG:
+    raise ImproperlyConfigured("DEBUG must be false when DJANGO_ENV=production.")
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv("DEBUG", "true").lower() == "true"
+secret_key = os.getenv("DJANGO_SECRET_KEY")
+if secret_key:
+    SECRET_KEY = secret_key
+elif IS_PRODUCTION or IS_STAGE:
+    raise ImproperlyConfigured(
+        "DJANGO_SECRET_KEY is required when DJANGO_ENV is stage/production."
+    )
+else:
+    # Dev-only fallback.
+    SECRET_KEY = "dev-insecure-secret-key"
 
-ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+allowed_hosts_default = "localhost,127.0.0.1" if DEBUG else ""
+ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", allowed_hosts_default)
+
+if (IS_PRODUCTION or IS_STAGE) and not ALLOWED_HOSTS:
+    raise ImproperlyConfigured(
+        "DJANGO_ALLOWED_HOSTS is required when DJANGO_ENV is stage/production."
+    )
 
 # Application definition
 
@@ -46,7 +82,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 
     'corsheaders',
-    
+
     'rest_framework',
     'rest_framework_simplejwt.token_blacklist',
 
@@ -88,23 +124,34 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
-
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+database_url = os.getenv("DATABASE_URL")
+if (IS_PRODUCTION or IS_STAGE) and not database_url:
+    raise ImproperlyConfigured(
+        "DATABASE_URL is required when DJANGO_ENV is stage/production."
+    )
+
 DATABASES = {
     'default': dj_database_url.config(
-        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+        default=database_url or f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
         conn_max_age=60,
+        conn_health_checks=True,
     )
 }
 
-if 'test' in sys.argv:
+if IS_TESTING:
+    # Testes determinísticos e independentes de serviços externos.
     DATABASES['default'] = {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': ':memory:',
         'TEST': {'NAME': ':memory:'},
     }
+    PASSWORD_HASHERS = [
+        'django.contrib.auth.hashers.MD5PasswordHasher',
+    ]
+    EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
@@ -134,7 +181,6 @@ SIMPLE_JWT = {
 
 LIBRARY_DOWNLOAD_URL_TTL_SECONDS = int(os.getenv('LIBRARY_DOWNLOAD_URL_TTL_SECONDS', '300'))
 
-
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 
@@ -153,7 +199,6 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
@@ -164,7 +209,6 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 
 USE_TZ = True
-
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
@@ -178,12 +222,48 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:8081',
-    'http://127.0.0.1:8081',
-    'http://localhost:8082',
-    'http://127.0.0.1:8082',
-    # bônus (às vezes Expo usa 19006 em alguns setups)
-    'http://localhost:19006',
-    'http://127.0.0.1:19006',
-]
+_default_dev_cors = (
+    'http://localhost:8081,'
+    'http://127.0.0.1:8081,'
+    'http://localhost:8082,'
+    'http://127.0.0.1:8082,'
+    'http://localhost:19006,'
+    'http://127.0.0.1:19006'
+)
+
+CORS_ALLOWED_ORIGINS = env_list(
+    'DJANGO_CORS_ALLOWED_ORIGINS',
+    _default_dev_cors if DEBUG else '',
+)
+CORS_ALLOW_CREDENTIALS = env_bool('DJANGO_CORS_ALLOW_CREDENTIALS', default=False)
+CSRF_TRUSTED_ORIGINS = env_list('DJANGO_CSRF_TRUSTED_ORIGINS', '')
+
+SECURE_SSL_REDIRECT = env_bool(
+    'DJANGO_SECURE_SSL_REDIRECT',
+    default=(IS_PRODUCTION or IS_STAGE),
+)
+SESSION_COOKIE_SECURE = env_bool(
+    'DJANGO_SESSION_COOKIE_SECURE',
+    default=(IS_PRODUCTION or IS_STAGE),
+)
+CSRF_COOKIE_SECURE = env_bool(
+    'DJANGO_CSRF_COOKIE_SECURE',
+    default=(IS_PRODUCTION or IS_STAGE),
+)
+SECURE_HSTS_SECONDS = int(
+    os.getenv('DJANGO_SECURE_HSTS_SECONDS', '31536000' if IS_PRODUCTION else '0')
+)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool(
+    'DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS',
+    default=IS_PRODUCTION,
+)
+SECURE_HSTS_PRELOAD = env_bool(
+    'DJANGO_SECURE_HSTS_PRELOAD',
+    default=IS_PRODUCTION,
+)
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
+REFERRER_POLICY = 'same-origin'
+
+if env_bool('DJANGO_SECURE_PROXY_SSL_HEADER_ENABLED', default=False):
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')

@@ -55,9 +55,12 @@ cp .env.example .env
 
 Variáveis esperadas:
 
-- `DJANGO_SECRET_KEY` (obrigatório no deploy; no dev pode ser simples)
+- `DJANGO_ENV` (`development`, `stage`, `production`)
+- `DJANGO_SECRET_KEY` (obrigatório em `stage/production`)
 - `DEBUG` (`true`/`false`)
 - `DATABASE_URL` (Postgres)
+- `DJANGO_ALLOWED_HOSTS` (obrigatório em `stage/production`)
+- `DJANGO_CORS_ALLOWED_ORIGINS` (CSV de origins permitidos)
 - `APP_VERSION` (aparece no `/health`)
 
 Exemplo `DATABASE_URL` local:
@@ -165,14 +168,16 @@ python manage.py extract_pdf_text --book-version-id <version_id> --force
 
 - `GET /health/`: `{ "status": "ok", "version": "dev" }`
 
-### Auth (Token)
+### Auth (JWT)
 
-- `POST /auth/register/`: cria usuário e retorna token
-- `POST /auth/login/`: retorna token
+- `POST /auth/register/`: cria usuário e retorna sessão (`access` + `refresh`)
+- `POST /auth/login/`: retorna sessão (`access` + `refresh`)
+- `POST /auth/refresh/`: renova o `access` (e pode rotacionar `refresh`)
+- `POST /auth/logout/`: invalida `refresh` (blacklist)
 
 Header para endpoints autenticados:
 
-- `Authorization: Token <seu_token>`
+- `Authorization: Bearer <seu_access_token>`
 
 ### Me
 
@@ -272,53 +277,53 @@ curl -s -X POST http://127.0.0.1:8000/auth/login/ \
   -d '{"email":"teste@exemplo.com","password":"12345678"}' && echo
 ```
 
-### 3) /me (com token)
+### 3) /me (com access token)
 
 ```bash
-TOKEN="COLE_O_TOKEN_AQUI"
+ACCESS_TOKEN="COLE_O_ACCESS_TOKEN_AQUI"
 curl -s http://127.0.0.1:8000/me/ \
-  -H "Authorization: Token $TOKEN" && echo
+  -H "Authorization: Bearer $ACCESS_TOKEN" && echo
 ```
 
-### 4) /me/entitlements (com token)
+### 4) /me/entitlements (com access token)
 
 ```bash
-TOKEN="COLE_O_TOKEN_AQUI"
+ACCESS_TOKEN="COLE_O_ACCESS_TOKEN_AQUI"
 curl -s http://127.0.0.1:8000/me/entitlements/ \
-  -H "Authorization: Token $TOKEN" && echo
+  -H "Authorization: Bearer $ACCESS_TOKEN" && echo
 ```
 
 ### 5) Baixar PDF
 
 ```bash
-TOKEN="<seu_token>"
+ACCESS_TOKEN="<seu_access_token>"
 
 URL="$(
   curl -s http://127.0.0.1:8000/books/1/versions/1/download-url/ \
-    -H "Authorization: Token $TOKEN" \
+    -H "Authorization: Bearer $ACCESS_TOKEN" \
   | jq -r .url
 )"
 
-curl -L -o /tmp/livro.pdf -H "Authorization: Token $TOKEN" "$URL"
+curl -L -o /tmp/livro.pdf "$URL"
 file /tmp/livro.pdf
 ```
 
 ### 6) Buscar termo em páginas (Search)
 
 ```bash
-TOKEN="<seu_token>"
+ACCESS_TOKEN="<seu_access_token>"
 
 curl -s "http://127.0.0.1:8000/search/?q=duergar&book_version_id=1" \
-  -H "Authorization: Token $TOKEN" | jq
+  -H "Authorization: Bearer $ACCESS_TOKEN" | jq
 ```
 
 ### 7) Jurisprudência (CaseLaw)
 
 ```bash
-TOKEN="<seu_token>"
+ACCESS_TOKEN="<seu_access_token>"
 
 curl -s "http://127.0.0.1:8000/caselaw/?q=bagagem" \
-  -H "Authorization: Token $TOKEN" | jq
+  -H "Authorization: Bearer $ACCESS_TOKEN" | jq
 ```
 
 ---
@@ -337,9 +342,10 @@ Caso contrário, o endpoint responde:
 
 ## Notas de desenvolvimento
 
-- Por padrão, endpoints DRF exigem autenticação (Token).
-- `register` e `login` são públicos.
+- Por padrão, endpoints DRF exigem autenticação JWT (`Bearer`).
+- `register`, `login` e `refresh` são públicos; `logout` exige usuário autenticado.
 - A autorização (o “que você pode acessar”) será baseada em entitlements.
 - `/search/` usa busca simples (`icontains`) no MVP; a implementação pode evoluir para FTS no Postgres sem mudar o contrato do endpoint.
 - O comando `extract_pdf_text` é manual no MVP (sem jobs/filas).
 - Jurisprudência v0: vínculo por âncora/trecho e alertas por tema entram depois (Gate JIT).
+- CI mínimo de qualidade está em `.github/workflows/ci.yml` (testes + `check --deploy`).
