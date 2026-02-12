@@ -1,11 +1,14 @@
 from datetime import timedelta
+from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from rest_framework.test import APIClient
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from entitlements.models import Entitlement
@@ -272,3 +275,25 @@ class AccountsAPITests(TestCase):
         self.assertEqual(items[0]['id'], newer.id)
         self.assertEqual(items[1]['id'], older.id)
         self.assertFalse(items[0]['is_active'])
+
+    def test_login_is_throttled(self):
+        cache.clear()
+        User.objects.create_user(
+            username='user@example.com',
+            email='user@example.com',
+            password='StrongPass123',
+        )
+        with mock.patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {'auth_login': '1/min'}):
+            first = self.client.post(
+                reverse('auth-login'),
+                {'email': 'user@example.com', 'password': 'StrongPass123'},
+                format='json',
+            )
+            second = self.client.post(
+                reverse('auth-login'),
+                {'email': 'user@example.com', 'password': 'StrongPass123'},
+                format='json',
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 429)

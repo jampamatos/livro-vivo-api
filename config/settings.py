@@ -113,6 +113,15 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.ScopedRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'auth_login': '10/min',
+        'library_search': '60/min',
+        'library_download_url': '30/min',
+        'community_api': '120/min',
+    },
 }
 
 SIMPLE_JWT = {

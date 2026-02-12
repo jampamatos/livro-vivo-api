@@ -6,6 +6,7 @@ from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
+from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import CommandError, call_command
 from django.db import IntegrityError, transaction
@@ -14,6 +15,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from rest_framework.test import APIClient, APIRequestFactory
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from entitlements.models import Entitlement
@@ -515,6 +517,43 @@ class LibraryAPITests(LibraryBaseTestCase):
             )
 
         self.assertEqual(response.status_code, 403)
+
+    def test_search_is_throttled(self):
+        cache.clear()
+        user = self._create_user()
+        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        PageText.objects.create(book_version=version, page_number=1, text='Hello world')
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
+
+        with mock.patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {'library_search': '1/min'}):
+            first = self.client.get(reverse('book-search', kwargs={'book_id': book.id}), {'q': 'hello'})
+            second = self.client.get(reverse('book-search', kwargs={'book_id': book.id}), {'q': 'hello'})
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 429)
+
+    def test_download_url_is_throttled(self):
+        cache.clear()
+        user = self._create_user()
+        with self._temp_media():
+            book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+            version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+            version.pdf.save('throttle.pdf', SimpleUploadedFile('throttle.pdf', b'%PDF-1.4 test'))
+            self._grant_entitlement(user, book=book)
+            self._auth_client(user)
+
+            with mock.patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {'library_download_url': '1/min'}):
+                first = self.client.get(
+                    reverse('book-version-download-url', kwargs={'book_id': book.id, 'version_id': version.id})
+                )
+                second = self.client.get(
+                    reverse('book-version-download-url', kwargs={'book_id': book.id, 'version_id': version.id})
+                )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 429)
 
 class ExtractPdfTextCommandTests(LibraryBaseTestCase):
     def test_cleanup_removes_noise(self):

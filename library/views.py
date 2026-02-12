@@ -7,6 +7,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from entitlements.services import entitled_book_ids, user_has_subscription
@@ -108,6 +109,8 @@ class BookVersionDownloadUrlView(APIView):
     """Entrega URL absoluta para download do PDF da versão."""
 
     permission_classes = [HasActiveBookEntitlement]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'library_download_url'
 
     def get(self, request, book_id: int, version_id: int):
         bv = get_object_or_404(BookVersion, pk=version_id, book_id=book_id)
@@ -150,6 +153,8 @@ class SearchView(APIView):
     """Busca simples por texto dentro de páginas (PageText)."""
 
     permission_classes = [HasActiveBookEntitlement]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'library_search'
 
     def get(self, request, book_id: Optional[int] = None):
         q = (request.query_params.get('q') or '').strip()

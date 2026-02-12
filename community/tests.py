@@ -1,5 +1,9 @@
+from unittest import mock
+
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from rest_framework.test import APITestCase
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import Category, Post, Comment, Report
@@ -199,3 +203,14 @@ class CommunityApiTests(APITestCase):
         self.assertEqual(res.status_code, 200)
         report.refresh_from_db()
         self.assertEqual(report.status, Report.Status.RESOLVED)
+
+    def test_community_posts_is_throttled(self):
+        cache.clear()
+        self.auth(self.user_access)
+
+        with mock.patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {'community_api': '1/min'}):
+            first = self.client.get("/community/posts/")
+            second = self.client.get("/community/posts/")
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 429)

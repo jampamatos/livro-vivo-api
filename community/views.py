@@ -3,6 +3,7 @@ from django.db.models.functions import Coalesce
 
 from rest_framework import filters
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.viewsets import ModelViewSet
 
 from .models import Category, Post, Comment, Report
@@ -13,6 +14,8 @@ class CategoryViewSet(ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
     permission_classes = [IsStaffOrReadOnlyAuthed]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'community_api'
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name', 'slug', 'description']
     ordering_fields = ['name', 'created_at']
@@ -21,6 +24,8 @@ class CategoryViewSet(ModelViewSet):
 class PostViewSet(ModelViewSet):
     serializer_class = PostSerializer
     permission_classes = [IsAuthenticated, IsOwnerOrStaff]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'community_api'
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['title', 'body']
     ordering_fields = ['created_at', 'updated_at', 'last_activity']
@@ -43,6 +48,8 @@ class PostViewSet(ModelViewSet):
 class CommentViewSet(ModelViewSet):
     serializer_class = CommentSerializer
     permission_classes = [IsAuthenticated, IsOwnerOrStaff]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'community_api'
     filter_backends =  [filters.OrderingFilter]
     ordering_fields = ['created_at']
     ordering = ['created_at']
@@ -59,6 +66,8 @@ class CommentViewSet(ModelViewSet):
 
 class ReportViewSet(ModelViewSet):
     serializer_class = ReportSerializer
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'community_api'
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ["reason", "reporter__username", "post__title", "comment__body"]
     ordering_fields = ["created_at", "updated_at", "status"]
