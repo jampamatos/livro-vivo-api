@@ -1,16 +1,25 @@
+import logging
 from pathlib import Path
 from typing import Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.core import signing
+from django.db.models import Q
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import NotFound
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from entitlements.services import entitled_book_ids, user_has_subscription
+from entitlements.models import Entitlement
+from entitlements.services import entitled_book_ids, user_has_book_entitlement, user_has_subscription
 from .models import Book, BookVersion, PageText
 from .permissions import HasActiveBookEntitlement
 from .serializers import (
@@ -19,6 +28,80 @@ from .serializers import (
     PageTextSerializer,
     SearchResultSerializer,
 )
+
+logger = logging.getLogger(__name__)
+DOWNLOAD_URL_TOKEN_PARAM = 'dl_token'
+DOWNLOAD_URL_SIGNING_SALT = 'library.book-version-download.v1'
+
+
+def _download_url_max_age_seconds() -> int:
+    try:
+        return max(1, int(getattr(settings, 'LIBRARY_DOWNLOAD_URL_TTL_SECONDS', 300)))
+    except (TypeError, ValueError):
+        return 300
+
+
+def _append_query_param(url: str, key: str, value: str) -> str:
+    parsed = urlsplit(url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query[key] = value
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment)
+    )
+
+
+def _build_download_token(*, user_id: int, book_id: int, version_id: int) -> str:
+    payload = {'u': int(user_id), 'b': int(book_id), 'v': int(version_id)}
+    return signing.dumps(payload, salt=DOWNLOAD_URL_SIGNING_SALT, compress=True)
+
+
+def _load_download_token_payload(
+    raw_token: str | None,
+) -> dict | None:
+    if not raw_token:
+        return None
+
+    try:
+        payload = signing.loads(
+            raw_token,
+            salt=DOWNLOAD_URL_SIGNING_SALT,
+            max_age=_download_url_max_age_seconds(),
+        )
+    except signing.BadSignature:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    try:
+        token_user_id = int(payload.get('u'))
+        token_book_id = int(payload.get('b'))
+        token_version_id = int(payload.get('v'))
+    except (TypeError, ValueError):
+        return None
+
+    return {'user_id': token_user_id, 'book_id': token_book_id, 'version_id': token_version_id}
+
+
+def _user_has_active_download_scope(user_id: int, book_id: int) -> bool:
+    User = get_user_model()
+    user = User.objects.filter(pk=user_id).only('id', 'is_staff').first()
+    if not user:
+        return False
+    if user.is_staff:
+        return True
+
+    now = timezone.now()
+    has_any_active_entitlement = (
+        Entitlement.objects
+        .filter(user_id=user_id, status=Entitlement.Status.ACTIVE)
+        .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
+        .exists()
+    )
+    if not has_any_active_entitlement:
+        return False
+
+    return user_has_subscription(user) or user_has_book_entitlement(user, book_id)
 
 
 def _parse_int_or_default(value, default: int) -> int:
@@ -121,8 +204,18 @@ class BookVersionDownloadUrlView(APIView):
         if not bv.pdf:
             raise NotFound('PDF não está disponível para esta versão')
 
-        download_url = request.build_absolute_uri(
+        base_download_url = request.build_absolute_uri(
             reverse('book-version-download', kwargs={'book_id': book_id, 'version_id': version_id})
+        )
+        signed_token = _build_download_token(
+            user_id=request.user.id,
+            book_id=book_id,
+            version_id=version_id,
+        )
+        download_url = _append_query_param(
+            base_download_url,
+            DOWNLOAD_URL_TOKEN_PARAM,
+            signed_token,
         )
 
         return Response({'url': download_url})
@@ -131,12 +224,36 @@ class BookVersionDownloadUrlView(APIView):
 class BookVersionDownloadView(APIView):
     """Faz o streaming do PDF da versão solicitada."""
 
-    permission_classes = [HasActiveBookEntitlement]
+    permission_classes = [AllowAny]
 
     def get(self, request, book_id: int, version_id: int):
+        raw_token = request.query_params.get(DOWNLOAD_URL_TOKEN_PARAM)
+        payload = _load_download_token_payload(raw_token)
+        authenticated_user_id = getattr(request.user, 'id', None)
+        token_user_id = payload['user_id'] if payload else None
+        if (
+            not payload
+            or payload['book_id'] != int(book_id)
+            or payload['version_id'] != int(version_id)
+            or (
+                authenticated_user_id is not None
+                and int(authenticated_user_id) != int(token_user_id)
+            )
+            or not _user_has_active_download_scope(payload['user_id'], book_id)
+        ):
+            logger.warning(
+                'Rejected invalid/expired download token',
+                extra={
+                    'user_id': payload['user_id'] if payload else None,
+                    'book_id': book_id,
+                    'version_id': version_id,
+                },
+            )
+            raise NotFound()
+
         bv = get_object_or_404(BookVersion, pk=version_id, book_id=book_id)
 
-        if not request.user.is_staff and bv.status != BookVersion.Status.PUBLISHED:
+        if bv.status != BookVersion.Status.PUBLISHED:
             raise NotFound()
 
         if not bv.pdf:
@@ -146,6 +263,14 @@ class BookVersionDownloadView(APIView):
         filename = Path(bv.pdf.name).name
         response = FileResponse(bv.pdf.open('rb'), content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        logger.info(
+            'Issued signed download response',
+            extra={
+                'user_id': payload['user_id'],
+                'book_id': book_id,
+                'version_id': version_id,
+            },
+        )
         return response
 
 

@@ -132,6 +132,8 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
+LIBRARY_DOWNLOAD_URL_TTL_SECONDS = int(os.getenv('LIBRARY_DOWNLOAD_URL_TTL_SECONDS', '300'))
+
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
