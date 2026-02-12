@@ -297,3 +297,21 @@ class AccountsAPITests(TestCase):
 
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 429)
+
+    def test_register_is_throttled(self):
+        cache.clear()
+        payload = {
+            'email': 'user@example.com',
+            'password': 'StrongPass123',
+        }
+
+        with mock.patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {'auth_register': '1/min'}):
+            first = self.client.post(reverse('auth-register'), payload, format='json')
+            second = self.client.post(
+                reverse('auth-register'),
+                {'email': 'another@example.com', 'password': 'StrongPass123'},
+                format='json',
+            )
+
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 429)

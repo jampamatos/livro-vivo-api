@@ -141,6 +141,23 @@ DATABASES = {
     )
 }
 
+cache_timeout_seconds = int(os.getenv('DJANGO_CACHE_TIMEOUT_SECONDS', '300'))
+redis_url = (os.getenv('REDIS_URL') or '').strip()
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': redis_url,
+        'TIMEOUT': cache_timeout_seconds,
+    }
+    if redis_url
+    else {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'livro-vivo-api-default-cache',
+        'TIMEOUT': cache_timeout_seconds,
+    }
+}
+
 if IS_TESTING:
     # Testes determinísticos e independentes de serviços externos.
     DATABASES['default'] = {
@@ -152,6 +169,13 @@ if IS_TESTING:
         'django.contrib.auth.hashers.MD5PasswordHasher',
     ]
     EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'livro-vivo-api-test-cache',
+            'TIMEOUT': cache_timeout_seconds,
+        }
+    }
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
@@ -164,6 +188,7 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.ScopedRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
+        'auth_register': '5/min',
         'auth_login': '10/min',
         'library_search': '60/min',
         'library_download_url': '30/min',

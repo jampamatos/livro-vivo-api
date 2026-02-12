@@ -37,6 +37,8 @@ class RegisterView(APIView):
     """Cadastro de usuário com criação de sessão JWT e perfil."""
 
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth_register'
 
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)

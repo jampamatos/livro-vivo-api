@@ -18,6 +18,7 @@ Backend do app **Livro Vivo**.
 - `python-dotenv` (carrega `.env`)
 - `dj-database-url` (lê `DATABASE_URL`)
 - `JWTAuthentication` (SimpleJWT, access/refresh)
+- cache configurável (LocMem em dev/test, Redis via `REDIS_URL` em stage/prod)
 - `PyMuPDF` (extração de texto por página do PDF)
 
 ---
@@ -59,6 +60,8 @@ Variáveis esperadas:
 - `DJANGO_SECRET_KEY` (obrigatório em `stage/production`)
 - `DEBUG` (`true`/`false`)
 - `DATABASE_URL` (Postgres)
+- `REDIS_URL` (opcional; recomendado para stage/prod e rate limit distribuído)
+- `DJANGO_CACHE_TIMEOUT_SECONDS` (TTL padrão de cache/throttle)
 - `DJANGO_ALLOWED_HOSTS` (obrigatório em `stage/production`)
 - `DJANGO_CORS_ALLOWED_ORIGINS` (CSV de origins permitidos)
 - `APP_VERSION` (aparece no `/health`)
