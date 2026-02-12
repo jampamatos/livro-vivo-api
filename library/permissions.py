@@ -3,14 +3,57 @@ from django.utils import timezone
 from rest_framework.permissions import BasePermission
 
 from entitlements.models import Entitlement
+from library.models import BookVersion
 
 
 class HasActiveBookEntitlement(BasePermission):
     """
-    MVP: acesso liberado se o usuário tiver entitlement ativo de:
-    - book OU subscription
+    Acesso liberado se o usuário tiver entitlement ativo
+    - subscription (global) OU
+    - book (escopado por book_id)
     """
     message = 'Você não tem direito de acesso à esse livro.'
+
+    def _resolve_book_id(self, request, view) -> int | None:
+        view_kwargs = getattr(view, "kwargs", {}) or {}
+        book_id = view_kwargs.get("book_id")
+        if book_id is not None:
+            try:
+                return int(book_id)
+            except (TypeError, ValueError):
+                return None
+
+        qp = getattr(request, "query_params", {})
+        if "book_id" in qp:
+            try:
+                return int(qp.get("book_id"))
+            except (TypeError, ValueError):
+                return None
+
+        if "book_version_id" in qp:
+            try:
+                bvid = int(qp.get("book_version_id"))
+            except (TypeError, ValueError):
+                return None
+            bv = BookVersion.objects.filter(id=bvid).only("id", "book_id").first()
+            return bv.book_id if bv else None
+
+        data = getattr(request, "data", {}) or {}
+        if isinstance(data, dict):
+            if "book_id" in data:
+                try:
+                    return int(data.get("book_id"))
+                except (TypeError, ValueError):
+                    return None
+            if "book_version_id" in data:
+                try:
+                    bvid = int(data.get("book_version_id"))
+                except (TypeError, ValueError):
+                    return None
+                bv = BookVersion.objects.filter(id=bvid).only("id", "book_id").first()
+                return bv.book_id if bv else None
+
+        return None
 
     def has_permission(self, request, view):
         """Permite acesso com entitlement ativo (ou staff)."""
@@ -23,11 +66,21 @@ class HasActiveBookEntitlement(BasePermission):
             return True
 
         now = timezone.now()
+        book_id = self._resolve_book_id(request, view)
 
-        return (
+        base = (
             Entitlement.objects
             .filter(user=user, status=Entitlement.Status.ACTIVE)
-            .filter(Q(product=Entitlement.Product.BOOK) | Q(product=Entitlement.Product.SUBSCRIPTION))
             .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
-            .exists()
         )
+
+        # subscription sempre libera
+        if base.filter(product=Entitlement.Product.SUBSCRIPTION).exists():
+            return True
+
+        # se conseguimos resolver livro, exige entitlement daquele livro
+        if book_id is not None:
+            return base.filter(product=Entitlement.Product.BOOK, book_id=book_id).exists()
+
+        # fallback (ex.: endpoints de list) - a VIEW tem que filtrar o queryset
+        return base.filter(product=Entitlement.Product.BOOK).exists()

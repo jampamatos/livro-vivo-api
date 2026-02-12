@@ -1,27 +1,36 @@
 from rest_framework import viewsets
-from rest_framework.permissions import IsAuthenticated
 
+from entitlements.services import entitled_book_ids, user_has_subscription
 from .models import Annotation
+from .permissions import HasActiveBookEntitlementForAnnotation
 from .serializers import AnnotationSerializer
+
 
 class AnnotationViewSet(viewsets.ModelViewSet):
     """
     CRUD de anotações do usuário logado.
     Filtros (query params):
-      - book_version_id
+      - book_version_id (ou book_version)
       - page_number
     """
     serializer_class = AnnotationSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [HasActiveBookEntitlementForAnnotation]
 
     def get_queryset(self):
-        """Limita o queryset ao usuário logado e aplica filtros opcionais."""
-        qs = Annotation.objects.filter(user=self.request.user)
+        """
+        Limita ao usuário logado e filtra por entitlement do livro.
 
-        # Aceita ambos os nomes por compatibilidade com clientes antigos.
-        bv = self.request.query_params.get('book_version_id') or self.request.query_params.get(
-            'book_version'
-        )
+        - subscription: pode ver todas as anotações dele.
+        - sem subscription: só anotações cujas versões pertencem a livros com entitlement.
+        """
+        user = self.request.user
+        qs = Annotation.objects.filter(user=user).select_related('book_version', 'book_version__book')
+
+        if not getattr(user, 'is_staff', False) and not user_has_subscription(user):
+            allowed_book_ids = entitled_book_ids(user)
+            qs = qs.filter(book_version__book_id__in=allowed_book_ids)
+
+        bv = self.request.query_params.get('book_version_id') or self.request.query_params.get('book_version')
         if bv:
             qs = qs.filter(book_version_id=bv)
 
@@ -30,11 +39,9 @@ class AnnotationViewSet(viewsets.ModelViewSet):
             try:
                 qs = qs.filter(page_number=int(page))
             except ValueError:
-                # Se vier lixo, não filtra por page (não quebra list).
                 pass
 
         return qs
 
     def perform_create(self, serializer):
-        """Força o vínculo da anotação ao usuário autenticado."""
         serializer.save(user=self.request.user)

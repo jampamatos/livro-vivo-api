@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from entitlements.models import Entitlement
+from library.models import Book
 
 User = get_user_model()
 
@@ -236,10 +237,13 @@ class AccountsAPITests(TestCase):
             email='other@example.com',
             password='StrongPass123',
         )
+        book = Book.objects.create(title='Livro de teste')
+        other_book = Book.objects.create(title='Livro de outro usuário')
 
         older = Entitlement.objects.create(
             user=user,
             product=Entitlement.Product.BOOK,
+            book=book,
             status=Entitlement.Status.ACTIVE,
             expires_at=timezone.now() + timedelta(days=7),
             source='test',
@@ -253,6 +257,7 @@ class AccountsAPITests(TestCase):
         Entitlement.objects.create(
             user=other_user,
             product=Entitlement.Product.BOOK,
+            book=other_book,
             status=Entitlement.Status.ACTIVE,
         )
 

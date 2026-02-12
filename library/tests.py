@@ -45,10 +45,23 @@ class LibraryBaseTestCase(TestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
         return self.client
 
-    def _grant_entitlement(self, user, product=Entitlement.Product.BOOK, status=Entitlement.Status.ACTIVE, expires_at=None):
+    def _grant_entitlement(
+        self,
+        user,
+        product=Entitlement.Product.BOOK,
+        status=Entitlement.Status.ACTIVE,
+        expires_at=None,
+        book=None,
+    ):
+        if product == Entitlement.Product.BOOK and book is None:
+            book = Book.objects.create(title='Entitled', status=Book.Status.DRAFT)
+        if product == Entitlement.Product.SUBSCRIPTION:
+            book = None
+
         return Entitlement.objects.create(
             user=user,
             product=product,
+            book=book,
             status=status,
             expires_at=expires_at,
         )
@@ -157,11 +170,10 @@ class LibrarySnippetTests(LibraryBaseTestCase):
 class LibraryAPITests(LibraryBaseTestCase):
     def test_book_list_filters_for_non_staff(self):
         user = self._create_user()
-        self._grant_entitlement(user)
-        self._auth_client(user)
-
         Book.objects.create(title='Draft', status=Book.Status.DRAFT)
         published = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=published)
+        self._auth_client(user)
 
         response = self.client.get(reverse('book-list'))
 
@@ -183,12 +195,26 @@ class LibraryAPITests(LibraryBaseTestCase):
         ids = {item['id'] for item in response.data['books']}
         self.assertEqual(ids, {draft.id, published.id})
 
-    def test_book_version_list_hides_unpublished_book_for_non_staff(self):
+    def test_book_list_with_subscription_includes_all_published_books(self):
         user = self._create_user()
-        self._grant_entitlement(user)
+        self._grant_entitlement(user, product=Entitlement.Product.SUBSCRIPTION)
         self._auth_client(user)
 
+        Book.objects.create(title='Draft', status=Book.Status.DRAFT)
+        published1 = Book.objects.create(title='Published 1', status=Book.Status.PUBLISHED)
+        published2 = Book.objects.create(title='Published 2', status=Book.Status.PUBLISHED)
+
+        response = self.client.get(reverse('book-list'))
+
+        self.assertEqual(response.status_code, 200)
+        ids = {item['id'] for item in response.data['books']}
+        self.assertEqual(ids, {published1.id, published2.id})
+
+    def test_book_version_list_hides_unpublished_book_for_non_staff(self):
+        user = self._create_user()
         book = Book.objects.create(title='Draft', status=Book.Status.DRAFT)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
 
         response = self.client.get(reverse('book-versions', kwargs={'book_id': book.id}))
 
@@ -196,10 +222,9 @@ class LibraryAPITests(LibraryBaseTestCase):
 
     def test_book_version_list_filters_versions_for_non_staff(self):
         user = self._create_user()
-        self._grant_entitlement(user)
-        self._auth_client(user)
-
         book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
         published = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
         BookVersion.objects.create(book=book, version='2024.02', status=BookVersion.Status.DRAFT)
 
@@ -224,12 +249,27 @@ class LibraryAPITests(LibraryBaseTestCase):
         ids = {item['id'] for item in response.data['versions']}
         self.assertEqual(ids, {draft.id, published.id})
 
-    def test_download_url_requires_published_for_non_staff(self):
+    def test_book_version_list_allows_subscription_without_book_entitlement(self):
         user = self._create_user()
-        self._grant_entitlement(user)
+        self._grant_entitlement(user, product=Entitlement.Product.SUBSCRIPTION)
         self._auth_client(user)
 
+        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        published = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        BookVersion.objects.create(book=book, version='2024.02', status=BookVersion.Status.DRAFT)
+
+        response = self.client.get(reverse('book-versions', kwargs={'book_id': book.id}))
+
+        self.assertEqual(response.status_code, 200)
+        versions = response.data['versions']
+        self.assertEqual(len(versions), 1)
+        self.assertEqual(versions[0]['id'], published.id)
+
+    def test_download_url_requires_published_for_non_staff(self):
+        user = self._create_user()
         book = Book.objects.create(title='Draft', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
         draft = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.DRAFT)
 
         response = self.client.get(
@@ -240,11 +280,10 @@ class LibraryAPITests(LibraryBaseTestCase):
 
     def test_download_url_returns_url_when_pdf_present(self):
         user = self._create_user()
-        self._grant_entitlement(user)
-        self._auth_client(user)
-
         with self._temp_media():
             book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+            self._grant_entitlement(user, book=book)
+            self._auth_client(user)
             version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
             version.pdf.save('test.pdf', SimpleUploadedFile('test.pdf', b'%PDF-1.4 test'))
 
@@ -257,10 +296,9 @@ class LibraryAPITests(LibraryBaseTestCase):
 
     def test_download_url_returns_404_when_no_pdf(self):
         user = self._create_user()
-        self._grant_entitlement(user)
-        self._auth_client(user)
-
         book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
         version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
 
         response = self.client.get(
@@ -271,11 +309,10 @@ class LibraryAPITests(LibraryBaseTestCase):
 
     def test_download_file_response(self):
         user = self._create_user()
-        self._grant_entitlement(user)
-        self._auth_client(user)
-
         with self._temp_media():
             book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+            self._grant_entitlement(user, book=book)
+            self._auth_client(user)
             version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
             version.pdf.save('test.pdf', SimpleUploadedFile('test.pdf', b'%PDF-1.4 test'))
 
@@ -288,10 +325,9 @@ class LibraryAPITests(LibraryBaseTestCase):
 
     def test_download_file_returns_404_when_no_pdf(self):
         user = self._create_user()
-        self._grant_entitlement(user)
-        self._auth_client(user)
-
         book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
         version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
 
         response = self.client.get(
@@ -302,7 +338,7 @@ class LibraryAPITests(LibraryBaseTestCase):
 
     def test_search_validation_errors(self):
         user = self._create_user()
-        self._grant_entitlement(user)
+        self._grant_entitlement(user, product=Entitlement.Product.SUBSCRIPTION)
         self._auth_client(user)
 
         response = self.client.get(reverse('search'))
@@ -322,10 +358,9 @@ class LibraryAPITests(LibraryBaseTestCase):
 
     def test_search_filters_non_staff_to_published(self):
         user = self._create_user()
-        self._grant_entitlement(user)
-        self._auth_client(user)
-
         book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
         published_version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
         draft_version = BookVersion.objects.create(book=book, version='2024.02', status=BookVersion.Status.DRAFT)
 
@@ -357,10 +392,9 @@ class LibraryAPITests(LibraryBaseTestCase):
 
     def test_page_text_view_validation_and_visibility(self):
         user = self._create_user()
-        self._grant_entitlement(user)
-        self._auth_client(user)
-
         book = Book.objects.create(title='Draft', status=Book.Status.DRAFT)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
         version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.DRAFT)
 
         response = self.client.get(
@@ -375,10 +409,9 @@ class LibraryAPITests(LibraryBaseTestCase):
 
     def test_page_text_view_returns_text_for_published(self):
         user = self._create_user()
-        self._grant_entitlement(user)
-        self._auth_client(user)
-
         book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
         version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
         PageText.objects.create(book_version=version, page_number=1, text='Hello page')
 
@@ -391,10 +424,9 @@ class LibraryAPITests(LibraryBaseTestCase):
     
     def test_search_by_book_id_path(self):
         user = self._create_user()
-        self._grant_entitlement(user)
-        self._auth_client(user)
-
         book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
         version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
         PageText.objects.create(book_version=version, page_number=1, text='Hello world from page 1')
 
@@ -410,13 +442,79 @@ class LibraryAPITests(LibraryBaseTestCase):
 
     def test_search_requires_q(self):
         user = self._create_user()
-        self._grant_entitlement(user)
-        self._auth_client(user)
-
         book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
 
         response = self.client.get(reverse('book-search', kwargs={'book_id': book.id}))
         self.assertEqual(response.status_code, 400)
+
+    def test_book_version_list_denies_when_entitlement_is_for_other_book(self):
+        user = self._create_user()
+        entitled_book = Book.objects.create(title='Entitled', status=Book.Status.PUBLISHED)
+        target_book = Book.objects.create(title='Target', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=entitled_book)
+        self._auth_client(user)
+
+        response = self.client.get(reverse('book-versions', kwargs={'book_id': target_book.id}))
+        self.assertEqual(response.status_code, 403)
+
+    def test_book_search_denies_when_entitlement_is_for_other_book(self):
+        user = self._create_user()
+        entitled_book = Book.objects.create(title='Entitled', status=Book.Status.PUBLISHED)
+        target_book = Book.objects.create(title='Target', status=Book.Status.PUBLISHED)
+        target_version = BookVersion.objects.create(
+            book=target_book,
+            version='2024.01',
+            status=BookVersion.Status.PUBLISHED,
+        )
+        PageText.objects.create(book_version=target_version, page_number=1, text='Hello scoped world')
+
+        self._grant_entitlement(user, book=entitled_book)
+        self._auth_client(user)
+
+        response = self.client.get(reverse('book-search', kwargs={'book_id': target_book.id}), {'q': 'hello'})
+        self.assertEqual(response.status_code, 403)
+
+    def test_download_url_denies_when_entitlement_is_for_other_book(self):
+        user = self._create_user()
+        entitled_book = Book.objects.create(title='Entitled', status=Book.Status.PUBLISHED)
+        target_book = Book.objects.create(title='Target', status=Book.Status.PUBLISHED)
+        target_version = BookVersion.objects.create(
+            book=target_book,
+            version='2024.01',
+            status=BookVersion.Status.PUBLISHED,
+        )
+
+        self._grant_entitlement(user, book=entitled_book)
+        self._auth_client(user)
+
+        response = self.client.get(
+            reverse('book-version-download-url', kwargs={'book_id': target_book.id, 'version_id': target_version.id})
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_download_file_denies_when_entitlement_is_for_other_book(self):
+        user = self._create_user()
+        entitled_book = Book.objects.create(title='Entitled', status=Book.Status.PUBLISHED)
+
+        with self._temp_media():
+            target_book = Book.objects.create(title='Target', status=Book.Status.PUBLISHED)
+            target_version = BookVersion.objects.create(
+                book=target_book,
+                version='2024.01',
+                status=BookVersion.Status.PUBLISHED,
+            )
+            target_version.pdf.save('target.pdf', SimpleUploadedFile('target.pdf', b'%PDF-1.4 test'))
+
+            self._grant_entitlement(user, book=entitled_book)
+            self._auth_client(user)
+
+            response = self.client.get(
+                reverse('book-version-download', kwargs={'book_id': target_book.id, 'version_id': target_version.id})
+            )
+
+        self.assertEqual(response.status_code, 403)
 
 class ExtractPdfTextCommandTests(LibraryBaseTestCase):
     def test_cleanup_removes_noise(self):

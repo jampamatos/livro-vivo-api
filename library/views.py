@@ -9,6 +9,7 @@ from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from entitlements.services import entitled_book_ids, user_has_subscription
 from .models import Book, BookVersion, PageText
 from .permissions import HasActiveBookEntitlement
 from .serializers import (
@@ -62,8 +63,22 @@ class BookListView(APIView):
     def get(self, request):
         qs = Book.objects.all().order_by('-updated_at')
 
-        if not request.user.is_staff:
-            qs = qs.filter(status=Book.Status.PUBLISHED)
+        # staff vê tudo
+        if request.user.is_staff:
+            data = BookSerializer(qs, many=True).data
+            return Response({'books': data})
+        
+        # usuário comum vê apenas livros publicados
+        qs = qs.filter(status=Book.Status.PUBLISHED)
+
+        # subscription vê todos os livros publicados
+        if user_has_subscription(request.user):
+            data = BookSerializer(qs, many=True).data
+            return Response({'books': data})
+        
+        # sem subscription, filtra por entitlement explícito do book
+        allowed_ids = entitled_book_ids(request.user)
+        qs = qs.filter(id__in=allowed_ids)
 
         data = BookSerializer(qs, many=True).data
         return Response({'books': data})
@@ -260,4 +275,5 @@ class BookVersionPageTextView(APIView):
             'page_number': pt.page_number,
             'text': pt.text or '',
         }
+
         return Response(PageTextSerializer(payload).data)

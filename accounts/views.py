@@ -122,6 +122,7 @@ class MeEntitlementsView(APIView):
             {
                 'id': e.id,
                 'product': e.product,
+                'book_id': e.book_id,
                 'status': e.status,
                 'expires_at': e.expires_at,
                 'is_active': e.is_active(),

@@ -58,6 +58,7 @@ class EntitlementSerializer(serializers.Serializer):
 
     id = serializers.IntegerField()
     product = serializers.CharField()
+    book_id = serializers.IntegerField(allow_null=True)
     status = serializers.CharField()
     expires_at = serializers.DateTimeField(allow_null=True)
     is_active = serializers.BooleanField()

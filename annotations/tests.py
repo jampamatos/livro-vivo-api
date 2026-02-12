@@ -10,6 +10,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from entitlements.models import Entitlement
 from library.models import Book, BookVersion
 
 from .models import Annotation
@@ -148,8 +149,23 @@ class AnnotationApiTests(TestCase):
         self.access1 = str(RefreshToken.for_user(self.user1).access_token)
         self.access2 = str(RefreshToken.for_user(self.user2).access_token)
 
-        book = create_min_instance(Book)
-        self.book_version = create_min_instance(BookVersion, book=book)
+        self.book = create_min_instance(Book)
+        self.book_version = create_min_instance(BookVersion, book=self.book)
+        self.other_book = create_min_instance(Book)
+        self.other_book_version = create_min_instance(BookVersion, book=self.other_book)
+
+        Entitlement.objects.create(
+            user=self.user1,
+            product=Entitlement.Product.BOOK,
+            book=self.book,
+            status=Entitlement.Status.ACTIVE,
+        )
+        Entitlement.objects.create(
+            user=self.user2,
+            product=Entitlement.Product.BOOK,
+            book=self.book,
+            status=Entitlement.Status.ACTIVE,
+        )
 
         self.client = APIClient()
 
@@ -292,3 +308,56 @@ class AnnotationApiTests(TestCase):
         resp = self.client.delete(f"/annotations/{ann.id}/")
         self.assertEqual(resp.status_code, 204)
         self.assertFalse(Annotation.objects.filter(id=ann.id).exists())
+
+    def test_list_hides_annotations_from_books_without_entitlement(self):
+        allowed = Annotation.objects.create(
+            user=self.user1,
+            book_version=self.book_version,
+            page_number=1,
+            rects_normalizados=[],
+            note="allowed",
+            color="",
+        )
+        Annotation.objects.create(
+            user=self.user1,
+            book_version=self.other_book_version,
+            page_number=1,
+            rects_normalizados=[],
+            note="blocked",
+            color="",
+        )
+
+        self.auth1()
+        resp = self.client.get("/annotations/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 1)
+        self.assertEqual(resp.data[0]["id"], allowed.id)
+
+    def test_create_denies_annotation_for_book_without_entitlement(self):
+        self.auth1()
+        payload = {
+            "book_version": self.other_book_version.id,
+            "page_number": 7,
+            "rects_normalizados": [{"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.05}],
+            "note": "sem acesso",
+            "color": "red",
+        }
+        resp = self.client.post("/annotations/", payload, format="json")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_subscription_allows_cross_book_annotation(self):
+        Entitlement.objects.create(
+            user=self.user1,
+            product=Entitlement.Product.SUBSCRIPTION,
+            status=Entitlement.Status.ACTIVE,
+        )
+        self.auth1()
+        payload = {
+            "book_version": self.other_book_version.id,
+            "page_number": 9,
+            "rects_normalizados": [{"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.05}],
+            "note": "com assinatura",
+            "color": "blue",
+        }
+        resp = self.client.post("/annotations/", payload, format="json")
+        self.assertEqual(resp.status_code, 201)
