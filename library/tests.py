@@ -315,6 +315,7 @@ class LibraryAdminTests(TestCase):
         self.assertContains(response, 'library/admin/chapter_rich_editor.css')
         self.assertContains(response, 'Tags permitidas:')
         self.assertContains(response, 'Tags permitidas: a, blockquote, br')
+        self.assertContains(response, 'lv-rich-editor-preview')
 
 
 class LibraryPermissionTests(LibraryBaseTestCase):

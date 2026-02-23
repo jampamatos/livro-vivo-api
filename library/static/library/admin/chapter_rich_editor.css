@@ -60,22 +60,8 @@
   line-height: 1.25;
 }
 
-.lv-rich-editor__surface ul,
-.lv-rich-editor__surface ol {
-  margin: 0 0 12px;
-  padding-left: 18px;
-  list-style-position: inside;
-}
-
-.lv-rich-editor__surface ul {
-  list-style-type: disc;
-}
-
-.lv-rich-editor__surface ol {
-  list-style-type: decimal;
-}
-
-.lv-rich-editor__surface li {
+.lv-rich-editor__surface li,
+.lv-rich-editor-preview li {
   margin: 0 0 6px;
 }
 
@@ -83,6 +69,26 @@
 .lv-rich-editor__surface li div {
   margin: 0;
   display: inline;
+}
+
+/* Override Django admin aligned-form list resets inside editor/preview. */
+form .aligned .lv-rich-editor__surface ul,
+form .aligned .lv-rich-editor__surface ol,
+form .aligned .lv-rich-editor-preview ul,
+form .aligned .lv-rich-editor-preview ol {
+  margin: 0 0 12px 0 !important;
+  padding-left: 24px !important;
+  text-align: left;
+}
+
+form .aligned .lv-rich-editor__surface ul li,
+form .aligned .lv-rich-editor-preview ul li {
+  list-style: disc outside !important;
+}
+
+form .aligned .lv-rich-editor__surface ol li,
+form .aligned .lv-rich-editor-preview ol li {
+  list-style: decimal outside !important;
 }
 
 .lv-rich-editor__surface a {

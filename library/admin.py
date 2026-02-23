@@ -65,7 +65,7 @@ class BookChapterInline(admin.StackedInline):
 
         safe_html = sanitize_chapter_html(obj.content_rich)
         return format_html(
-            '<div style="max-width: 54rem; max-height: 14rem; overflow: auto;">{}</div>',
+            '<div class="lv-rich-editor-preview" style="max-width: 54rem; max-height: 14rem; overflow: auto;">{}</div>',
             mark_safe(safe_html),
         )
 
@@ -116,7 +116,7 @@ class BookChapterAdmin(admin.ModelAdmin):
 
         safe_html = sanitize_chapter_html(obj.content_rich)
         return format_html(
-            '<div style="max-width: 54rem; max-height: 18rem; overflow: auto;">{}</div>',
+            '<div class="lv-rich-editor-preview" style="max-width: 54rem; max-height: 18rem; overflow: auto;">{}</div>',
             mark_safe(safe_html),
         )
 
