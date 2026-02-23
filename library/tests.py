@@ -186,6 +186,107 @@ class LibraryModelTests(LibraryBaseTestCase):
         orders = list(BookChapter.objects.filter(book_version=version).values_list('order', flat=True))
         self.assertEqual(orders, [1, 2])
 
+    def test_book_chapter_sanitizes_disallowed_tags_and_attrs(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        chapter = BookChapter.objects.create(
+            book_version=version,
+            order=1,
+            title='Segurança',
+            slug='seguranca',
+            content_rich=(
+                '<h2 onclick="alert(1)">Título</h2>'
+                '<p>Texto com <a href="javascript:alert(1)" target="_blank">link ruim</a></p>'
+                '<p>Texto com <a href="https://example.com" target="_blank">link bom</a></p>'
+                '<script>alert("xss")</script>'
+            ),
+        )
+
+        self.assertNotIn('onclick', chapter.content_rich)
+        self.assertNotIn('<script', chapter.content_rich)
+        self.assertNotIn('javascript:', chapter.content_rich)
+        self.assertIn('<h2>Título</h2>', chapter.content_rich)
+        self.assertIn('href="https://example.com"', chapter.content_rich)
+        self.assertIn('rel="noopener noreferrer"', chapter.content_rich)
+        self.assertNotIn('alert("xss")', chapter.content_plain)
+
+    def test_book_chapter_sanitizer_drops_wrapper_tags_and_keeps_text(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        chapter = BookChapter.objects.create(
+            book_version=version,
+            order=1,
+            title='Limpeza',
+            slug='limpeza',
+            content_rich='<div><span>Texto <em>válido</em></span></div>',
+        )
+
+        self.assertEqual(chapter.content_rich, 'Texto <em>válido</em>')
+        self.assertEqual(chapter.content_plain, 'Texto válido')
+
+
+class LibraryAdminTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.admin_user = User.objects.create_superuser(
+            username='admin',
+            email='admin@example.com',
+            password='StrongPass123',
+        )
+        self.client.force_login(self.admin_user)
+
+        self.book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        self.version = BookVersion.objects.create(
+            book=self.book,
+            version='2024.01',
+            status=BookVersion.Status.PUBLISHED,
+        )
+        self.chapter = BookChapter.objects.create(
+            book_version=self.version,
+            order=1,
+            title='Introdução',
+            slug='introducao',
+            content_rich='<p>Conteúdo inicial</p>',
+        )
+
+    def test_book_chapter_admin_changelist_renders_preview_and_order(self):
+        response = self.client.get(reverse('admin:library_bookchapter_changelist'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'introducao')
+        self.assertContains(response, 'Conteúdo inicial')
+        self.assertContains(response, 'id="id_form-0-order"')
+
+    def test_book_chapter_admin_change_form_updates_and_sanitizes_content(self):
+        response = self.client.post(
+            reverse('admin:library_bookchapter_change', args=[self.chapter.id]),
+            data={
+                'book_version': self.version.id,
+                'order': 2,
+                'title': 'Introdução revisada',
+                'slug': 'introducao-revisada',
+                'content_rich': '<p onclick="alert(1)">Novo texto</p><script>alert("x")</script>',
+                '_save': 'Save',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.chapter.refresh_from_db()
+        self.assertEqual(self.chapter.order, 2)
+        self.assertEqual(self.chapter.title, 'Introdução revisada')
+        self.assertEqual(self.chapter.slug, 'introducao-revisada')
+        self.assertEqual(self.chapter.content_rich, '<p>Novo texto</p>')
+        self.assertEqual(self.chapter.content_plain, 'Novo texto')
+
+    def test_book_chapter_admin_change_form_loads_rich_editor_assets(self):
+        response = self.client.get(reverse('admin:library_bookchapter_change', args=[self.chapter.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'library/admin/chapter_rich_editor.js')
+        self.assertContains(response, 'library/admin/chapter_rich_editor.css')
+        self.assertContains(response, 'Tags permitidas:')
+
 
 class LibraryPermissionTests(LibraryBaseTestCase):
     def test_permission_denies_anonymous(self):
