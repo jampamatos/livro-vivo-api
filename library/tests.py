@@ -679,6 +679,118 @@ class LibraryAPITests(LibraryBaseTestCase):
         self.assertEqual(len(versions), 1)
         self.assertEqual(versions[0]['id'], published.id)
 
+    def test_current_version_returns_latest_published_for_non_staff(self):
+        user = self._create_user()
+        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
+
+        published_old = BookVersion.objects.create(
+            book=book,
+            version='2024.01',
+            status=BookVersion.Status.PUBLISHED,
+        )
+        BookVersion.objects.create(
+            book=book,
+            version='2024.02',
+            status=BookVersion.Status.DRAFT,
+        )
+        published_latest = BookVersion.objects.create(
+            book=book,
+            version='2024.03',
+            status=BookVersion.Status.PUBLISHED,
+        )
+
+        response = self.client.get(reverse('book-current-version', kwargs={'book_id': book.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['book']['id'], book.id)
+        self.assertEqual(response.data['version']['id'], published_latest.id)
+        self.assertNotEqual(response.data['version']['id'], published_old.id)
+
+    def test_current_version_returns_latest_any_for_staff(self):
+        user = self._create_user(is_staff=True)
+        self._auth_client(user)
+        book = Book.objects.create(title='Draft Book', status=Book.Status.DRAFT)
+        BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        draft_latest = BookVersion.objects.create(book=book, version='2024.02', status=BookVersion.Status.DRAFT)
+
+        response = self.client.get(reverse('book-current-version', kwargs={'book_id': book.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['version']['id'], draft_latest.id)
+        self.assertEqual(response.data['version']['status'], BookVersion.Status.DRAFT)
+
+    def test_current_version_returns_404_when_non_staff_has_no_published_version(self):
+        user = self._create_user()
+        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
+        BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.DRAFT)
+
+        response = self.client.get(reverse('book-current-version', kwargs={'book_id': book.id}))
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_current_version_chapter_summary_returns_ordered_chapters(self):
+        user = self._create_user()
+        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
+        current = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        BookChapter.objects.create(book_version=current, order=2, title='Cap 2', slug='cap-2', content_rich='<p>2</p>')
+        BookChapter.objects.create(book_version=current, order=1, title='Cap 1', slug='cap-1', content_rich='<p>1</p>')
+
+        response = self.client.get(
+            reverse('book-current-version-chapters', kwargs={'book_id': book.id})
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['book_id'], book.id)
+        self.assertEqual(response.data['book_version_id'], current.id)
+        self.assertEqual([c['order'] for c in response.data['chapters']], [1, 2])
+        self.assertEqual([c['slug'] for c in response.data['chapters']], ['cap-1', 'cap-2'])
+
+    def test_current_version_chapter_by_slug_returns_chapter_and_navigation(self):
+        user = self._create_user()
+        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
+        current = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        BookChapter.objects.create(book_version=current, order=1, title='Cap 1', slug='cap-1', content_rich='<p>1</p>')
+        middle = BookChapter.objects.create(
+            book_version=current,
+            order=2,
+            title='Cap 2',
+            slug='cap-2',
+            content_rich='<h2>Dois</h2><p>Texto</p>',
+        )
+        BookChapter.objects.create(book_version=current, order=3, title='Cap 3', slug='cap-3', content_rich='<p>3</p>')
+
+        response = self.client.get(
+            reverse('book-current-version-chapter-by-slug', kwargs={'book_id': book.id, 'chapter_slug': middle.slug})
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['book_version_id'], current.id)
+        self.assertEqual(response.data['chapter']['slug'], 'cap-2')
+        self.assertEqual(response.data['previous_slug'], 'cap-1')
+        self.assertEqual(response.data['next_slug'], 'cap-3')
+        self.assertEqual(response.data['chapter']['content_plain'], 'Dois Texto')
+
+    def test_current_version_chapter_by_slug_returns_404_when_missing(self):
+        user = self._create_user()
+        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
+        BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+
+        response = self.client.get(
+            reverse('book-current-version-chapter-by-slug', kwargs={'book_id': book.id, 'chapter_slug': 'missing'})
+        )
+
+        self.assertEqual(response.status_code, 404)
+
     def test_download_url_requires_published_for_non_staff(self):
         user = self._create_user()
         book = Book.objects.create(title='Draft', status=Book.Status.PUBLISHED)
@@ -966,6 +1078,39 @@ class LibraryAPITests(LibraryBaseTestCase):
 
         response = self.client.get(reverse('book-versions', kwargs={'book_id': target_book.id}))
         self.assertEqual(response.status_code, 403)
+
+    def test_current_version_and_chapter_endpoints_deny_other_book_entitlement(self):
+        user = self._create_user()
+        entitled_book = Book.objects.create(title='Entitled', status=Book.Status.PUBLISHED)
+        target_book = Book.objects.create(title='Target', status=Book.Status.PUBLISHED)
+        target_version = BookVersion.objects.create(
+            book=target_book,
+            version='2024.01',
+            status=BookVersion.Status.PUBLISHED,
+        )
+        BookChapter.objects.create(
+            book_version=target_version,
+            order=1,
+            title='Cap',
+            slug='cap',
+            content_rich='<p>cap</p>',
+        )
+        self._grant_entitlement(user, book=entitled_book)
+        self._auth_client(user)
+
+        current_response = self.client.get(
+            reverse('book-current-version', kwargs={'book_id': target_book.id})
+        )
+        summary_response = self.client.get(
+            reverse('book-current-version-chapters', kwargs={'book_id': target_book.id})
+        )
+        chapter_response = self.client.get(
+            reverse('book-current-version-chapter-by-slug', kwargs={'book_id': target_book.id, 'chapter_slug': 'cap'})
+        )
+
+        self.assertEqual(current_response.status_code, 403)
+        self.assertEqual(summary_response.status_code, 403)
+        self.assertEqual(chapter_response.status_code, 403)
 
     def test_book_search_denies_when_entitlement_is_for_other_book(self):
         user = self._create_user()
