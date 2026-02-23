@@ -165,6 +165,52 @@ python manage.py extract_pdf_text --book-version-id <version_id> --force
 
 ---
 
+## Plano de migração PDF -> texto nativo (E3-02)
+
+Objetivo: migrar de leitura por PDF/página para leitura por capítulos sem downtime e sem quebrar o app atual.
+
+### Estratégia de rollout por feature flag
+
+- `BOOK_CONTENT_MODE` (backend): `pdf` | `hybrid` | `chapters` (default recomendado: `pdf`).
+- `EXPO_PUBLIC_BOOK_CONTENT_MODE` (app): `pdf` | `hybrid` | `chapters` (default recomendado: `pdf`).
+
+Contrato de compatibilidade:
+
+- `pdf`: mantém comportamento atual (somente endpoints legados de PDF/página).
+- `hybrid`: mantém endpoints legados + habilita fluxo chapter-first.
+- `chapters`: chapter-first como padrão; legado fica desativado por flag para usuário final.
+
+### Sequência reproduzível em staging
+
+1. Aplicar schema novo sem ativar flags:
+
+```bash
+python manage.py migrate
+```
+
+2. Popular capítulos em versões-alvo via admin (`BookVersion` + `BookChapter`) e validar:
+   - `slug` único por versão
+   - `order` único por versão
+   - `content_plain` gerado automaticamente
+
+3. Ativar backend em `hybrid` e executar smoke test:
+   - endpoints legados continuam funcionais (`/books/:id/versions`, `/books/:id/search`, download PDF etc.)
+   - endpoints chapter-first passam a responder (quando disponíveis na fase de API chapter-first)
+
+4. Ativar app em `hybrid` e validar fallback:
+   - livro com capítulos: abre reader chapter-first
+   - livro sem capítulos: fallback para reader PDF legado
+
+5. Após validação do lote beta founder, promover para `chapters`.
+
+### Rollback operacional
+
+- Rollback rápido (sem downtime): voltar flags backend/app para `pdf`.
+- Rollback de deploy: reverter release da API/app sem reverter migrations do banco.
+- Dados de capítulos permanecem intactos; novo cutover depende apenas de reativar `hybrid`/`chapters`.
+
+---
+
 ## Endpoints (MVP)
 
 ### Health
