@@ -35,7 +35,7 @@ class BookChapterAdminForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        allowed_tags = ', '.join(f'<{tag}>' for tag in sorted(ALLOWED_CHAPTER_TAGS))
+        allowed_tags = ', '.join(sorted(ALLOWED_CHAPTER_TAGS))
         self.fields['content_rich'].help_text = (
             'Use o editor para estruturar o capítulo com headings, listas e links. '
             f'Tags permitidas: {allowed_tags}.'
