@@ -20,11 +20,14 @@ from rest_framework.views import APIView
 
 from entitlements.models import Entitlement
 from entitlements.services import entitled_book_ids, user_has_book_entitlement, user_has_subscription
-from .models import Book, BookVersion, PageText
+from .models import Book, BookChapter, BookVersion, PageText
 from .permissions import HasActiveBookEntitlement
 from .serializers import (
     BookSerializer,
     BookVersionSerializer,
+    ChapterBySlugResponseSerializer,
+    ChapterSummaryResponseSerializer,
+    CurrentBookVersionResponseSerializer,
     PageTextSerializer,
     SearchResultSerializer,
 )
@@ -186,6 +189,97 @@ class BookVersionListView(APIView):
 
         data = BookVersionSerializer(qs, many=True).data
         return Response({'book': BookSerializer(book).data, 'versions': data})
+
+
+def _get_visible_book_for_user(*, user, book_id: int) -> Book:
+    book = get_object_or_404(Book, pk=book_id)
+    if not user.is_staff and book.status != Book.Status.PUBLISHED:
+        raise NotFound()
+    return book
+
+
+def _get_current_visible_version_for_user(*, user, book: Book) -> BookVersion:
+    qs = BookVersion.objects.filter(book=book)
+    if not user.is_staff:
+        qs = qs.filter(status=BookVersion.Status.PUBLISHED)
+    current = qs.order_by('-created_at').first()
+    if not current:
+        raise NotFound()
+    return current
+
+
+class CurrentBookVersionView(APIView):
+    """Retorna a versão atual (chapter-first) de um livro."""
+
+    permission_classes = [HasActiveBookEntitlement]
+
+    def get(self, request, book_id: int):
+        book = _get_visible_book_for_user(user=request.user, book_id=book_id)
+        current = _get_current_visible_version_for_user(user=request.user, book=book)
+        payload = {
+            'book': book,
+            'version': current,
+        }
+        return Response(CurrentBookVersionResponseSerializer(payload).data)
+
+
+class CurrentBookChapterSummaryView(APIView):
+    """Retorna sumário de capítulos da versão atual (chapter-first)."""
+
+    permission_classes = [HasActiveBookEntitlement]
+
+    def get(self, request, book_id: int):
+        book = _get_visible_book_for_user(user=request.user, book_id=book_id)
+        current = _get_current_visible_version_for_user(user=request.user, book=book)
+        chapters_qs = current.chapters.order_by('order', 'id')
+        payload = {
+            'book_id': book.id,
+            'book_title': book.title,
+            'book_version_id': current.id,
+            'version': current.version,
+            'chapters': chapters_qs,
+        }
+        return Response(ChapterSummaryResponseSerializer(payload).data)
+
+
+class CurrentBookChapterBySlugView(APIView):
+    """Retorna um capítulo da versão atual por slug (chapter-first)."""
+
+    permission_classes = [HasActiveBookEntitlement]
+
+    def get(self, request, book_id: int, chapter_slug: str):
+        book = _get_visible_book_for_user(user=request.user, book_id=book_id)
+        current = _get_current_visible_version_for_user(user=request.user, book=book)
+
+        chapter = get_object_or_404(
+            BookChapter.objects.filter(book_version=current),
+            slug=chapter_slug,
+        )
+        previous_chapter = (
+            current.chapters
+            .filter(order__lt=chapter.order)
+            .order_by('-order', '-id')
+            .only('slug')
+            .first()
+        )
+        next_chapter = (
+            current.chapters
+            .filter(order__gt=chapter.order)
+            .order_by('order', 'id')
+            .only('slug')
+            .first()
+        )
+
+        payload = {
+            'book_id': book.id,
+            'book_title': book.title,
+            'book_version_id': current.id,
+            'version': current.version,
+            'chapter': chapter,
+            'previous_slug': previous_chapter.slug if previous_chapter else None,
+            'next_slug': next_chapter.slug if next_chapter else None,
+        }
+        return Response(ChapterBySlugResponseSerializer(payload).data)
 
 
 class BookVersionDownloadUrlView(APIView):

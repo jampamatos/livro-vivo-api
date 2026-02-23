@@ -53,6 +53,49 @@ class BookChapterSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'content_plain', 'created_at', 'updated_at']
 
 
+class BookChapterSummarySerializer(serializers.ModelSerializer):
+    """Serializer resumido de capítulo para sumário."""
+
+    class Meta:
+        model = BookChapter
+        fields = [
+            'id',
+            'order',
+            'title',
+            'slug',
+            'updated_at',
+        ]
+
+
+class CurrentBookVersionResponseSerializer(serializers.Serializer):
+    """Payload chapter-first da versão atual do livro."""
+
+    book = BookSerializer()
+    version = BookVersionSerializer()
+
+
+class ChapterSummaryResponseSerializer(serializers.Serializer):
+    """Payload chapter-first do sumário da versão atual."""
+
+    book_id = serializers.IntegerField()
+    book_title = serializers.CharField()
+    book_version_id = serializers.IntegerField()
+    version = serializers.CharField()
+    chapters = BookChapterSummarySerializer(many=True)
+
+
+class ChapterBySlugResponseSerializer(serializers.Serializer):
+    """Payload chapter-first de capítulo por slug."""
+
+    book_id = serializers.IntegerField()
+    book_title = serializers.CharField()
+    book_version_id = serializers.IntegerField()
+    version = serializers.CharField()
+    chapter = BookChapterSerializer()
+    previous_slug = serializers.CharField(allow_null=True)
+    next_slug = serializers.CharField(allow_null=True)
+
+
 class SearchResultSerializer(serializers.Serializer):
     """Serializer do payload de resultados de busca."""
 
