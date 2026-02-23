@@ -30,6 +30,9 @@ ALLOWED_CHAPTER_ATTRS = {
 VOID_CHAPTER_TAGS = {'br'}
 DROP_CONTENT_TAGS = {'script', 'style'}
 ALLOWED_LINK_SCHEMES = {'', 'http', 'https', 'mailto'}
+NORMALIZE_CHAPTER_TAGS = {
+    'div': 'p',
+}
 
 
 def _is_safe_href(value: str) -> bool:
@@ -48,14 +51,19 @@ class _ChapterHTMLSanitizer(HTMLParser):
         self._drop_depth = 0
 
     def handle_starttag(self, tag, attrs):
-        lower_tag = (tag or '').lower()
+        raw_tag = (tag or '').lower()
+        lower_tag = NORMALIZE_CHAPTER_TAGS.get(raw_tag, raw_tag)
 
         if self._drop_depth:
-            if lower_tag in DROP_CONTENT_TAGS:
+            if raw_tag in DROP_CONTENT_TAGS:
                 self._drop_depth += 1
             return
-        if lower_tag in DROP_CONTENT_TAGS:
+        if raw_tag in DROP_CONTENT_TAGS:
             self._drop_depth = 1
+            return
+        if raw_tag == 'div' and self._open_tags and self._open_tags[-1] == 'li':
+            # Browsers costumam embrulhar conteúdo de listas em <div>.
+            # Ignoramos esse wrapper para manter UL/OL estáveis.
             return
         if lower_tag not in ALLOWED_CHAPTER_TAGS:
             return
@@ -98,11 +106,14 @@ class _ChapterHTMLSanitizer(HTMLParser):
         self._open_tags.append(lower_tag)
 
     def handle_endtag(self, tag):
-        lower_tag = (tag or '').lower()
+        raw_tag = (tag or '').lower()
+        lower_tag = NORMALIZE_CHAPTER_TAGS.get(raw_tag, raw_tag)
 
         if self._drop_depth:
-            if lower_tag in DROP_CONTENT_TAGS:
+            if raw_tag in DROP_CONTENT_TAGS:
                 self._drop_depth = max(0, self._drop_depth - 1)
+            return
+        if raw_tag == 'div' and self._open_tags and self._open_tags[-1] == 'li':
             return
         if lower_tag not in ALLOWED_CHAPTER_TAGS or lower_tag in VOID_CHAPTER_TAGS:
             return

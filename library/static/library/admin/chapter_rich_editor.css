@@ -63,11 +63,26 @@
 .lv-rich-editor__surface ul,
 .lv-rich-editor__surface ol {
   margin: 0 0 12px;
-  padding-left: 22px;
+  padding-left: 18px;
+  list-style-position: inside;
+}
+
+.lv-rich-editor__surface ul {
+  list-style-type: disc;
+}
+
+.lv-rich-editor__surface ol {
+  list-style-type: decimal;
 }
 
 .lv-rich-editor__surface li {
   margin: 0 0 6px;
+}
+
+.lv-rich-editor__surface li p,
+.lv-rich-editor__surface li div {
+  margin: 0;
+  display: inline;
 }
 
 .lv-rich-editor__surface a {

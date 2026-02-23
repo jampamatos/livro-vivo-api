@@ -47,6 +47,11 @@
     editor.setAttribute('aria-multiline', 'true');
     editor.setAttribute('aria-label', 'Chapter rich text content');
     editor.innerHTML = textarea.value || '';
+    try {
+      document.execCommand('defaultParagraphSeparator', false, 'p');
+    } catch (error) {
+      // browsers sem suporte mantêm comportamento padrão
+    }
 
     wrapper.appendChild(toolbar);
     wrapper.appendChild(editor);
@@ -92,6 +97,13 @@
     });
 
     editor.addEventListener('input', syncToTextarea);
+    editor.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        document.execCommand('insertParagraph', false, null);
+        syncToTextarea();
+      }
+    });
     var form = textarea.closest('form');
     if (form) {
       form.addEventListener('submit', syncToTextarea);
