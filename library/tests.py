@@ -221,8 +221,36 @@ class LibraryModelTests(LibraryBaseTestCase):
             content_rich='<div><span>Texto <em>válido</em></span></div>',
         )
 
-        self.assertEqual(chapter.content_rich, 'Texto <em>válido</em>')
+        self.assertEqual(chapter.content_rich, '<p>Texto <em>válido</em></p>')
         self.assertEqual(chapter.content_plain, 'Texto válido')
+
+    def test_book_chapter_sanitizer_normalizes_div_lines_into_paragraphs(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        chapter = BookChapter.objects.create(
+            book_version=version,
+            order=1,
+            title='Linhas',
+            slug='linhas',
+            content_rich='<div>Test B</div><div>Test I</div><div>Test U</div>',
+        )
+
+        self.assertEqual(chapter.content_rich, '<p>Test B</p><p>Test I</p><p>Test U</p>')
+        self.assertEqual(chapter.content_plain, 'Test B Test I Test U')
+
+    def test_book_chapter_sanitizer_flattens_div_wrappers_inside_list_items(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        chapter = BookChapter.objects.create(
+            book_version=version,
+            order=1,
+            title='Listas',
+            slug='listas',
+            content_rich='<ul><li><div>Item 1</div></li><li><div>Item 2</div></li></ul>',
+        )
+
+        self.assertEqual(chapter.content_rich, '<ul><li>Item 1</li><li>Item 2</li></ul>')
+        self.assertEqual(chapter.content_plain, 'Item 1 Item 2')
 
 
 class LibraryAdminTests(TestCase):
@@ -287,6 +315,7 @@ class LibraryAdminTests(TestCase):
         self.assertContains(response, 'library/admin/chapter_rich_editor.css')
         self.assertContains(response, 'Tags permitidas:')
         self.assertContains(response, 'Tags permitidas: a, blockquote, br')
+        self.assertContains(response, 'lv-rich-editor-preview')
 
 
 class LibraryPermissionTests(LibraryBaseTestCase):
