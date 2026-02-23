@@ -25,6 +25,7 @@ from entitlements.models import Entitlement
 
 from .models import Book, BookChapter, BookVersion, PageText
 from .permissions import HasActiveBookEntitlement
+from .services import create_preloaded_book_version
 from .views import (
     DOWNLOAD_URL_SIGNING_SALT,
     DOWNLOAD_URL_TOKEN_PARAM,
@@ -253,6 +254,88 @@ class LibraryModelTests(LibraryBaseTestCase):
         self.assertEqual(chapter.content_plain, 'Item 1 Item 2')
 
 
+class LibraryServicesTests(LibraryBaseTestCase):
+    def test_create_preloaded_book_version_clones_chapters_and_changelog(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        source = BookVersion.objects.create(
+            book=book,
+            version='2024.01',
+            changelog='Fonte',
+            status=BookVersion.Status.PUBLISHED,
+        )
+        BookChapter.objects.create(
+            book_version=source,
+            order=2,
+            title='Cap 2',
+            slug='cap-2',
+            content_rich='<p>Capítulo 2</p>',
+        )
+        BookChapter.objects.create(
+            book_version=source,
+            order=1,
+            title='Cap 1',
+            slug='cap-1',
+            content_rich='<h2>Capítulo 1</h2><p>Texto</p>',
+        )
+
+        created = create_preloaded_book_version(
+            source_version=source,
+            new_version='2024.02',
+            changelog='Nova publicação',
+        )
+
+        self.assertEqual(created.book_id, source.book_id)
+        self.assertEqual(created.version, '2024.02')
+        self.assertEqual(created.status, BookVersion.Status.DRAFT)
+        self.assertEqual(created.changelog, 'Nova publicação')
+
+        source_orders = list(source.chapters.order_by('order').values_list('order', flat=True))
+        cloned_orders = list(created.chapters.order_by('order').values_list('order', flat=True))
+        self.assertEqual(source_orders, [1, 2])
+        self.assertEqual(cloned_orders, [1, 2])
+
+        source_slugs = list(source.chapters.order_by('order').values_list('slug', flat=True))
+        cloned_slugs = list(created.chapters.order_by('order').values_list('slug', flat=True))
+        self.assertEqual(cloned_slugs, source_slugs)
+        self.assertEqual(created.chapters.count(), source.chapters.count())
+
+    def test_create_preloaded_book_version_requires_changelog(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        source = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+
+        with self.assertRaisesMessage(ValueError, 'Changelog is required.'):
+            create_preloaded_book_version(
+                source_version=source,
+                new_version='2024.02',
+                changelog='',
+            )
+
+    def test_create_preloaded_book_version_does_not_change_source_history(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        source = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        source_chapter = BookChapter.objects.create(
+            book_version=source,
+            order=1,
+            title='Original',
+            slug='original',
+            content_rich='<p>Texto original</p>',
+        )
+
+        created = create_preloaded_book_version(
+            source_version=source,
+            new_version='2024.02',
+            changelog='Nova versão',
+        )
+        clone_chapter = created.chapters.get(order=1)
+        clone_chapter.title = 'Clone alterado'
+        clone_chapter.content_rich = '<p>Texto alterado</p>'
+        clone_chapter.save()
+
+        source_chapter.refresh_from_db()
+        self.assertEqual(source_chapter.title, 'Original')
+        self.assertEqual(source_chapter.content_plain, 'Texto original')
+
+
 class LibraryAdminTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -267,6 +350,7 @@ class LibraryAdminTests(TestCase):
         self.version = BookVersion.objects.create(
             book=self.book,
             version='2024.01',
+            changelog='Versão inicial',
             status=BookVersion.Status.PUBLISHED,
         )
         self.chapter = BookChapter.objects.create(
@@ -318,6 +402,107 @@ class LibraryAdminTests(TestCase):
         self.assertContains(response, 'Tags permitidas:')
         self.assertContains(response, 'Tags permitidas: a, blockquote, br')
         self.assertContains(response, 'lv-rich-editor-preview')
+
+    def test_book_version_admin_action_creates_preloaded_version_with_chapters(self):
+        BookChapter.objects.create(
+            book_version=self.version,
+            order=2,
+            title='Capítulo 2',
+            slug='capitulo-2',
+            content_rich='<p>Segundo</p>',
+        )
+
+        response = self.client.post(
+            reverse('admin:library_bookversion_changelist'),
+            data={
+                'action': 'create_preloaded_version',
+                '_selected_action': [str(self.version.id)],
+                'select_across': '0',
+                'index': '0',
+                'new_version': '2024.02',
+                'new_changelog': 'Clonada com ajustes',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        cloned = BookVersion.objects.get(book=self.book, version='2024.02')
+        self.assertEqual(cloned.status, BookVersion.Status.DRAFT)
+        self.assertEqual(cloned.changelog, 'Clonada com ajustes')
+        self.assertEqual(list(cloned.chapters.order_by('order').values_list('order', flat=True)), [1, 2])
+        self.assertContains(response, 'Preloaded version &quot;2024.02&quot; created')
+
+    def test_book_version_admin_action_requires_single_selection(self):
+        second = BookVersion.objects.create(
+            book=self.book,
+            version='2024.02',
+            changelog='Segunda',
+            status=BookVersion.Status.DRAFT,
+        )
+
+        response = self.client.post(
+            reverse('admin:library_bookversion_changelist'),
+            data={
+                'action': 'create_preloaded_version',
+                '_selected_action': [str(self.version.id), str(second.id)],
+                'select_across': '0',
+                'index': '0',
+                'new_version': '2024.03',
+                'new_changelog': 'Tentativa',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(BookVersion.objects.filter(book=self.book, version='2024.03').exists())
+        self.assertContains(response, 'Select exactly one source version to clone.')
+
+    def test_book_version_admin_action_requires_changelog(self):
+        response = self.client.post(
+            reverse('admin:library_bookversion_changelist'),
+            data={
+                'action': 'create_preloaded_version',
+                '_selected_action': [str(self.version.id)],
+                'select_across': '0',
+                'index': '0',
+                'new_version': '2024.03',
+                'new_changelog': '',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(BookVersion.objects.filter(book=self.book, version='2024.03').exists())
+        self.assertContains(response, 'Changelog is required.')
+
+    def test_book_version_admin_form_requires_changelog_when_publishing(self):
+        draft = BookVersion.objects.create(
+            book=self.book,
+            version='2024.90',
+            changelog='',
+            status=BookVersion.Status.DRAFT,
+        )
+
+        response = self.client.post(
+            reverse('admin:library_bookversion_change', args=[draft.id]),
+            data={
+                'book': self.book.id,
+                'version': '2024.90',
+                'published_at': timezone.localdate().isoformat(),
+                'changelog': '',
+                'status': BookVersion.Status.PUBLISHED,
+                'chapters-TOTAL_FORMS': '0',
+                'chapters-INITIAL_FORMS': '0',
+                'chapters-MIN_NUM_FORMS': '0',
+                'chapters-MAX_NUM_FORMS': '1000',
+                '_save': 'Save',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Changelog is required when publishing a version.')
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, BookVersion.Status.DRAFT)
 
 
 class LibraryPermissionTests(LibraryBaseTestCase):

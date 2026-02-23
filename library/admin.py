@@ -1,8 +1,12 @@
 from django import forms
 from django.contrib import admin
+from django.contrib import messages
+from django.contrib.admin.helpers import ActionForm
+from django.db import IntegrityError
 from django.utils.html import format_html, strip_tags
 from django.utils.safestring import mark_safe
 from django.utils.text import Truncator
+from django.utils import timezone
 from tinymce.widgets import TinyMCE
 
 from .models import (
@@ -13,6 +17,7 @@ from .models import (
     PageText,
     sanitize_chapter_html,
 )
+from .services import create_preloaded_book_version
 
 
 BOOK_CHAPTER_WORDLIKE_MCE_ATTRS = {
@@ -73,6 +78,36 @@ class BookChapterAdminForm(forms.ModelForm):
         )
 
 
+class BookVersionAdminForm(forms.ModelForm):
+    class Meta:
+        model = BookVersion
+        fields = '__all__'
+
+    def clean(self):
+        cleaned_data = super().clean()
+        status = cleaned_data.get('status')
+        changelog = (cleaned_data.get('changelog') or '').strip()
+        if status == BookVersion.Status.PUBLISHED and not changelog:
+            self.add_error('changelog', 'Changelog is required when publishing a version.')
+        return cleaned_data
+
+
+class BookVersionActionForm(ActionForm):
+    new_version = forms.CharField(
+        label='New version',
+        required=False,
+        max_length=50,
+        widget=forms.TextInput(attrs={'placeholder': '2026.02.24', 'size': 16}),
+    )
+    new_changelog = forms.CharField(
+        label='Changelog',
+        required=False,
+        max_length=400,
+        widget=forms.TextInput(attrs={'placeholder': 'Resumo da nova publicação', 'size': 40}),
+    )
+    publish_now = forms.BooleanField(label='Publish now', required=False)
+
+
 @admin.register(Book)
 class BookAdmin(admin.ModelAdmin):
     list_display = ('id', 'title', 'status', 'created_at', 'updated_at')
@@ -103,10 +138,59 @@ class BookChapterInline(admin.StackedInline):
 
 @admin.register(BookVersion)
 class BookVersionAdmin(admin.ModelAdmin):
+    form = BookVersionAdminForm
+    action_form = BookVersionActionForm
     list_display = ('id', 'book', 'version', 'status', 'published_at', 'created_at')
     search_fields = ('book__title', 'version')
     list_filter = ('status', 'book')
     inlines = [BookChapterInline]
+    actions = ('create_preloaded_version',)
+
+    @admin.action(description='Create preloaded version from selected source')
+    def create_preloaded_version(self, request, queryset):
+        selected_count = queryset.count()
+        if selected_count != 1:
+            self.message_user(
+                request,
+                'Select exactly one source version to clone.',
+                level=messages.ERROR,
+            )
+            return
+
+        source_version = queryset.first()
+        new_version = (request.POST.get('new_version') or '').strip()
+        new_changelog = (request.POST.get('new_changelog') or '').strip()
+        publish_now = request.POST.get('publish_now') == 'on'
+        status = BookVersion.Status.PUBLISHED if publish_now else BookVersion.Status.DRAFT
+        published_at = timezone.localdate() if publish_now else None
+
+        try:
+            cloned_version = create_preloaded_book_version(
+                source_version=source_version,
+                new_version=new_version,
+                changelog=new_changelog,
+                status=status,
+                published_at=published_at,
+            )
+        except ValueError as exc:
+            self.message_user(request, str(exc), level=messages.ERROR)
+            return
+        except IntegrityError:
+            self.message_user(
+                request,
+                'Version identifier already exists for this book.',
+                level=messages.ERROR,
+            )
+            return
+
+        self.message_user(
+            request,
+            (
+                f'Preloaded version "{cloned_version.version}" created from '
+                f'"{source_version.version}" with {cloned_version.chapters.count()} chapter(s).'
+            ),
+            level=messages.SUCCESS,
+        )
 
 
 @admin.register(PageText)
