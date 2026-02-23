@@ -3,6 +3,7 @@ from html import escape, unescape
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 
+from django.contrib.postgres.search import SearchVector
 from django.db import models
 
 
@@ -33,6 +34,7 @@ ALLOWED_LINK_SCHEMES = {'', 'http', 'https', 'mailto'}
 NORMALIZE_CHAPTER_TAGS = {
     'div': 'p',
 }
+CHAPTER_SEARCH_CONFIG = 'portuguese'
 
 
 def _is_safe_href(value: str) -> bool:
@@ -153,6 +155,21 @@ def sanitize_chapter_html(value: str) -> str:
     parser.feed(value or '')
     parser.close()
     return parser.get_html().strip()
+
+
+def chapter_search_vector():
+    return (
+        SearchVector(
+            'title',
+            config=CHAPTER_SEARCH_CONFIG,
+            weight='A',
+        )
+        + SearchVector(
+            'content_plain',
+            config=CHAPTER_SEARCH_CONFIG,
+            weight='B',
+        )
+    )
 
 
 class Book(models.Model):

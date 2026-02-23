@@ -104,6 +104,13 @@ class SearchResultSerializer(serializers.Serializer):
     book_version_id = serializers.IntegerField()
     version = serializers.CharField()
     page_number = serializers.IntegerField()
+    chapter_id = serializers.IntegerField()
+    chapter_slug = serializers.SlugField()
+    chapter_title = serializers.CharField()
+    chapter_order = serializers.IntegerField()
+    occurrence = serializers.IntegerField()
+    match_start = serializers.IntegerField()
+    match_end = serializers.IntegerField()
     snippet = serializers.CharField()
 
 
