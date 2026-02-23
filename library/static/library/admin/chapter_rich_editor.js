@@ -77,6 +77,11 @@
           return;
         }
         document.execCommand('createLink', false, href);
+      } else if (cmd === 'formatBlock' && target.dataset.value) {
+        var block = target.dataset.value.toLowerCase();
+        if (!document.execCommand('formatBlock', false, block)) {
+          document.execCommand('formatBlock', false, '<' + block + '>');
+        }
       } else if (target.dataset.value) {
         document.execCommand(cmd, false, target.dataset.value);
       } else {

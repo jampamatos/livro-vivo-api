@@ -1,8 +1,10 @@
 .lv-rich-editor {
-  border: 1px solid #ccd0d4;
+  border: 1px solid var(--border-color);
   border-radius: 4px;
-  background: #fff;
+  background: var(--body-bg);
+  color: var(--body-fg);
   margin-bottom: 12px;
+  max-width: 860px;
 }
 
 .lv-rich-editor__toolbar {
@@ -10,13 +12,25 @@
   flex-wrap: wrap;
   gap: 6px;
   padding: 8px;
-  border-bottom: 1px solid #ebeef0;
-  background: #f7f7f7;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--darkened-bg);
 }
 
 .lv-rich-editor__button {
   min-width: 36px;
   padding: 2px 8px;
+}
+
+.lv-rich-editor__toolbar .button {
+  background: var(--body-bg);
+  border-color: var(--border-color);
+  color: var(--body-fg);
+}
+
+.lv-rich-editor__toolbar .button:hover,
+.lv-rich-editor__toolbar .button:focus {
+  background: var(--selected-bg);
+  color: var(--body-fg);
 }
 
 .lv-rich-editor__surface {
@@ -25,13 +39,53 @@
   overflow: auto;
   padding: 12px;
   line-height: 1.5;
+  background: var(--body-bg);
+  color: var(--body-fg);
+  font-size: 14px;
+}
+
+.lv-rich-editor__surface p {
+  margin: 0 0 10px;
+}
+
+.lv-rich-editor__surface h2 {
+  margin: 18px 0 10px;
+  font-size: 1.45rem;
+  line-height: 1.2;
+}
+
+.lv-rich-editor__surface h3 {
+  margin: 16px 0 8px;
+  font-size: 1.2rem;
+  line-height: 1.25;
+}
+
+.lv-rich-editor__surface ul,
+.lv-rich-editor__surface ol {
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+
+.lv-rich-editor__surface li {
+  margin: 0 0 6px;
+}
+
+.lv-rich-editor__surface a {
+  color: var(--link-fg);
+}
+
+.lv-rich-editor__surface blockquote {
+  margin: 0 0 12px;
+  padding-left: 12px;
+  border-left: 3px solid var(--hairline-color);
+  color: var(--body-quiet-color);
 }
 
 .lv-rich-editor__surface:focus {
-  outline: 2px solid #79aec8;
+  outline: 2px solid var(--link-fg);
   outline-offset: -2px;
 }
 
 .lv-rich-editor__source {
-  display: none;
+  display: none !important;
 }
