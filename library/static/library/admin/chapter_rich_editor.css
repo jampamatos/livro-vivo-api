@@ -1,0 +1,37 @@
+.lv-rich-editor {
+  border: 1px solid #ccd0d4;
+  border-radius: 4px;
+  background: #fff;
+  margin-bottom: 12px;
+}
+
+.lv-rich-editor__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid #ebeef0;
+  background: #f7f7f7;
+}
+
+.lv-rich-editor__button {
+  min-width: 36px;
+  padding: 2px 8px;
+}
+
+.lv-rich-editor__surface {
+  min-height: 240px;
+  max-height: 560px;
+  overflow: auto;
+  padding: 12px;
+  line-height: 1.5;
+}
+
+.lv-rich-editor__surface:focus {
+  outline: 2px solid #79aec8;
+  outline-offset: -2px;
+}
+
+.lv-rich-editor__source {
+  display: none;
+}
