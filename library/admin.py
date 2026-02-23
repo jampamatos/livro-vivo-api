@@ -3,6 +3,7 @@ from django.contrib import admin
 from django.utils.html import format_html, strip_tags
 from django.utils.safestring import mark_safe
 from django.utils.text import Truncator
+from tinymce.widgets import TinyMCE
 
 from .models import (
     ALLOWED_CHAPTER_TAGS,
@@ -14,16 +15,47 @@ from .models import (
 )
 
 
+BOOK_CHAPTER_WORDLIKE_MCE_ATTRS = {
+    'height': 520,
+    'menubar': False,
+    'toolbar_mode': 'sliding',
+    'branding': False,
+    'browser_spellcheck': True,
+    'plugins': 'lists link autoresize wordcount',
+    'toolbar': 'undo redo | blocks | bold italic underline | bullist numlist | link removeformat',
+    'block_formats': 'Parágrafo=p;Título 2=h2;Título 3=h3;Citação=blockquote',
+    'valid_elements': 'p,br,strong,em,u,ul,ol,li,blockquote,h2,h3,a[href|title|target|rel]',
+    'invalid_elements': 'script,style,img,iframe,video,audio,table,pre,code',
+    'forced_root_block': 'p',
+    'convert_urls': False,
+    'elementpath': True,
+    'content_style': (
+        'body {'
+        ' font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;'
+        ' font-size: 16px; line-height: 1.65; margin: 1rem; color: #111827; background: #ffffff;'
+        '}'
+        'p { margin: 0 0 0.9rem; }'
+        'h2 { font-size: 1.6rem; line-height: 1.2; margin: 1.4rem 0 0.8rem; }'
+        'h3 { font-size: 1.3rem; line-height: 1.25; margin: 1.2rem 0 0.6rem; }'
+        'ul,ol { margin: 0 0 1rem; padding-left: 1.5rem; }'
+        'li { margin: 0 0 0.4rem; }'
+        'blockquote { margin: 0 0 1rem; padding-left: 0.75rem; border-left: 3px solid #cbd5e1; color: #475569; }'
+        'a { color: #2563eb; text-decoration: underline; }'
+    ),
+}
+
+
 class BookChapterAdminForm(forms.ModelForm):
     class Meta:
         model = BookChapter
         fields = '__all__'
         widgets = {
-            'content_rich': forms.Textarea(
+            'content_rich': TinyMCE(
                 attrs={
                     'rows': 18,
-                    'class': 'vLargeTextField js-rich-chapter-editor-source',
-                }
+                    'class': 'vLargeTextField',
+                },
+                mce_attrs=BOOK_CHAPTER_WORDLIKE_MCE_ATTRS,
             ),
         }
 
@@ -31,7 +63,6 @@ class BookChapterAdminForm(forms.ModelForm):
         css = {
             'all': ('library/admin/chapter_rich_editor.css',),
         }
-        js = ('library/admin/chapter_rich_editor.js',)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

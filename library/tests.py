@@ -311,8 +311,10 @@ class LibraryAdminTests(TestCase):
         response = self.client.get(reverse('admin:library_bookchapter_change', args=[self.chapter.id]))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'library/admin/chapter_rich_editor.js')
         self.assertContains(response, 'library/admin/chapter_rich_editor.css')
+        self.assertContains(response, 'tinymce/tinymce.min.js')
+        self.assertContains(response, 'django_tinymce/init_tinymce.js')
+        self.assertContains(response, 'undo redo | blocks | bold italic underline')
         self.assertContains(response, 'Tags permitidas:')
         self.assertContains(response, 'Tags permitidas: a, blockquote, br')
         self.assertContains(response, 'lv-rich-editor-preview')
