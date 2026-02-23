@@ -23,7 +23,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from entitlements.models import Entitlement
 
-from .models import Book, BookVersion, PageText
+from .models import Book, BookChapter, BookVersion, PageText
 from .permissions import HasActiveBookEntitlement
 from .views import (
     DOWNLOAD_URL_SIGNING_SALT,
@@ -104,6 +104,87 @@ class LibraryModelTests(LibraryBaseTestCase):
         with self.assertRaises(IntegrityError):
             with transaction.atomic():
                 PageText.objects.create(book_version=version, page_number=1, text='Dup')
+
+    def test_book_chapter_unique_constraints_per_version(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        BookChapter.objects.create(
+            book_version=version,
+            order=1,
+            title='Intro',
+            slug='introducao',
+            content_rich='<h1>Introdução</h1><p>Conteúdo</p>',
+        )
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                BookChapter.objects.create(
+                    book_version=version,
+                    order=2,
+                    title='Outra intro',
+                    slug='introducao',
+                    content_rich='<p>Duplicado por slug</p>',
+                )
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                BookChapter.objects.create(
+                    book_version=version,
+                    order=1,
+                    title='Capítulo 1',
+                    slug='capitulo-1',
+                    content_rich='<p>Duplicado por ordem</p>',
+                )
+
+    def test_book_chapter_allows_same_slug_in_different_versions(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        v1 = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        v2 = BookVersion.objects.create(book=book, version='2024.02', status=BookVersion.Status.DRAFT)
+
+        BookChapter.objects.create(
+            book_version=v1,
+            order=1,
+            title='Intro',
+            slug='introducao',
+            content_rich='<p>v1</p>',
+        )
+        BookChapter.objects.create(
+            book_version=v2,
+            order=1,
+            title='Intro',
+            slug='introducao',
+            content_rich='<p>v2</p>',
+        )
+
+        self.assertEqual(BookChapter.objects.filter(slug='introducao').count(), 2)
+
+    def test_book_chapter_content_plain_is_generated_and_updated(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        chapter = BookChapter.objects.create(
+            book_version=version,
+            order=1,
+            title='Intro',
+            slug='intro',
+            content_rich='<h1>Olá&nbsp;Mundo</h1><p>Linha <strong>um</strong></p>',
+        )
+
+        self.assertEqual(chapter.content_plain, 'Olá Mundo Linha um')
+
+        chapter.content_rich = '<p>Texto <em>atualizado</em> &amp; limpo.</p>'
+        chapter.save()
+        chapter.refresh_from_db()
+
+        self.assertEqual(chapter.content_plain, 'Texto atualizado & limpo.')
+
+    def test_book_chapter_default_ordering(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        BookChapter.objects.create(book_version=version, order=2, title='B', slug='b', content_rich='<p>B</p>')
+        BookChapter.objects.create(book_version=version, order=1, title='A', slug='a', content_rich='<p>A</p>')
+
+        orders = list(BookChapter.objects.filter(book_version=version).values_list('order', flat=True))
+        self.assertEqual(orders, [1, 2])
 
 
 class LibraryPermissionTests(LibraryBaseTestCase):

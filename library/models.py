@@ -1,3 +1,6 @@
+import re
+from html import unescape
+
 from django.db import models
 
 
@@ -92,3 +95,53 @@ class PageText(models.Model):
 
     def __str__(self) -> str:
         return f'{self.book_version} - p.{self.page_number}'
+
+
+class BookChapter(models.Model):
+    """Capítulo textual de uma versão de livro (fonte nativa de leitura)."""
+
+    book_version = models.ForeignKey(
+        BookVersion,
+        on_delete=models.CASCADE,
+        related_name='chapters',
+    )
+    title = models.CharField(max_length=200)
+    slug = models.SlugField(max_length=120)
+    order = models.PositiveIntegerField()
+    content_rich = models.TextField(blank=True, default='')  # HTML/Rich text
+    content_plain = models.TextField(blank=True, default='', editable=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['order', 'id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['book_version', 'slug'],
+                name='uniq_bookchapter_slug_per_version',
+            ),
+            models.UniqueConstraint(
+                fields=['book_version', 'order'],
+                name='uniq_bookchapter_order_per_version',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['book_version', 'order']),
+            models.Index(fields=['book_version', 'slug']),
+        ]
+
+    @staticmethod
+    def to_plain_text(value: str) -> str:
+        if not value:
+            return ''
+        text = re.sub(r'<[^>]+>', ' ', value)
+        text = unescape(text)
+        return re.sub(r'\s+', ' ', text).strip()
+
+    def save(self, *args, **kwargs):
+        # Keep plain text deterministic for search/index tasks.
+        self.content_plain = self.to_plain_text(self.content_rich or '')
+        return super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f'{self.book_version} :: {self.order} - {self.slug}'
