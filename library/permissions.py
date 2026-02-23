@@ -1,8 +1,6 @@
-from django.db.models import Q
-from django.utils import timezone
 from rest_framework.permissions import BasePermission
 
-from entitlements.models import Entitlement
+from entitlements.services import active_entitlements_qs, user_has_subscription
 from library.models import BookVersion
 
 
@@ -65,22 +63,16 @@ class HasActiveBookEntitlement(BasePermission):
         if getattr(user, 'is_staff', False):
             return True
 
-        now = timezone.now()
         book_id = self._resolve_book_id(request, view)
-
-        base = (
-            Entitlement.objects
-            .filter(user=user, status=Entitlement.Status.ACTIVE)
-            .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
-        )
+        base = active_entitlements_qs(user)
 
         # subscription sempre libera
-        if base.filter(product=Entitlement.Product.SUBSCRIPTION).exists():
+        if user_has_subscription(user):
             return True
 
         # se conseguimos resolver livro, exige entitlement daquele livro
         if book_id is not None:
-            return base.filter(product=Entitlement.Product.BOOK, book_id=book_id).exists()
+            return base.filter(product='book', book_id=book_id).exists()
 
         # fallback (ex.: endpoints de list) - a VIEW tem que filtrar o queryset
-        return base.filter(product=Entitlement.Product.BOOK).exists()
+        return base.filter(product='book').exists()

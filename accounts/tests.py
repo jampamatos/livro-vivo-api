@@ -11,7 +11,7 @@ from rest_framework.test import APIClient
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from entitlements.models import Entitlement
+from entitlements.models import Entitlement, Subscription
 from library.models import Book
 
 User = get_user_model()
@@ -275,6 +275,44 @@ class AccountsAPITests(TestCase):
         self.assertEqual(items[0]['id'], newer.id)
         self.assertEqual(items[1]['id'], older.id)
         self.assertFalse(items[0]['is_active'])
+        self.assertIn('subscription_id', items[0])
+        self.assertIn('tier', items[0])
+        self.assertIn('is_founder', items[0])
+        self.assertIsNone(response.data['effective_tier'])
+        self.assertIsNone(response.data['subscription'])
+
+    def test_me_entitlements_includes_effective_subscription_snapshot(self):
+        user = User.objects.create_user(
+            username='tiered@example.com',
+            email='tiered@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        subscription = Subscription.objects.create(
+            user=user,
+            tier=Subscription.Tier.PROFESSIONAL,
+            status=Subscription.Status.ACTIVE,
+            is_founder=True,
+            source='founder-beta',
+        )
+        Entitlement.objects.create(
+            user=user,
+            product=Entitlement.Product.SUBSCRIPTION,
+            subscription=subscription,
+            status=Entitlement.Status.ACTIVE,
+            source='admin',
+        )
+
+        response = self.client.get(reverse('me-entitlements'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['effective_tier'], Subscription.Tier.PROFESSIONAL)
+        self.assertIsNotNone(response.data['subscription'])
+        self.assertEqual(response.data['subscription']['tier'], Subscription.Tier.PROFESSIONAL)
+        self.assertEqual(response.data['subscription']['status'], Subscription.Status.ACTIVE)
+        self.assertEqual(response.data['subscription']['is_founder'], True)
 
     def test_login_is_throttled(self):
         cache.clear()

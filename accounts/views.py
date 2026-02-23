@@ -9,6 +9,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.views import APIView
 
 from entitlements.models import Entitlement
+from entitlements.services import get_effective_tier, get_subscription_snapshot
 
 from .models import Profile
 from .serializers import RegisterSerializer
@@ -121,13 +122,36 @@ class MeEntitlementsView(APIView):
     """Lista entitlements do usuário."""
 
     def get(self, request):
-        qs = Entitlement.objects.filter(user=request.user).order_by('-created_at')
+        effective_tier = get_effective_tier(request.user)
+        subscription_snapshot = get_subscription_snapshot(request.user)
+        qs = (
+            Entitlement.objects
+            .filter(user=request.user)
+            .select_related('subscription')
+            .order_by('-created_at')
+        )
 
         data = [
             {
                 'id': e.id,
                 'product': e.product,
                 'book_id': e.book_id,
+                'subscription_id': e.subscription_id,
+                'tier': (
+                    e.subscription.tier
+                    if e.product == Entitlement.Product.SUBSCRIPTION and e.subscription_id
+                    else (effective_tier if e.product == Entitlement.Product.SUBSCRIPTION and e.is_active() else None)
+                ),
+                'is_founder': (
+                    bool(e.subscription.is_founder)
+                    if e.product == Entitlement.Product.SUBSCRIPTION and e.subscription_id
+                    else bool(
+                        e.product == Entitlement.Product.SUBSCRIPTION
+                        and e.is_active()
+                        and subscription_snapshot
+                        and subscription_snapshot.get('is_founder')
+                    )
+                ),
                 'status': e.status,
                 'expires_at': e.expires_at,
                 'is_active': e.is_active(),
@@ -136,4 +160,10 @@ class MeEntitlementsView(APIView):
             for e in qs
         ]
 
-        return Response({"entitlements": data})
+        return Response(
+            {
+                "entitlements": data,
+                "effective_tier": effective_tier,
+                "subscription": subscription_snapshot,
+            }
+        )
