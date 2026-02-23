@@ -984,8 +984,20 @@ class LibraryAPITests(LibraryBaseTestCase):
         published_version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
         draft_version = BookVersion.objects.create(book=book, version='2024.02', status=BookVersion.Status.DRAFT)
 
-        PageText.objects.create(book_version=published_version, page_number=1, text='Hello world')
-        PageText.objects.create(book_version=draft_version, page_number=1, text='Hello world')
+        BookChapter.objects.create(
+            book_version=published_version,
+            order=1,
+            title='Cap publicado',
+            slug='cap-publicado',
+            content_rich='<p>Hello world publicado</p>',
+        )
+        BookChapter.objects.create(
+            book_version=draft_version,
+            order=1,
+            title='Cap draft',
+            slug='cap-draft',
+            content_rich='<p>Hello world draft</p>',
+        )
 
         response = self.client.get(
             reverse('search'),
@@ -996,6 +1008,7 @@ class LibraryAPITests(LibraryBaseTestCase):
         self.assertEqual(response.data['count'], 1)
         self.assertEqual(response.data['limit'], 100)
         self.assertEqual(response.data['offset'], 0)
+        self.assertEqual(response.data['results'][0]['chapter_slug'], 'cap-publicado')
 
     def test_search_includes_draft_for_staff(self):
         user = self._create_user(is_staff=True)
@@ -1003,12 +1016,19 @@ class LibraryAPITests(LibraryBaseTestCase):
 
         book = Book.objects.create(title='Draft', status=Book.Status.DRAFT)
         version = BookVersion.objects.create(book=book, version='2024.02', status=BookVersion.Status.DRAFT)
-        PageText.objects.create(book_version=version, page_number=1, text='Hello world')
+        BookChapter.objects.create(
+            book_version=version,
+            order=1,
+            title='Cap draft',
+            slug='cap-draft',
+            content_rich='<p>Hello world</p>',
+        )
 
         response = self.client.get(reverse('search'), {'q': 'hello', 'book_version_id': version.id})
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['chapter_slug'], 'cap-draft')
 
     def test_page_text_view_validation_and_visibility(self):
         user = self._create_user()
@@ -1048,7 +1068,13 @@ class LibraryAPITests(LibraryBaseTestCase):
         self._grant_entitlement(user, book=book)
         self._auth_client(user)
         version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-        PageText.objects.create(book_version=version, page_number=1, text='Hello world from page 1')
+        BookChapter.objects.create(
+            book_version=version,
+            order=3,
+            title='Capítulo 3',
+            slug='capitulo-3',
+            content_rich='<p>Hello world from chapter 3</p>',
+        )
 
         response = self.client.get(
             reverse('book-search', kwargs={'book_id': book.id}),
@@ -1058,7 +1084,95 @@ class LibraryAPITests(LibraryBaseTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['count'], 1)
         self.assertEqual(response.data['results'][0]['book_id'], book.id)
-        self.assertEqual(response.data['results'][0]['page_number'], 1)
+        self.assertEqual(response.data['results'][0]['chapter_slug'], 'capitulo-3')
+        self.assertEqual(response.data['results'][0]['chapter_order'], 3)
+        self.assertEqual(response.data['results'][0]['occurrence'], 1)
+        self.assertGreaterEqual(response.data['results'][0]['match_end'], response.data['results'][0]['match_start'])
+        self.assertIn('Hello', response.data['results'][0]['snippet'])
+
+    def test_search_returns_multiple_occurrences_for_same_chapter(self):
+        user = self._create_user()
+        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
+        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        BookChapter.objects.create(
+            book_version=version,
+            order=1,
+            title='Capítulo 1',
+            slug='cap-1',
+            content_rich=(
+                '<p>Magic first occurrence with enough spacing between terms to avoid clustering.</p>'
+                '<p>' + ('x' * 120) + '</p>'
+                '<p>magic second far occurrence after a long separator.</p>'
+                '<p>' + ('y' * 120) + '</p>'
+                '<p>MAGIC third far occurrence after another separator.</p>'
+            ),
+        )
+
+        response = self.client.get(
+            reverse('book-search', kwargs={'book_id': book.id}),
+            {'q': 'magic'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 3)
+        self.assertEqual([row['occurrence'] for row in response.data['results']], [1, 2, 3])
+        self.assertTrue(all(row['chapter_slug'] == 'cap-1' for row in response.data['results']))
+
+    def test_search_clusters_nearby_occurrences_in_single_result(self):
+        user = self._create_user()
+        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
+        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        BookChapter.objects.create(
+            book_version=version,
+            order=1,
+            title='Capítulo 1',
+            slug='cap-1',
+            content_rich='<p>test test test test</p>',
+        )
+
+        response = self.client.get(
+            reverse('book-search', kwargs={'book_id': book.id}),
+            {'q': 'test'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['occurrence'], 1)
+        self.assertEqual(response.data['results'][0]['chapter_slug'], 'cap-1')
+
+    def test_search_pagination_is_stable_for_chapter_results(self):
+        user = self._create_user()
+        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
+        self._grant_entitlement(user, book=book)
+        self._auth_client(user)
+        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        for order in [1, 2, 3]:
+            BookChapter.objects.create(
+                book_version=version,
+                order=order,
+                title=f'Capítulo {order}',
+                slug=f'cap-{order}',
+                content_rich='<p>hello termo comum</p>',
+            )
+
+        first_page = self.client.get(
+            reverse('book-search', kwargs={'book_id': book.id}),
+            {'q': 'hello', 'limit': 2, 'offset': 0},
+        )
+        second_page = self.client.get(
+            reverse('book-search', kwargs={'book_id': book.id}),
+            {'q': 'hello', 'limit': 2, 'offset': 2},
+        )
+
+        self.assertEqual(first_page.status_code, 200)
+        self.assertEqual(second_page.status_code, 200)
+        self.assertEqual(first_page.data['count'], 3)
+        self.assertEqual([row['chapter_order'] for row in first_page.data['results']], [1, 2])
+        self.assertEqual([row['chapter_order'] for row in second_page.data['results']], [3])
 
     def test_search_requires_q(self):
         user = self._create_user()
@@ -1121,7 +1235,13 @@ class LibraryAPITests(LibraryBaseTestCase):
             version='2024.01',
             status=BookVersion.Status.PUBLISHED,
         )
-        PageText.objects.create(book_version=target_version, page_number=1, text='Hello scoped world')
+        BookChapter.objects.create(
+            book_version=target_version,
+            order=1,
+            title='Capítulo alvo',
+            slug='cap-alvo',
+            content_rich='<p>Hello scoped world</p>',
+        )
 
         self._grant_entitlement(user, book=entitled_book)
         self._auth_client(user)
@@ -1174,7 +1294,13 @@ class LibraryAPITests(LibraryBaseTestCase):
         user = self._create_user()
         book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
         version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-        PageText.objects.create(book_version=version, page_number=1, text='Hello world')
+        BookChapter.objects.create(
+            book_version=version,
+            order=1,
+            title='Capítulo 1',
+            slug='cap-1',
+            content_rich='<p>Hello world</p>',
+        )
         self._grant_entitlement(user, book=book)
         self._auth_client(user)
 

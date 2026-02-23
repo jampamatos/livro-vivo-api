@@ -1,12 +1,15 @@
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from django.conf import settings
+from django.contrib.postgres.search import SearchQuery, SearchRank
 from django.contrib.auth import get_user_model
 from django.core import signing
-from django.db.models import Q
+from django.db import connection
+from django.db.models import F, Q
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
@@ -20,7 +23,14 @@ from rest_framework.views import APIView
 
 from entitlements.models import Entitlement
 from entitlements.services import entitled_book_ids, user_has_book_entitlement, user_has_subscription
-from .models import Book, BookChapter, BookVersion, PageText
+from .models import (
+    CHAPTER_SEARCH_CONFIG,
+    Book,
+    BookChapter,
+    BookVersion,
+    PageText,
+    chapter_search_vector,
+)
 from .permissions import HasActiveBookEntitlement
 from .serializers import (
     BookSerializer,
@@ -139,6 +149,54 @@ def _make_snippet(text: str, q: str, window: int = 140) -> str:
         snippet = '...' + snippet
     if end < len(text):
         snippet = snippet + '...'
+    return snippet
+
+
+def _find_occurrences(text: str, q: str) -> list[tuple[int, int]]:
+    if not text or not q:
+        return []
+    pattern = re.compile(re.escape(q), flags=re.IGNORECASE)
+    return [(m.start(), m.end()) for m in pattern.finditer(text)]
+
+
+def _cluster_occurrences(
+    occurrences: list[tuple[int, int]],
+    *,
+    merge_gap: int = 24,
+    max_clusters: int = 8,
+) -> list[tuple[int, int]]:
+    """
+    Agrupa ocorrências próximas em um único intervalo.
+    Evita explosão de resultados quando a palavra aparece muito colada.
+    """
+    if not occurrences:
+        return []
+
+    clusters: list[list[int]] = []
+    for start, end in occurrences:
+        if not clusters:
+            clusters.append([start, end])
+            continue
+
+        last_start, last_end = clusters[-1]
+        if start - last_end <= merge_gap:
+            clusters[-1][1] = max(last_end, end)
+        else:
+            clusters.append([start, end])
+
+    return [(start, end) for start, end in clusters[:max_clusters]]
+
+
+def _make_snippet_from_offsets(text: str, start: int, end: int, context: int = 120) -> str:
+    if not text:
+        return ''
+    left = max(0, start - context)
+    right = min(len(text), end + context)
+    snippet = text[left:right].strip()
+    if left > 0:
+        snippet = '...' + snippet
+    if right < len(text):
+        snippet += '...'
     return snippet
 
 
@@ -369,7 +427,7 @@ class BookVersionDownloadView(APIView):
 
 
 class SearchView(APIView):
-    """Busca simples por texto dentro de páginas (PageText)."""
+    """Busca por capítulos com FTS em Postgres e fallback para SQLite."""
 
     permission_classes = [HasActiveBookEntitlement]
     throttle_classes = [ScopedRateThrottle]
@@ -403,11 +461,11 @@ class SearchView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        pts = PageText.objects.select_related('book_version', 'book_version__book')
+        chapters = BookChapter.objects.select_related('book_version', 'book_version__book')
 
         # Filtros de visibilidade (usuário comum só vê publicados)
         if not request.user.is_staff:
-            pts = pts.filter(
+            chapters = chapters.filter(
                 book_version__status=BookVersion.Status.PUBLISHED,
                 book_version__book__status=Book.Status.PUBLISHED,
             )
@@ -419,7 +477,7 @@ class SearchView(APIView):
             except ValueError:
                 return Response({'detail': "'book_version_id' must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
 
-            pts = pts.filter(book_version_id=bv_id)
+            chapters = chapters.filter(book_version_id=bv_id)
 
         elif book_id_qp:
             try:
@@ -427,36 +485,74 @@ class SearchView(APIView):
             except ValueError:
                 return Response({'detail': "'book_id' must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
 
-            # MVP: busca no livro inteiro (todas as versões visíveis)
-            pts = pts.filter(book_version__book_id=b_id)
+            chapters = chapters.filter(book_version__book_id=b_id)
 
-        # Busca simples.
-        qs = pts.filter(text__icontains=q).order_by('book_version_id', 'page_number')
-
-        total = qs.count()
-        page = qs[offset : offset + limit]
+        if connection.vendor == 'postgresql':
+            query = SearchQuery(
+                q,
+                config=CHAPTER_SEARCH_CONFIG,
+                search_type='websearch',
+            )
+            qs = (
+                chapters
+                .annotate(search_vector=chapter_search_vector())
+                .filter(search_vector=query)
+                .annotate(
+                    rank=SearchRank(F('search_vector'), query),
+                )
+                .order_by('-rank', 'book_version_id', 'order', 'id')
+            )
+        else:
+            qs = (
+                chapters
+                .filter(Q(title__icontains=q) | Q(content_plain__icontains=q))
+                .order_by('book_version_id', 'order', 'id')
+            )
 
         results = []
-        for row in page:
+        for row in qs:
             bv = row.book_version
             b = bv.book
-            results.append(
-                {
-                    'book_id': b.id,
-                    'book_title': b.title,
-                    'book_version_id': bv.id,
-                    'version': bv.version,
-                    'page_number': row.page_number,
-                    'snippet': _make_snippet(row.text or '', q),
-                }
-            )
+            chapter_text = row.content_plain or ''
+            occurrences = _cluster_occurrences(_find_occurrences(chapter_text, q))
+
+            if not occurrences:
+                occurrences = [(0, 0)]
+
+            for occurrence_idx, (match_start, match_end) in enumerate(occurrences, start=1):
+                snippet = (
+                    _make_snippet_from_offsets(chapter_text, match_start, match_end)
+                    if match_end > match_start
+                    else _make_snippet(chapter_text, q)
+                )
+                results.append(
+                    {
+                        'book_id': b.id,
+                        'book_title': b.title,
+                        'book_version_id': bv.id,
+                        'version': bv.version,
+                        # Compat legado: page_number mapeado para ordem do capítulo.
+                        'page_number': row.order,
+                        'chapter_id': row.id,
+                        'chapter_slug': row.slug,
+                        'chapter_title': row.title,
+                        'chapter_order': row.order,
+                        'occurrence': occurrence_idx,
+                        'match_start': match_start,
+                        'match_end': match_end,
+                        'snippet': snippet,
+                    }
+                )
+
+        total = len(results)
+        page = results[offset : offset + limit]
 
         data = {
             'q': q,
             'count': total,
             'limit': limit,
             'offset': offset,
-            'results': SearchResultSerializer(results, many=True).data,
+            'results': SearchResultSerializer(page, many=True).data,
         }
 
         return Response(data)
