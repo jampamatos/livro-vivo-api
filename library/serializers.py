@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Book, BookVersion
+from .models import Book, BookChapter, BookVersion
 
 
 class BookSerializer(serializers.ModelSerializer):
@@ -32,6 +32,25 @@ class BookVersionSerializer(serializers.ModelSerializer):
             'status',
             'created_at',
         ]
+
+
+class BookChapterSerializer(serializers.ModelSerializer):
+    """Serializer de capítulos nativos do livro."""
+
+    class Meta:
+        model = BookChapter
+        fields = [
+            'id',
+            'book_version',
+            'order',
+            'title',
+            'slug',
+            'content_rich',
+            'content_plain',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'content_plain', 'created_at', 'updated_at']
 
 
 class SearchResultSerializer(serializers.Serializer):
