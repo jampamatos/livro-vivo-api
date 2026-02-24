@@ -11,7 +11,8 @@ class AnnotationViewSet(viewsets.ModelViewSet):
     CRUD de anotações do usuário logado.
     Filtros (query params):
       - book_version_id (ou book_version)
-      - page_number
+      - chapter_id (ou chapter)
+      - chapter_slug
     """
     serializer_class = AnnotationSerializer
     permission_classes = [HasActiveBookEntitlementForAnnotation]
@@ -24,7 +25,11 @@ class AnnotationViewSet(viewsets.ModelViewSet):
         - sem subscription: só anotações cujas versões pertencem a livros com entitlement.
         """
         user = self.request.user
-        qs = Annotation.objects.filter(user=user).select_related('book_version', 'book_version__book')
+        qs = (
+            Annotation.objects
+            .filter(user=user)
+            .select_related('book_version', 'book_version__book', 'chapter')
+        )
 
         if not getattr(user, 'is_staff', False) and not user_has_subscription(user):
             allowed_book_ids = entitled_book_ids(user)
@@ -34,12 +39,16 @@ class AnnotationViewSet(viewsets.ModelViewSet):
         if bv:
             qs = qs.filter(book_version_id=bv)
 
-        page = self.request.query_params.get('page_number')
-        if page:
+        chapter_id = self.request.query_params.get('chapter_id') or self.request.query_params.get('chapter')
+        if chapter_id:
             try:
-                qs = qs.filter(page_number=int(page))
+                qs = qs.filter(chapter_id=int(chapter_id))
             except ValueError:
                 pass
+
+        chapter_slug = self.request.query_params.get('chapter_slug')
+        if chapter_slug:
+            qs = qs.filter(chapter__slug=chapter_slug)
 
         return qs
 
