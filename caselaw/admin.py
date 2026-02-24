@@ -9,21 +9,20 @@ class CaseLawAdmin(admin.ModelAdmin):
         'court',
         'case_number',
         'decision_date',
-        'relevance',
+        'anchors_count',
         'updated_at',
     )
     list_filter = (
         'court',
         'decision_date',
-        'relevance',
     )
     search_fields = (
         'court',
         'case_number',
-        'summary',
+        'ementa_plain',
     )
     ordering = ('-decision_date', '-updated_at')
-    readonly_fields = ('created_at', 'updated_at')
+    readonly_fields = ('ementa_plain', 'created_at', 'updated_at')
 
     fieldsets = (
         (None, {
@@ -32,14 +31,20 @@ class CaseLawAdmin(admin.ModelAdmin):
                 'case_number',
                 'decision_date',
                 'url',
-                'relevance',
+                'anchors',
                 'tags',
             )
         }),
         ('Conteúdo', {
-            'fields': ('summary',),
+            'fields': ('ementa_rich', 'ementa_plain'),
         }),
         ('Metadados', {
             'fields': ('created_at', 'updated_at'),
         }),
     )
+
+    def anchors_count(self, obj):
+        anchors = obj.anchors if isinstance(obj.anchors, list) else []
+        return len(anchors)
+
+    anchors_count.short_description = 'Anchors'
