@@ -1,4 +1,6 @@
 from django.db.models import Q
+from django.db.models.functions import Cast
+from django.db.models import TextField
 
 from rest_framework import viewsets
 from rest_framework.pagination import LimitOffsetPagination
@@ -39,10 +41,16 @@ class CaseLawViewSet(viewsets.ReadOnlyModelViewSet):
 
         q = (self.request.query_params.get('q') or '').strip()
         if q:
+            qs = qs.annotate(
+                tags_text=Cast('tags', TextField()),
+                anchors_text=Cast('anchors', TextField()),
+            )
             qs = qs.filter(
                 Q(court__icontains=q)
                 | Q(case_number__icontains=q)
-                | Q(summary__icontains=q)
+                | Q(ementa_plain__icontains=q)
+                | Q(tags_text__icontains=q)
+                | Q(anchors_text__icontains=q)
             )
         court = (self.request.query_params.get('court') or '').strip()
         if court:
