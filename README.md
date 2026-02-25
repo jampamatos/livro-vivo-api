@@ -132,36 +132,18 @@ python manage.py createsuperuser
 
 Acessar: [http://127.0.0.1:8000/admin/](http://127.0.0.1:8000/admin/)
 
-### Upload de PDF (BookVersion)
+### Capítulos nativos (BookVersion/BookChapter)
 
-No admin, em uma `BookVersion`, você pode anexar um PDF.
-Em dev, esse arquivo é salvo em:
+No admin, cada `BookVersion` possui capítulos (`BookChapter`) com:
 
-- `media/books/<book_id>/versions/<version>/<filename>`
-
-> Importante: a pasta `media/` **não deve** ser commitada (contém PDFs reais).
+- `order` (ordem de leitura)
+- `slug` (rota estável)
+- `content_rich` (HTML sanitizado)
+- `content_plain` (texto para busca)
 
 ### Jurisprudência
 
 No MVP, a base de jurisprudência é gerenciada via Django Admin (CRUD), e o app consome via API (listagem + busca).
-
----
-
-## Ingestão de texto do PDF (PageText)
-
-Para habilitar busca e leitura por página, o backend extrai o texto do PDF e salva no banco (uma linha por página).
-
-### Command: extrair texto por página
-
-Após anexar o PDF em uma `BookVersion` no admin:
-
-```bash
-python manage.py extract_pdf_text --book-version-id <version_id> --force
-```
-
-- `--force:` remove os `PageText` existentes daquela versão e reprocessa tudo.
-
-> Nota: o texto pode conter quebras de linha `\n` (normal em JSON). A UI decide como renderizar.
 
 ---
 
@@ -342,19 +324,19 @@ curl -s http://127.0.0.1:8000/me/entitlements/ \
   -H "Authorization: Bearer $ACCESS_TOKEN" && echo
 ```
 
-### 5) Baixar PDF
+### 5) Ler versão atual + capítulos (chapter-first)
 
 ```bash
 ACCESS_TOKEN="<seu_access_token>"
 
-URL="$(
-  curl -s http://127.0.0.1:8000/books/1/versions/1/download-url/ \
-    -H "Authorization: Bearer $ACCESS_TOKEN" \
-  | jq -r .url
-)"
+curl -s http://127.0.0.1:8000/books/1/current-version/ \
+  -H "Authorization: Bearer $ACCESS_TOKEN" | jq
 
-curl -L -o /tmp/livro.pdf "$URL"
-file /tmp/livro.pdf
+curl -s http://127.0.0.1:8000/books/1/current-version/chapters/ \
+  -H "Authorization: Bearer $ACCESS_TOKEN" | jq
+
+curl -s http://127.0.0.1:8000/books/1/current-version/chapters/<chapter-slug>/ \
+  -H "Authorization: Bearer $ACCESS_TOKEN" | jq
 ```
 
 ### 6) Buscar termo em páginas (Search)
@@ -394,7 +376,6 @@ Caso contrário, o endpoint responde:
 - Por padrão, endpoints DRF exigem autenticação JWT (`Bearer`).
 - `register`, `login` e `refresh` são públicos; `logout` exige usuário autenticado.
 - A autorização (o “que você pode acessar”) será baseada em entitlements.
-- `/search/` usa busca simples (`icontains`) no MVP; a implementação pode evoluir para FTS no Postgres sem mudar o contrato do endpoint.
-- O comando `extract_pdf_text` é manual no MVP (sem jobs/filas).
+- `/search/` usa FTS (Postgres) com fallback controlado para SQLite.
 - Jurisprudência v0: vínculo por âncora/trecho e alertas por tema entram depois (Gate JIT).
 - CI mínimo de qualidade está em `.github/workflows/ci.yml` (testes + `check --deploy`).

@@ -103,7 +103,6 @@ class SearchResultSerializer(serializers.Serializer):
     book_title = serializers.CharField()
     book_version_id = serializers.IntegerField()
     version = serializers.CharField()
-    page_number = serializers.IntegerField()
     chapter_id = serializers.IntegerField()
     chapter_slug = serializers.SlugField()
     chapter_title = serializers.CharField()
@@ -112,14 +111,3 @@ class SearchResultSerializer(serializers.Serializer):
     match_start = serializers.IntegerField()
     match_end = serializers.IntegerField()
     snippet = serializers.CharField()
-
-
-class PageTextSerializer(serializers.Serializer):
-    """Serializer do payload de texto de página."""
-
-    book_id = serializers.IntegerField()
-    book_title = serializers.CharField()
-    book_version_id = serializers.IntegerField()
-    version = serializers.CharField()
-    page_number = serializers.IntegerField()
-    text = serializers.CharField()

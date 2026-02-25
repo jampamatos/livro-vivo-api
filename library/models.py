@@ -203,8 +203,9 @@ class BookVersion(models.Model):
         PUBLISHED = 'published', 'Published'
         ARCHIVED = 'archived', 'Archived'
 
+    @staticmethod
     def book_version_pdf_path(instance, filename):
-        # caminho organizado por livro e versão
+        # Mantido por compatibilidade com migrations históricas (0002).
         return f"books/{instance.book_id}/versions/{instance.version}/{filename}"
 
     book = models.ForeignKey(Book, on_delete=models.CASCADE, related_name='versions')
@@ -217,11 +218,6 @@ class BookVersion(models.Model):
         default=Status.DRAFT,
     )
     created_at = models.DateTimeField(auto_now_add=True)
-    pdf = models.FileField(
-        upload_to=book_version_pdf_path,
-        null=True,
-        blank=True,
-    )
 
     class Meta:
         ordering = ['-created_at']
@@ -234,35 +230,6 @@ class BookVersion(models.Model):
 
     def __str__(self) -> str:
         return f"{self.book.title} - {self.version}"
-
-
-class PageText(models.Model):
-    """Texto extraído de uma página específica de uma versão."""
-
-    book_version = models.ForeignKey(
-        BookVersion,
-        on_delete=models.CASCADE,
-        related_name='page_texts',
-    )
-    page_number = models.PositiveIntegerField()  # 1-based
-    text = models.TextField(blank=True)
-
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ['page_number']
-        constraints = [
-            models.UniqueConstraint(
-                fields=['book_version', 'page_number'],
-                name='uniq_pagetext_per_version_page'
-            )
-        ]
-        indexes = [
-            models.Index(fields=['book_version', 'page_number']),
-        ]
-
-    def __str__(self) -> str:
-        return f'{self.book_version} - p.{self.page_number}'
 
 
 class BookChapter(models.Model):

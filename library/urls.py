@@ -1,13 +1,10 @@
 from django.urls import path
 from .views import (
     BookListView,
+    BookVersionListView,
     CurrentBookChapterBySlugView,
     CurrentBookChapterSummaryView,
     CurrentBookVersionView,
-    BookVersionDownloadView,
-    BookVersionDownloadUrlView,
-    BookVersionListView,
-    BookVersionPageTextView,
     SearchView,
 )
 
@@ -30,21 +27,5 @@ urlpatterns = [
         'books/<int:book_id>/current-version/chapters/<slug:chapter_slug>/',
         CurrentBookChapterBySlugView.as_view(),
         name='book-current-version-chapter-by-slug',
-    ),
-
-    path(
-        'books/<int:book_id>/versions/<int:version_id>/download-url/',
-        BookVersionDownloadUrlView.as_view(),
-        name='book-version-download-url',
-    ),
-    path(
-        'books/<int:book_id>/versions/<int:version_id>/download/',
-        BookVersionDownloadView.as_view(),
-        name='book-version-download',
-    ),
-    path(
-        'books/<int:book_id>/versions/<int:version_id>/pages/<int:page_number>/',
-        BookVersionPageTextView.as_view(),
-        name='book-version-page-text',
     ),
 ]
