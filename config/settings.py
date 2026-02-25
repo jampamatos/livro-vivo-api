@@ -19,6 +19,8 @@ import dj_database_url
 import os
 import sys
 
+from .logging import build_logging_config
+
 
 def env_bool(key: str, default: bool = False) -> bool:
     raw = os.getenv(key)
@@ -45,6 +47,7 @@ DJANGO_ENV = os.getenv("DJANGO_ENV", "development").strip().lower()
 IS_PRODUCTION = DJANGO_ENV in {"prod", "production"}
 IS_STAGE = DJANGO_ENV in {"stage", "staging"}
 IS_TESTING = "test" in sys.argv
+APP_VERSION = (os.getenv("APP_VERSION") or "dev").strip()
 
 # SECURITY WARNING: don't run with debug turned on in production/stage!
 DEBUG = env_bool("DEBUG", default=not (IS_PRODUCTION or IS_STAGE))
@@ -265,13 +268,27 @@ CORS_ALLOWED_ORIGINS = env_list(
     'DJANGO_CORS_ALLOWED_ORIGINS',
     _default_dev_cors if DEBUG else '',
 )
+CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = env_bool('DJANGO_CORS_ALLOW_CREDENTIALS', default=False)
 CSRF_TRUSTED_ORIGINS = env_list('DJANGO_CSRF_TRUSTED_ORIGINS', '')
+
+if (IS_PRODUCTION or IS_STAGE) and not CORS_ALLOWED_ORIGINS:
+    raise ImproperlyConfigured(
+        "DJANGO_CORS_ALLOWED_ORIGINS is required when DJANGO_ENV is stage/production."
+    )
+if (IS_PRODUCTION or IS_STAGE) and not CSRF_TRUSTED_ORIGINS:
+    raise ImproperlyConfigured(
+        "DJANGO_CSRF_TRUSTED_ORIGINS is required when DJANGO_ENV is stage/production."
+    )
 
 SECURE_SSL_REDIRECT = env_bool(
     'DJANGO_SECURE_SSL_REDIRECT',
     default=(IS_PRODUCTION or IS_STAGE),
 )
+SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
+SECURE_CROSS_ORIGIN_RESOURCE_POLICY = 'same-origin'
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SECURE = env_bool(
     'DJANGO_SESSION_COOKIE_SECURE',
     default=(IS_PRODUCTION or IS_STAGE),
@@ -295,5 +312,28 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
 REFERRER_POLICY = 'same-origin'
 
-if env_bool('DJANGO_SECURE_PROXY_SSL_HEADER_ENABLED', default=False):
+if env_bool('DJANGO_SECURE_PROXY_SSL_HEADER_ENABLED', default=(IS_PRODUCTION or IS_STAGE)):
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+SENTRY_DSN = (os.getenv("SENTRY_DSN") or "").strip()
+SENTRY_ENVIRONMENT = (os.getenv("SENTRY_ENVIRONMENT") or DJANGO_ENV).strip()
+SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0"))
+
+if SENTRY_DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.django import DjangoIntegration
+
+        sentry_sdk.init(
+            dsn=SENTRY_DSN,
+            environment=SENTRY_ENVIRONMENT,
+            release=APP_VERSION,
+            traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
+            send_default_pii=False,
+            integrations=[DjangoIntegration()],
+        )
+    except Exception:
+        # Não impede boot em caso de configuração parcial de observabilidade.
+        pass
+
+LOGGING = build_logging_config(debug=DEBUG)
