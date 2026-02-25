@@ -64,6 +64,7 @@ urlpatterns = [
     path('', include('annotations.urls')),
     path('', include('caselaw.urls')),
     path('', include('community.urls')),
+    path('', include('courses.urls')),
     path('', include('library.urls')),
 ]
 

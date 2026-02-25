@@ -94,6 +94,7 @@ INSTALLED_APPS = [
     'annotations',
     'caselaw',
     'community',
+    'courses',
     'entitlements',
     'library',
 ]
