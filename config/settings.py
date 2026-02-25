@@ -195,7 +195,6 @@ REST_FRAMEWORK = {
         'auth_register': '5/min',
         'auth_login': '10/min',
         'library_search': '60/min',
-        'library_download_url': '30/min',
         'community_api': '120/min',
     },
 }
@@ -208,7 +207,6 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
-LIBRARY_DOWNLOAD_URL_TTL_SECONDS = int(os.getenv('LIBRARY_DOWNLOAD_URL_TTL_SECONDS', '300'))
 NOTIFICATIONS_ENABLED = env_bool('NOTIFICATIONS_ENABLED', default=True)
 NOTIFICATIONS_PUSH_PROVIDER = (os.getenv('NOTIFICATIONS_PUSH_PROVIDER') or 'noop').strip().lower()
 NOTIFICATIONS_FCM_PROJECT_ID = (os.getenv('NOTIFICATIONS_FCM_PROJECT_ID') or '').strip()

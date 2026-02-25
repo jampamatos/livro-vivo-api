@@ -1,19 +1,11 @@
 from datetime import timedelta
-import shutil
-import tempfile
-from types import SimpleNamespace
-from urllib.parse import parse_qs, urlsplit
 from unittest import mock
 
-from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
 from django.core.cache import cache
-from django.core import signing
-from django.core.files.uploadedfile import SimpleUploadedFile
-from django.core.management import CommandError, call_command
 from django.db import IntegrityError, transaction
-from django.test import Client, TestCase, override_settings
+from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
@@ -24,14 +16,10 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from accounts.models import NotificationDispatch, NotificationEvent, NotificationPreference
 from entitlements.models import Entitlement, Subscription
 
-from .models import Book, BookChapter, BookVersion, PageText
+from .models import Book, BookChapter, BookVersion
 from .permissions import HasActiveBookEntitlement
 from .services import create_preloaded_book_version, enqueue_book_version_publication_notifications
-from .views import (
-    DOWNLOAD_URL_SIGNING_SALT,
-    DOWNLOAD_URL_TOKEN_PARAM,
-    _make_snippet,
-)
+from .views import _make_snippet
 
 User = get_user_model()
 
@@ -77,18 +65,6 @@ class LibraryBaseTestCase(TestCase):
             expires_at=expires_at,
         )
 
-    def _temp_media(self):
-        media_dir = tempfile.mkdtemp(prefix='media-')
-        self.addCleanup(lambda: shutil.rmtree(media_dir, ignore_errors=True))
-        return self.settings(MEDIA_ROOT=media_dir)
-
-    def _path_with_query(self, absolute_url: str) -> str:
-        parsed = urlsplit(absolute_url)
-        if parsed.query:
-            return f'{parsed.path}?{parsed.query}'
-        return parsed.path
-
-
 class LibraryModelTests(LibraryBaseTestCase):
     def test_book_version_unique_constraint(self):
         book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
@@ -97,15 +73,6 @@ class LibraryModelTests(LibraryBaseTestCase):
         with self.assertRaises(IntegrityError):
             with transaction.atomic():
                 BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-
-    def test_page_text_unique_constraint(self):
-        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
-        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-        PageText.objects.create(book_version=version, page_number=1, text='Hello')
-
-        with self.assertRaises(IntegrityError):
-            with transaction.atomic():
-                PageText.objects.create(book_version=version, page_number=1, text='Dup')
 
     def test_book_chapter_unique_constraints_per_version(self):
         book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
@@ -924,171 +891,6 @@ class LibraryAPITests(LibraryBaseTestCase):
 
         self.assertEqual(response.status_code, 404)
 
-    def test_download_url_requires_published_for_non_staff(self):
-        user = self._create_user()
-        book = Book.objects.create(title='Draft', status=Book.Status.PUBLISHED)
-        self._grant_entitlement(user, book=book)
-        self._auth_client(user)
-        draft = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.DRAFT)
-
-        response = self.client.get(
-            reverse('book-version-download-url', kwargs={'book_id': book.id, 'version_id': draft.id})
-        )
-
-        self.assertEqual(response.status_code, 404)
-
-    def test_download_url_returns_url_when_pdf_present(self):
-        user = self._create_user()
-        with self._temp_media():
-            book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
-            self._grant_entitlement(user, book=book)
-            self._auth_client(user)
-            version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-            version.pdf.save('test.pdf', SimpleUploadedFile('test.pdf', b'%PDF-1.4 test'))
-
-            response = self.client.get(
-                reverse('book-version-download-url', kwargs={'book_id': book.id, 'version_id': version.id})
-            )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertIn(f'/books/{book.id}/versions/{version.id}/download/', response.data['url'])
-        parsed = urlsplit(response.data['url'])
-        query = parse_qs(parsed.query)
-        signed_token = query.get(DOWNLOAD_URL_TOKEN_PARAM, [None])[0]
-        self.assertIsNotNone(signed_token)
-        payload = signing.loads(
-            signed_token,
-            salt=DOWNLOAD_URL_SIGNING_SALT,
-            max_age=settings.LIBRARY_DOWNLOAD_URL_TTL_SECONDS,
-        )
-        self.assertEqual(payload['u'], user.id)
-        self.assertEqual(payload['b'], book.id)
-        self.assertEqual(payload['v'], version.id)
-
-    def test_download_url_returns_404_when_no_pdf(self):
-        user = self._create_user()
-        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
-        self._grant_entitlement(user, book=book)
-        self._auth_client(user)
-        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-
-        response = self.client.get(
-            reverse('book-version-download-url', kwargs={'book_id': book.id, 'version_id': version.id})
-        )
-
-        self.assertEqual(response.status_code, 404)
-
-    def test_download_file_response(self):
-        user = self._create_user()
-        with self._temp_media():
-            book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
-            self._grant_entitlement(user, book=book)
-            self._auth_client(user)
-            version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-            version.pdf.save('test.pdf', SimpleUploadedFile('test.pdf', b'%PDF-1.4 test'))
-            signed_url_response = self.client.get(
-                reverse('book-version-download-url', kwargs={'book_id': book.id, 'version_id': version.id})
-            )
-            self.assertEqual(signed_url_response.status_code, 200)
-            download_path = self._path_with_query(signed_url_response.data['url'])
-
-            self.client.credentials()
-            response = self.client.get(download_path)
-
-        self.assertEqual(response.status_code, 200)
-        self.assertIn('attachment; filename="test.pdf"', response.headers.get('Content-Disposition', ''))
-
-    def test_download_file_returns_404_when_signed_token_missing(self):
-        user = self._create_user()
-        with self._temp_media():
-            book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
-            self._grant_entitlement(user, book=book)
-            self._auth_client(user)
-            version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-            version.pdf.save('test.pdf', SimpleUploadedFile('test.pdf', b'%PDF-1.4 test'))
-
-            response = self.client.get(
-                reverse('book-version-download', kwargs={'book_id': book.id, 'version_id': version.id})
-            )
-
-        self.assertEqual(response.status_code, 404)
-
-    def test_download_file_returns_404_when_signed_token_is_tampered(self):
-        user = self._create_user()
-        with self._temp_media():
-            book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
-            self._grant_entitlement(user, book=book)
-            self._auth_client(user)
-            version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-            version.pdf.save('test.pdf', SimpleUploadedFile('test.pdf', b'%PDF-1.4 test'))
-            signed_url_response = self.client.get(
-                reverse('book-version-download-url', kwargs={'book_id': book.id, 'version_id': version.id})
-            )
-            signed_path = self._path_with_query(signed_url_response.data['url'])
-            parsed = urlsplit(signed_path)
-            query = parse_qs(parsed.query)
-            signed_token = query[DOWNLOAD_URL_TOKEN_PARAM][0]
-            tampered = signed_token[:-1] + ('A' if signed_token[-1] != 'A' else 'B')
-            tampered_path = f"{parsed.path}?{DOWNLOAD_URL_TOKEN_PARAM}={tampered}"
-
-            response = self.client.get(tampered_path)
-
-        self.assertEqual(response.status_code, 404)
-
-    def test_download_file_returns_404_when_signed_token_is_for_another_user(self):
-        user_one = self._create_user(email='u1@example.com')
-        user_two = self._create_user(email='u2@example.com')
-
-        with self._temp_media():
-            book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
-            self._grant_entitlement(user_one, book=book)
-            self._grant_entitlement(user_two, book=book)
-
-            self._auth_client(user_one)
-            version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-            version.pdf.save('test.pdf', SimpleUploadedFile('test.pdf', b'%PDF-1.4 test'))
-            signed_url_response = self.client.get(
-                reverse('book-version-download-url', kwargs={'book_id': book.id, 'version_id': version.id})
-            )
-            signed_path = self._path_with_query(signed_url_response.data['url'])
-
-            self._auth_client(user_two)
-            response = self.client.get(signed_path)
-
-        self.assertEqual(response.status_code, 404)
-
-    @override_settings(LIBRARY_DOWNLOAD_URL_TTL_SECONDS=1)
-    def test_download_file_returns_404_when_signed_token_is_expired(self):
-        user = self._create_user()
-        with self._temp_media():
-            book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
-            self._grant_entitlement(user, book=book)
-            self._auth_client(user)
-            version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-            version.pdf.save('test.pdf', SimpleUploadedFile('test.pdf', b'%PDF-1.4 test'))
-            signed_url_response = self.client.get(
-                reverse('book-version-download-url', kwargs={'book_id': book.id, 'version_id': version.id})
-            )
-            signed_path = self._path_with_query(signed_url_response.data['url'])
-
-            with mock.patch('library.views._download_url_max_age_seconds', return_value=-1):
-                response = self.client.get(signed_path)
-
-        self.assertEqual(response.status_code, 404)
-
-    def test_download_file_returns_404_when_no_pdf(self):
-        user = self._create_user()
-        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
-        self._grant_entitlement(user, book=book)
-        self._auth_client(user)
-        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-
-        response = self.client.get(
-            reverse('book-version-download', kwargs={'book_id': book.id, 'version_id': version.id})
-        )
-
-        self.assertEqual(response.status_code, 404)
-
     def test_search_validation_errors(self):
         user = self._create_user()
         self._grant_entitlement(user, product=Entitlement.Product.SUBSCRIPTION)
@@ -1163,38 +965,6 @@ class LibraryAPITests(LibraryBaseTestCase):
         self.assertEqual(response.data['count'], 1)
         self.assertEqual(response.data['results'][0]['chapter_slug'], 'cap-draft')
 
-    def test_page_text_view_validation_and_visibility(self):
-        user = self._create_user()
-        book = Book.objects.create(title='Draft', status=Book.Status.DRAFT)
-        self._grant_entitlement(user, book=book)
-        self._auth_client(user)
-        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.DRAFT)
-
-        response = self.client.get(
-            reverse('book-version-page-text', kwargs={'book_id': book.id, 'version_id': version.id, 'page_number': 0})
-        )
-        self.assertEqual(response.status_code, 400)
-
-        response = self.client.get(
-            reverse('book-version-page-text', kwargs={'book_id': book.id, 'version_id': version.id, 'page_number': 1})
-        )
-        self.assertEqual(response.status_code, 404)
-
-    def test_page_text_view_returns_text_for_published(self):
-        user = self._create_user()
-        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
-        self._grant_entitlement(user, book=book)
-        self._auth_client(user)
-        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-        PageText.objects.create(book_version=version, page_number=1, text='Hello page')
-
-        response = self.client.get(
-            reverse('book-version-page-text', kwargs={'book_id': book.id, 'version_id': version.id, 'page_number': 1})
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data['text'], 'Hello page')
-    
     def test_search_by_book_id_path(self):
         user = self._create_user()
         book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
@@ -1382,46 +1152,6 @@ class LibraryAPITests(LibraryBaseTestCase):
         response = self.client.get(reverse('book-search', kwargs={'book_id': target_book.id}), {'q': 'hello'})
         self.assertEqual(response.status_code, 403)
 
-    def test_download_url_denies_when_entitlement_is_for_other_book(self):
-        user = self._create_user()
-        entitled_book = Book.objects.create(title='Entitled', status=Book.Status.PUBLISHED)
-        target_book = Book.objects.create(title='Target', status=Book.Status.PUBLISHED)
-        target_version = BookVersion.objects.create(
-            book=target_book,
-            version='2024.01',
-            status=BookVersion.Status.PUBLISHED,
-        )
-
-        self._grant_entitlement(user, book=entitled_book)
-        self._auth_client(user)
-
-        response = self.client.get(
-            reverse('book-version-download-url', kwargs={'book_id': target_book.id, 'version_id': target_version.id})
-        )
-        self.assertEqual(response.status_code, 403)
-
-    def test_download_file_denies_when_entitlement_is_for_other_book(self):
-        user = self._create_user()
-        entitled_book = Book.objects.create(title='Entitled', status=Book.Status.PUBLISHED)
-
-        with self._temp_media():
-            target_book = Book.objects.create(title='Target', status=Book.Status.PUBLISHED)
-            target_version = BookVersion.objects.create(
-                book=target_book,
-                version='2024.01',
-                status=BookVersion.Status.PUBLISHED,
-            )
-            target_version.pdf.save('target.pdf', SimpleUploadedFile('target.pdf', b'%PDF-1.4 test'))
-
-            self._grant_entitlement(user, book=entitled_book)
-            self._auth_client(user)
-
-            response = self.client.get(
-                reverse('book-version-download', kwargs={'book_id': target_book.id, 'version_id': target_version.id})
-            )
-
-        self.assertEqual(response.status_code, 404)
-
     def test_search_is_throttled(self):
         cache.clear()
         user = self._create_user()
@@ -1443,97 +1173,6 @@ class LibraryAPITests(LibraryBaseTestCase):
 
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 429)
-
-    def test_download_url_is_throttled(self):
-        cache.clear()
-        user = self._create_user()
-        with self._temp_media():
-            book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
-            version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-            version.pdf.save('throttle.pdf', SimpleUploadedFile('throttle.pdf', b'%PDF-1.4 test'))
-            self._grant_entitlement(user, book=book)
-            self._auth_client(user)
-
-            with mock.patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {'library_download_url': '1/min'}):
-                first = self.client.get(
-                    reverse('book-version-download-url', kwargs={'book_id': book.id, 'version_id': version.id})
-                )
-                second = self.client.get(
-                    reverse('book-version-download-url', kwargs={'book_id': book.id, 'version_id': version.id})
-                )
-
-        self.assertEqual(first.status_code, 200)
-        self.assertEqual(second.status_code, 429)
-
-class ExtractPdfTextCommandTests(LibraryBaseTestCase):
-    def test_cleanup_removes_noise(self):
-        from .management.commands.extract_pdf_text import _cleanup
-
-        text = "Hello\u00a0world\u200b\n\n\nLine 2\t\t"
-        cleaned = _cleanup(text)
-
-        self.assertEqual(cleaned, "Hello world\n\nLine 2")
-
-    def test_command_raises_without_pdf(self):
-        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
-        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-
-        with self.assertRaises(CommandError):
-            call_command('extract_pdf_text', book_version_id=version.id, force=True)
-
-    def test_command_raises_when_pymupdf_missing(self):
-        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
-        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-
-        with self._temp_media():
-            version.pdf.save('test.pdf', SimpleUploadedFile('test.pdf', b'%PDF-1.4 test'))
-
-            with mock.patch('library.management.commands.extract_pdf_text.fitz', None):
-                with self.assertRaises(CommandError):
-                    call_command('extract_pdf_text', book_version_id=version.id, force=True)
-
-    def test_command_inserts_page_texts(self):
-        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
-        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-
-        with self._temp_media():
-            version.pdf.save('test.pdf', SimpleUploadedFile('test.pdf', b'%PDF-1.4 test'))
-
-            fake_doc = SimpleNamespace(
-                page_count=2,
-                load_page=lambda index: SimpleNamespace(
-                    get_text=lambda mode: [] if mode == 'words' else f"Page {index + 1}"
-                ),
-            )
-
-            with mock.patch('library.management.commands.extract_pdf_text.fitz', SimpleNamespace(open=lambda _: fake_doc)):
-                call_command('extract_pdf_text', book_version_id=version.id, force=True)
-
-        rows = PageText.objects.filter(book_version=version).order_by('page_number')
-        self.assertEqual(rows.count(), 2)
-        self.assertEqual(rows.first().text, 'Page 1')
-
-    def test_command_force_replaces_existing_rows(self):
-        book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
-        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-
-        with self._temp_media():
-            version.pdf.save('test.pdf', SimpleUploadedFile('test.pdf', b'%PDF-1.4 test'))
-            PageText.objects.create(book_version=version, page_number=1, text='Old')
-
-            fake_doc = SimpleNamespace(
-                page_count=1,
-                load_page=lambda index: SimpleNamespace(
-                    get_text=lambda mode: [] if mode == 'words' else 'New'
-                ),
-            )
-
-            with mock.patch('library.management.commands.extract_pdf_text.fitz', SimpleNamespace(open=lambda _: fake_doc)):
-                call_command('extract_pdf_text', book_version_id=version.id, force=True)
-
-        rows = PageText.objects.filter(book_version=version)
-        self.assertEqual(rows.count(), 1)
-        self.assertEqual(rows.first().text, 'New')
 
 class TestCorsHealth(TestCase):
     def setUp(self):

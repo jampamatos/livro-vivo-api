@@ -14,7 +14,6 @@ from .models import (
     Book,
     BookChapter,
     BookVersion,
-    PageText,
     sanitize_chapter_html,
 )
 from .services import create_preloaded_book_version, enqueue_book_version_publication_notifications
@@ -204,14 +203,6 @@ class BookVersionAdmin(admin.ModelAdmin):
             ),
             level=messages.SUCCESS,
         )
-
-
-@admin.register(PageText)
-class PageTextAdmin(admin.ModelAdmin):
-    list_display = ('id', 'book_version', 'page_number', 'created_at')
-    search_fields = ('book_version__book__title', 'book_version__version', 'text')
-    list_filter = ('book_version__book',)
-    ordering = ('book_version', 'page_number')
 
 
 @admin.register(BookChapter)

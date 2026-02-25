@@ -1,34 +1,22 @@
-import logging
 import re
-from pathlib import Path
 from typing import Optional
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from django.conf import settings
 from django.contrib.postgres.search import SearchQuery, SearchRank
-from django.contrib.auth import get_user_model
-from django.core import signing
 from django.db import connection
 from django.db.models import F, Q
-from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
-from django.urls import reverse
-from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import NotFound
-from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from entitlements.models import Entitlement
-from entitlements.services import entitled_book_ids, user_has_book_entitlement, user_has_subscription
+from entitlements.services import entitled_book_ids, user_has_subscription
 from .models import (
     CHAPTER_SEARCH_CONFIG,
     Book,
     BookChapter,
     BookVersion,
-    PageText,
     chapter_search_vector,
 )
 from .permissions import HasActiveBookEntitlement
@@ -38,84 +26,8 @@ from .serializers import (
     ChapterBySlugResponseSerializer,
     ChapterSummaryResponseSerializer,
     CurrentBookVersionResponseSerializer,
-    PageTextSerializer,
     SearchResultSerializer,
 )
-
-logger = logging.getLogger(__name__)
-DOWNLOAD_URL_TOKEN_PARAM = 'dl_token'
-DOWNLOAD_URL_SIGNING_SALT = 'library.book-version-download.v1'
-
-
-def _download_url_max_age_seconds() -> int:
-    try:
-        return max(1, int(getattr(settings, 'LIBRARY_DOWNLOAD_URL_TTL_SECONDS', 300)))
-    except (TypeError, ValueError):
-        return 300
-
-
-def _append_query_param(url: str, key: str, value: str) -> str:
-    parsed = urlsplit(url)
-    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    query[key] = value
-    return urlunsplit(
-        (parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment)
-    )
-
-
-def _build_download_token(*, user_id: int, book_id: int, version_id: int) -> str:
-    payload = {'u': int(user_id), 'b': int(book_id), 'v': int(version_id)}
-    return signing.dumps(payload, salt=DOWNLOAD_URL_SIGNING_SALT, compress=True)
-
-
-def _load_download_token_payload(
-    raw_token: str | None,
-) -> dict | None:
-    if not raw_token:
-        return None
-
-    try:
-        payload = signing.loads(
-            raw_token,
-            salt=DOWNLOAD_URL_SIGNING_SALT,
-            max_age=_download_url_max_age_seconds(),
-        )
-    except signing.BadSignature:
-        return None
-
-    if not isinstance(payload, dict):
-        return None
-
-    try:
-        token_user_id = int(payload.get('u'))
-        token_book_id = int(payload.get('b'))
-        token_version_id = int(payload.get('v'))
-    except (TypeError, ValueError):
-        return None
-
-    return {'user_id': token_user_id, 'book_id': token_book_id, 'version_id': token_version_id}
-
-
-def _user_has_active_download_scope(user_id: int, book_id: int) -> bool:
-    User = get_user_model()
-    user = User.objects.filter(pk=user_id).only('id', 'is_staff').first()
-    if not user:
-        return False
-    if user.is_staff:
-        return True
-
-    now = timezone.now()
-    has_any_active_entitlement = (
-        Entitlement.objects
-        .filter(user_id=user_id, status=Entitlement.Status.ACTIVE)
-        .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
-        .exists()
-    )
-    if not has_any_active_entitlement:
-        return False
-
-    return user_has_subscription(user) or user_has_book_entitlement(user, book_id)
-
 
 def _parse_int_or_default(value, default: int) -> int:
     try:
@@ -340,92 +252,6 @@ class CurrentBookChapterBySlugView(APIView):
         return Response(ChapterBySlugResponseSerializer(payload).data)
 
 
-class BookVersionDownloadUrlView(APIView):
-    """Entrega URL absoluta para download do PDF da versão."""
-
-    permission_classes = [HasActiveBookEntitlement]
-    throttle_classes = [ScopedRateThrottle]
-    throttle_scope = 'library_download_url'
-
-    def get(self, request, book_id: int, version_id: int):
-        bv = get_object_or_404(BookVersion, pk=version_id, book_id=book_id)
-
-        if not request.user.is_staff and bv.status != BookVersion.Status.PUBLISHED:
-            raise NotFound()
-
-        if not bv.pdf:
-            raise NotFound('PDF não está disponível para esta versão')
-
-        base_download_url = request.build_absolute_uri(
-            reverse('book-version-download', kwargs={'book_id': book_id, 'version_id': version_id})
-        )
-        signed_token = _build_download_token(
-            user_id=request.user.id,
-            book_id=book_id,
-            version_id=version_id,
-        )
-        download_url = _append_query_param(
-            base_download_url,
-            DOWNLOAD_URL_TOKEN_PARAM,
-            signed_token,
-        )
-
-        return Response({'url': download_url})
-
-
-class BookVersionDownloadView(APIView):
-    """Faz o streaming do PDF da versão solicitada."""
-
-    permission_classes = [AllowAny]
-
-    def get(self, request, book_id: int, version_id: int):
-        raw_token = request.query_params.get(DOWNLOAD_URL_TOKEN_PARAM)
-        payload = _load_download_token_payload(raw_token)
-        authenticated_user_id = getattr(request.user, 'id', None)
-        token_user_id = payload['user_id'] if payload else None
-        if (
-            not payload
-            or payload['book_id'] != int(book_id)
-            or payload['version_id'] != int(version_id)
-            or (
-                authenticated_user_id is not None
-                and int(authenticated_user_id) != int(token_user_id)
-            )
-            or not _user_has_active_download_scope(payload['user_id'], book_id)
-        ):
-            logger.warning(
-                'Rejected invalid/expired download token',
-                extra={
-                    'user_id': payload['user_id'] if payload else None,
-                    'book_id': book_id,
-                    'version_id': version_id,
-                },
-            )
-            raise NotFound()
-
-        bv = get_object_or_404(BookVersion, pk=version_id, book_id=book_id)
-
-        if bv.status != BookVersion.Status.PUBLISHED:
-            raise NotFound()
-
-        if not bv.pdf:
-            raise Http404()
-
-        # Pega só o nome do arquivo para o header.
-        filename = Path(bv.pdf.name).name
-        response = FileResponse(bv.pdf.open('rb'), content_type='application/pdf')
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
-        logger.info(
-            'Issued signed download response',
-            extra={
-                'user_id': payload['user_id'],
-                'book_id': book_id,
-                'version_id': version_id,
-            },
-        )
-        return response
-
-
 class SearchView(APIView):
     """Busca por capítulos com FTS em Postgres e fallback para SQLite."""
 
@@ -531,8 +357,6 @@ class SearchView(APIView):
                         'book_title': b.title,
                         'book_version_id': bv.id,
                         'version': bv.version,
-                        # Compat legado: page_number mapeado para ordem do capítulo.
-                        'page_number': row.order,
                         'chapter_id': row.id,
                         'chapter_slug': row.slug,
                         'chapter_title': row.title,
@@ -556,44 +380,3 @@ class SearchView(APIView):
         }
 
         return Response(data)
-
-
-class BookVersionPageTextView(APIView):
-    """Retorna o texto de uma página específica de uma versão."""
-
-    permission_classes = [HasActiveBookEntitlement]
-
-    def get(self, request, book_id: int, version_id: int, page_number: int):
-        if page_number < 1:
-            return Response(
-                {'detail': "'page_number' must be >= 1."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        bv = get_object_or_404(
-            BookVersion.objects.select_related('book'),
-            pk=version_id,
-            book_id=book_id,
-        )
-
-        # usuário comum só vê publicados
-        if not request.user.is_staff:
-            if bv.status != BookVersion.Status.PUBLISHED or bv.book.status != Book.Status.PUBLISHED:
-                raise NotFound()
-
-        pt = get_object_or_404(
-            PageText,
-            book_version=bv,
-            page_number=page_number,
-        )
-
-        payload = {
-            'book_id': bv.book_id,
-            'book_title': bv.book.title,
-            'book_version_id': bv.id,
-            'version': bv.version,
-            'page_number': pt.page_number,
-            'text': pt.text or '',
-        }
-
-        return Response(PageTextSerializer(payload).data)
