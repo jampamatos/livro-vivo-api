@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import logging
 
 from django.conf import settings
 from django.db import transaction
@@ -11,6 +12,8 @@ from accounts.models import NotificationDispatch, NotificationEvent, Notificatio
 from entitlements.models import Subscription
 from .models import BookChapter, BookVersion
 
+logger = logging.getLogger('livro_vivo.notifications')
+
 
 def enqueue_book_version_publication_notifications(
     *,
@@ -18,10 +21,20 @@ def enqueue_book_version_publication_notifications(
 ) -> NotificationEvent | None:
     """Cria evento notificável e fila de dispatch para publicação de versão."""
     if not getattr(settings, 'NOTIFICATIONS_ENABLED', True):
+        logger.info('book_version_notifications_skipped', extra={'reason': 'notifications_disabled_global'})
         return None
     if not book_version or not book_version.pk:
+        logger.warning('book_version_notifications_skipped', extra={'reason': 'book_version_missing'})
         return None
     if book_version.status != BookVersion.Status.PUBLISHED:
+        logger.info(
+            'book_version_notifications_skipped',
+            extra={
+                'reason': 'book_version_not_published',
+                'book_version_id': book_version.pk,
+                'status': book_version.status,
+            },
+        )
         return None
 
     dedup_key = f'book-version-published:{book_version.id}'
@@ -41,6 +54,10 @@ def enqueue_book_version_publication_notifications(
         },
     )
     if not created:
+        logger.info(
+            'book_version_notifications_dedup_hit',
+            extra={'book_version_id': book_version.pk, 'event_id': event.pk},
+        )
         return event
 
     now = timezone.now()
@@ -52,6 +69,10 @@ def enqueue_book_version_publication_notifications(
         .distinct()
     )
     if not subscribed_user_ids:
+        logger.info(
+            'book_version_notifications_no_subscribers',
+            extra={'book_version_id': book_version.pk, 'event_id': event.pk},
+        )
         return event
 
     preference_by_user_id = {
@@ -59,6 +80,8 @@ def enqueue_book_version_publication_notifications(
         for preference in NotificationPreference.objects.filter(user_id__in=subscribed_user_ids)
     }
 
+    pending_count = 0
+    skipped_count = 0
     for user_id in subscribed_user_ids:
         preference = preference_by_user_id.get(user_id)
         notifications_enabled = (
@@ -80,6 +103,10 @@ def enqueue_book_version_publication_notifications(
         elif not push_enabled:
             status = NotificationDispatch.Status.SKIPPED
             reason = 'push_disabled'
+        if status == NotificationDispatch.Status.PENDING:
+            pending_count += 1
+        else:
+            skipped_count += 1
 
         NotificationDispatch.objects.get_or_create(
             event=event,
@@ -90,6 +117,17 @@ def enqueue_book_version_publication_notifications(
                 'reason': reason,
             },
         )
+
+    logger.info(
+        'book_version_notifications_enqueued',
+        extra={
+            'book_version_id': book_version.pk,
+            'event_id': event.pk,
+            'subscriber_count': len(subscribed_user_ids),
+            'pending_count': pending_count,
+            'skipped_count': skipped_count,
+        },
+    )
 
     return event
 

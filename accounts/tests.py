@@ -1,4 +1,5 @@
 from datetime import timedelta
+import json
 from unittest import mock
 
 from django.contrib.auth import get_user_model
@@ -402,3 +403,44 @@ class AccountsAPITests(TestCase):
 
         self.assertEqual(first.status_code, 201)
         self.assertEqual(second.status_code, 429)
+
+
+class HealthAndReadinessTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+    def test_healthz_returns_ok(self):
+        response = self.client.get('/healthz/')
+        payload = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload['status'], 'ok')
+        self.assertEqual(payload['app'], 'livro-vivo-api')
+        self.assertIn('version', payload)
+
+    def test_readyz_returns_ok_when_dependencies_respond(self):
+        response = self.client.get('/readyz/')
+        payload = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload['status'], 'ok')
+        self.assertEqual(payload['checks']['database'], 'ok')
+        self.assertEqual(payload['checks']['cache'], 'ok')
+
+    def test_readyz_returns_degraded_when_database_fails(self):
+        with mock.patch('config.urls.connection.cursor', side_effect=RuntimeError('db-down')):
+            response = self.client.get('/readyz/')
+        payload = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(payload['status'], 'degraded')
+        self.assertIn('error', payload['checks']['database'])
+
+    def test_readyz_returns_degraded_when_cache_fails(self):
+        with mock.patch('config.urls.cache.get', return_value=None):
+            response = self.client.get('/readyz/')
+        payload = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(payload['status'], 'degraded')
+        self.assertEqual(payload['checks']['cache'], 'error')
