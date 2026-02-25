@@ -209,7 +209,7 @@ Workflow API (`.github/workflows/ci.yml`) executa:
 
 O backlog de pendencias pre-deploy esta em:
 
-- `docs/BACKLOG_EXECUTAVEL_2026-02-22.md`
+- `docs/BACKLOG_EXECUTAVEL_2026-02-25.md`
 
 Fora do estado atual: Curso (B9), Banco de Pecas (B10), moderacao operacional avancada,
 notificacoes expandidas e busca unificada cross-modulo.
