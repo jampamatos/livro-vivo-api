@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from .models import Profile
+from .models import NotificationPreference, Profile
 
 User = get_user_model()
 
@@ -66,3 +66,16 @@ class EntitlementSerializer(serializers.Serializer):
     expires_at = serializers.DateTimeField(allow_null=True)
     is_active = serializers.BooleanField()
     source = serializers.CharField()
+
+
+class NotificationPreferenceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificationPreference
+        fields = (
+            'notifications_enabled',
+            'book_version_updates_enabled',
+            'new_content_updates_enabled',
+            'push_enabled',
+            'updated_at',
+        )
+        read_only_fields = ('updated_at',)
