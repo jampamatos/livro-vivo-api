@@ -4,6 +4,8 @@ from html import unescape
 from django.db import models
 from django.utils import timezone
 
+from library.models import sanitize_chapter_html
+
 
 def _to_plain_text(value: str) -> str:
     if not value:
@@ -55,7 +57,7 @@ class CoursePost(models.Model):
         return f'{self.title} ({self.status})'
 
     def save(self, *args, **kwargs):
-        self.content_rich = self.content_rich or ''
+        self.content_rich = sanitize_chapter_html(self.content_rich or '')
         self.content_plain = _to_plain_text(self.content_rich)
         self.tags = _normalize_tags(self.tags)
 
@@ -140,4 +142,6 @@ class LiveEvent(models.Model):
     def __str__(self) -> str:
         return f'{self.title} ({self.status})'
 
-# Create your models here.
+    def save(self, *args, **kwargs):
+        self.description = sanitize_chapter_html(self.description or '')
+        return super().save(*args, **kwargs)

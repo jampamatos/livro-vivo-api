@@ -2,7 +2,8 @@ from datetime import timedelta
 
 from django.contrib.admin.sites import site
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import Client, TestCase
+from django.urls import reverse
 from django.utils import timezone
 
 from rest_framework.test import APIClient
@@ -262,15 +263,124 @@ class CoursesApiTests(TestCase):
 
 class CoursesAdminTests(TestCase):
     def setUp(self):
-        self.client = APIClient()
+        self.client = Client()
         self.admin_user = User.objects.create_superuser(
             username='admin@example.com',
             email='admin@example.com',
             password='StrongPass123',
         )
-        self.client.force_authenticate(user=self.admin_user)
+        self.client.force_login(self.admin_user)
+        self.post = CoursePost.objects.create(
+            title='Post Admin',
+            slug='post-admin',
+            author_name='Admin',
+            excerpt='Resumo',
+            content_rich='<h2>Título</h2><p>Texto <strong>rico</strong>.</p>',
+            post_type=CoursePost.PostType.BLOG,
+            status=PublicationStatus.PUBLISHED,
+            published_at=timezone.now() - timedelta(days=1),
+        )
+        self.live_event = LiveEvent.objects.create(
+            post=self.post,
+            title='Live Admin',
+            description='<h3>Agenda</h3><p>Conteúdo <strong>ao vivo</strong>.</p>',
+            event_type=LiveEvent.EventType.LIVE_CLASS,
+            status=LiveEvent.Status.SCHEDULED,
+            starts_at=timezone.now() + timedelta(days=2),
+            meeting_url='https://example.com/live',
+        )
 
     def test_models_registered_in_admin(self):
         self.assertIn(CoursePost, site._registry)
         self.assertIn(CourseAsset, site._registry)
         self.assertIn(LiveEvent, site._registry)
+
+    def test_course_post_admin_change_form_loads_rich_editor_assets(self):
+        response = self.client.get(reverse('admin:courses_coursepost_change', args=[self.post.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'library/admin/chapter_rich_editor.css')
+        self.assertContains(response, 'tinymce/tinymce.min.js')
+        self.assertContains(response, 'django_tinymce/init_tinymce.js')
+        self.assertContains(response, 'undo redo | blocks | bold italic underline')
+        self.assertContains(response, 'Tags permitidas:')
+        self.assertContains(response, 'lv-rich-editor-preview')
+
+    def test_course_post_admin_save_sanitizes_content_and_keeps_formatting(self):
+        response = self.client.post(
+            reverse('admin:courses_coursepost_change', args=[self.post.id]),
+            data={
+                'title': 'Post Admin atualizado',
+                'slug': 'post-admin',
+                'author_name': 'Admin',
+                'excerpt': 'Resumo atualizado',
+                'post_type': CoursePost.PostType.BLOG,
+                'tags': '["curso"]',
+                'status': PublicationStatus.PUBLISHED,
+                'published_at': (timezone.now() - timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S'),
+                'content_rich': (
+                    '<h2 onclick="alert(1)">Título</h2>'
+                    '<p>Texto <strong>formatado</strong> com '
+                    '<a href="https://example.com" target="_blank">link</a>.</p>'
+                    '<script>alert("xss")</script>'
+                ),
+                '_save': 'Save',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        self.post.refresh_from_db()
+        self.assertIn('<h2>Título</h2>', self.post.content_rich)
+        self.assertIn('<strong>formatado</strong>', self.post.content_rich)
+        self.assertIn('href="https://example.com"', self.post.content_rich)
+        self.assertNotIn('<script', self.post.content_rich)
+        self.assertNotIn('onclick', self.post.content_rich)
+        self.assertIn('Título Texto formatado com link', self.post.content_plain)
+
+    def test_live_event_admin_change_form_loads_rich_editor_assets(self):
+        response = self.client.get(reverse('admin:courses_liveevent_change', args=[self.live_event.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'library/admin/chapter_rich_editor.css')
+        self.assertContains(response, 'tinymce/tinymce.min.js')
+        self.assertContains(response, 'django_tinymce/init_tinymce.js')
+        self.assertContains(response, 'undo redo | blocks | bold italic underline')
+        self.assertContains(response, 'Tags permitidas:')
+        self.assertContains(response, 'lv-rich-editor-preview')
+
+    def test_live_event_admin_save_sanitizes_description_and_keeps_formatting(self):
+        starts_at = timezone.now() + timedelta(days=3)
+        response = self.client.post(
+            reverse('admin:courses_liveevent_change', args=[self.live_event.id]),
+            data={
+                'post': str(self.post.id),
+                'title': 'Live Admin atualizada',
+                'description': (
+                    '<h3 onclick="alert(1)">Agenda</h3>'
+                    '<p>Sessão com <strong>material</strong> e '
+                    '<a href="https://example.com/live" target="_blank">link</a>.</p>'
+                    '<script>alert("xss")</script>'
+                ),
+                'event_type': LiveEvent.EventType.LIVE_CLASS,
+                'status': LiveEvent.Status.SCHEDULED,
+                'starts_at_0': starts_at.strftime('%Y-%m-%d'),
+                'starts_at_1': starts_at.strftime('%H:%M:%S'),
+                'ends_at_0': '',
+                'ends_at_1': '',
+                'meeting_url': 'https://example.com/live',
+                'recording_url': '',
+                '_save': 'Save',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        self.live_event.refresh_from_db()
+        self.assertIn('<h3>Agenda</h3>', self.live_event.description)
+        self.assertIn('<strong>material</strong>', self.live_event.description)
+        self.assertIn('href="https://example.com/live"', self.live_event.description)
+        self.assertNotIn('<script', self.live_event.description)
+        self.assertNotIn('onclick', self.live_event.description)
