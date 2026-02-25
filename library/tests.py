@@ -21,11 +21,12 @@ from rest_framework.test import APIClient, APIRequestFactory
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from entitlements.models import Entitlement
+from accounts.models import NotificationDispatch, NotificationEvent, NotificationPreference
+from entitlements.models import Entitlement, Subscription
 
 from .models import Book, BookChapter, BookVersion, PageText
 from .permissions import HasActiveBookEntitlement
-from .services import create_preloaded_book_version
+from .services import create_preloaded_book_version, enqueue_book_version_publication_notifications
 from .views import (
     DOWNLOAD_URL_SIGNING_SALT,
     DOWNLOAD_URL_TOKEN_PARAM,
@@ -335,6 +336,95 @@ class LibraryServicesTests(LibraryBaseTestCase):
         self.assertEqual(source_chapter.title, 'Original')
         self.assertEqual(source_chapter.content_plain, 'Texto original')
 
+    def test_create_preloaded_book_version_published_queues_notification_event(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        source = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        BookChapter.objects.create(
+            book_version=source,
+            order=1,
+            title='Capítulo',
+            slug='capitulo',
+            content_rich='<p>Texto</p>',
+        )
+
+        allowed_user = self._create_user(email='allowed@example.com')
+        blocked_user = self._create_user(email='blocked@example.com')
+        ignored_user = self._create_user(email='ignored@example.com')
+
+        Subscription.objects.create(
+            user=allowed_user,
+            tier=Subscription.Tier.ESSENTIAL,
+            status=Subscription.Status.ACTIVE,
+        )
+        Subscription.objects.create(
+            user=blocked_user,
+            tier=Subscription.Tier.PROFESSIONAL,
+            status=Subscription.Status.ACTIVE,
+        )
+        Subscription.objects.create(
+            user=ignored_user,
+            tier=Subscription.Tier.ESSENTIAL,
+            status=Subscription.Status.CANCELED,
+        )
+
+        NotificationPreference.objects.create(
+            user=blocked_user,
+            notifications_enabled=True,
+            book_version_updates_enabled=False,
+            new_content_updates_enabled=True,
+            push_enabled=True,
+        )
+
+        created = create_preloaded_book_version(
+            source_version=source,
+            new_version='2024.02',
+            changelog='Publicação com alerta',
+            status=BookVersion.Status.PUBLISHED,
+            published_at=timezone.localdate(),
+        )
+
+        event = NotificationEvent.objects.get(dedup_key=f'book-version-published:{created.id}')
+        self.assertEqual(event.event_type, NotificationEvent.EventType.BOOK_VERSION_PUBLISHED)
+        self.assertEqual(event.payload['book_version_id'], created.id)
+        self.assertEqual(event.payload['book_id'], book.id)
+
+        dispatches = NotificationDispatch.objects.filter(event=event).order_by('user_id')
+        self.assertEqual(dispatches.count(), 2)
+
+        pending = dispatches.get(user=allowed_user)
+        self.assertEqual(pending.status, NotificationDispatch.Status.PENDING)
+
+        skipped = dispatches.get(user=blocked_user)
+        self.assertEqual(skipped.status, NotificationDispatch.Status.SKIPPED)
+        self.assertEqual(skipped.reason, 'book_updates_disabled')
+
+        self.assertFalse(dispatches.filter(user=ignored_user).exists())
+
+    def test_enqueue_book_version_publication_notifications_is_idempotent(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        version = BookVersion.objects.create(
+            book=book,
+            version='2024.10',
+            status=BookVersion.Status.PUBLISHED,
+            changelog='Publicada',
+            published_at=timezone.localdate(),
+        )
+        user = self._create_user(email='idempotent@example.com')
+
+        Subscription.objects.create(
+            user=user,
+            tier=Subscription.Tier.ESSENTIAL,
+            status=Subscription.Status.ACTIVE,
+        )
+
+        first = enqueue_book_version_publication_notifications(book_version=version)
+        second = enqueue_book_version_publication_notifications(book_version=version)
+
+        self.assertIsNotNone(first)
+        self.assertEqual(first.id, second.id)
+        self.assertEqual(NotificationEvent.objects.filter(dedup_key=f'book-version-published:{version.id}').count(), 1)
+        self.assertEqual(NotificationDispatch.objects.filter(event=first, user=user).count(), 1)
+
 
 class LibraryAdminTests(TestCase):
     def setUp(self):
@@ -503,6 +593,49 @@ class LibraryAdminTests(TestCase):
         self.assertContains(response, 'Changelog is required when publishing a version.')
         draft.refresh_from_db()
         self.assertEqual(draft.status, BookVersion.Status.DRAFT)
+
+    def test_book_version_admin_publish_queues_notification_event(self):
+        target_user = User.objects.create_user(
+            username='notify-target@example.com',
+            email='notify-target@example.com',
+            password='StrongPass123',
+        )
+        Subscription.objects.create(
+            user=target_user,
+            tier=Subscription.Tier.ESSENTIAL,
+            status=Subscription.Status.ACTIVE,
+        )
+
+        draft = BookVersion.objects.create(
+            book=self.book,
+            version='2024.91',
+            changelog='',
+            status=BookVersion.Status.DRAFT,
+        )
+
+        response = self.client.post(
+            reverse('admin:library_bookversion_change', args=[draft.id]),
+            data={
+                'book': self.book.id,
+                'version': '2024.91',
+                'published_at': timezone.localdate().isoformat(),
+                'changelog': 'Publicação pronta',
+                'status': BookVersion.Status.PUBLISHED,
+                'chapters-TOTAL_FORMS': '0',
+                'chapters-INITIAL_FORMS': '0',
+                'chapters-MIN_NUM_FORMS': '0',
+                'chapters-MAX_NUM_FORMS': '1000',
+                '_save': 'Save',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, BookVersion.Status.PUBLISHED)
+        self.assertTrue(
+            NotificationEvent.objects.filter(dedup_key=f'book-version-published:{draft.id}').exists()
+        )
 
 
 class LibraryPermissionTests(LibraryBaseTestCase):

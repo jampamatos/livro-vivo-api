@@ -206,6 +206,10 @@ SIMPLE_JWT = {
 }
 
 LIBRARY_DOWNLOAD_URL_TTL_SECONDS = int(os.getenv('LIBRARY_DOWNLOAD_URL_TTL_SECONDS', '300'))
+NOTIFICATIONS_ENABLED = env_bool('NOTIFICATIONS_ENABLED', default=True)
+NOTIFICATIONS_PUSH_PROVIDER = (os.getenv('NOTIFICATIONS_PUSH_PROVIDER') or 'noop').strip().lower()
+NOTIFICATIONS_FCM_PROJECT_ID = (os.getenv('NOTIFICATIONS_FCM_PROJECT_ID') or '').strip()
+NOTIFICATIONS_APNS_TOPIC = (os.getenv('NOTIFICATIONS_APNS_TOPIC') or '').strip()
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators

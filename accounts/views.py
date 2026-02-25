@@ -11,8 +11,8 @@ from rest_framework.views import APIView
 from entitlements.models import Entitlement
 from entitlements.services import get_effective_tier, get_subscription_snapshot
 
-from .models import Profile
-from .serializers import RegisterSerializer
+from .models import NotificationPreference, Profile
+from .serializers import NotificationPreferenceSerializer, RegisterSerializer
 
 User = get_user_model()
 
@@ -167,3 +167,26 @@ class MeEntitlementsView(APIView):
                 "subscription": subscription_snapshot,
             }
         )
+
+
+class MeNotificationPreferencesView(APIView):
+    """Leitura/atualização das preferências de notificação do usuário."""
+
+    permission_classes = [IsAuthenticated]
+
+    @staticmethod
+    def _get_preferences(user):
+        preferences, _ = NotificationPreference.objects.get_or_create(user=user)
+        return preferences
+
+    def get(self, request):
+        preferences = self._get_preferences(request.user)
+        serializer = NotificationPreferenceSerializer(preferences)
+        return Response(serializer.data)
+
+    def patch(self, request):
+        preferences = self._get_preferences(request.user)
+        serializer = NotificationPreferenceSerializer(preferences, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)

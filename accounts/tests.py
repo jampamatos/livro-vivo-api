@@ -11,6 +11,7 @@ from rest_framework.test import APIClient
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from .models import NotificationPreference
 from entitlements.models import Entitlement, Subscription
 from library.models import Book
 
@@ -158,6 +159,54 @@ class AccountsAPITests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['email'], 'user@example.com')
+
+    def test_me_notification_preferences_get_creates_defaults(self):
+        user = User.objects.create_user(
+            username='pref@example.com',
+            email='pref@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.get(reverse('me-notification-preferences'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['notifications_enabled'])
+        self.assertTrue(response.data['book_version_updates_enabled'])
+        self.assertTrue(response.data['new_content_updates_enabled'])
+        self.assertTrue(response.data['push_enabled'])
+        self.assertTrue(NotificationPreference.objects.filter(user=user).exists())
+
+    def test_me_notification_preferences_patch_updates_values(self):
+        user = User.objects.create_user(
+            username='prefpatch@example.com',
+            email='prefpatch@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.patch(
+            reverse('me-notification-preferences'),
+            {
+                'notifications_enabled': True,
+                'book_version_updates_enabled': False,
+                'new_content_updates_enabled': True,
+                'push_enabled': False,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data['book_version_updates_enabled'])
+        self.assertFalse(response.data['push_enabled'])
+
+        preference = NotificationPreference.objects.get(user=user)
+        self.assertTrue(preference.notifications_enabled)
+        self.assertFalse(preference.book_version_updates_enabled)
+        self.assertTrue(preference.new_content_updates_enabled)
+        self.assertFalse(preference.push_enabled)
 
     def test_auth_refresh_rotates_and_blacklists_old_refresh(self):
         user = User.objects.create_user(

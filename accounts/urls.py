@@ -1,7 +1,14 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from .views import LoginView, LogoutView, MeEntitlementsView, MeView, RegisterView
+from .views import (
+    LoginView,
+    LogoutView,
+    MeEntitlementsView,
+    MeNotificationPreferencesView,
+    MeView,
+    RegisterView,
+)
 
 
 urlpatterns = [
@@ -13,4 +20,5 @@ urlpatterns = [
 
     path('me/', MeView.as_view(), name='me'),
     path('me/entitlements/', MeEntitlementsView.as_view(), name='me-entitlements'),
+    path('me/notification-preferences/', MeNotificationPreferencesView.as_view(), name='me-notification-preferences'),
 ]

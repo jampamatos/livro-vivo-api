@@ -17,7 +17,7 @@ from .models import (
     PageText,
     sanitize_chapter_html,
 )
-from .services import create_preloaded_book_version
+from .services import create_preloaded_book_version, enqueue_book_version_publication_notifications
 
 
 BOOK_CHAPTER_WORDLIKE_MCE_ATTRS = {
@@ -145,6 +145,19 @@ class BookVersionAdmin(admin.ModelAdmin):
     list_filter = ('status', 'book')
     inlines = [BookChapterInline]
     actions = ('create_preloaded_version',)
+
+    def save_model(self, request, obj, form, change):
+        previous_status = None
+        if change and obj.pk:
+            previous_status = (
+                BookVersion.objects.filter(pk=obj.pk).values_list('status', flat=True).first()
+            )
+
+        super().save_model(request, obj, form, change)
+
+        became_published = obj.status == BookVersion.Status.PUBLISHED and previous_status != BookVersion.Status.PUBLISHED
+        if became_published:
+            enqueue_book_version_publication_notifications(book_version=obj)
 
     @admin.action(description='Create preloaded version from selected source')
     def create_preloaded_version(self, request, queryset):
