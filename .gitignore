@@ -12,3 +12,6 @@ media/
 .env
 .env.*
 !.env.example
+
+# Other
+.markdownlint.json

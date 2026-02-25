@@ -189,15 +189,18 @@ python manage.py migrate
 ```
 
 2. Popular capítulos em versões-alvo via admin (`BookVersion` + `BookChapter`) e validar:
+
    - `slug` único por versão
    - `order` único por versão
    - `content_plain` gerado automaticamente
 
 3. Ativar backend em `hybrid` e executar smoke test:
+
    - endpoints legados continuam funcionais (`/books/:id/versions`, `/books/:id/search`, download PDF etc.)
    - endpoints chapter-first passam a responder (quando disponíveis na fase de API chapter-first)
 
 4. Ativar app em `hybrid` e validar fallback:
+  
    - livro com capítulos: abre reader chapter-first
    - livro sem capítulos: fallback para reader PDF legado
 
