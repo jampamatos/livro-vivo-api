@@ -66,6 +66,7 @@ urlpatterns = [
     path('', include('community.urls')),
     path('', include('courses.urls')),
     path('', include('library.urls')),
+    path('', include('templates_bank.urls')),
 ]
 
 if settings.DEBUG:

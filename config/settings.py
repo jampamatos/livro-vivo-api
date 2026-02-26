@@ -97,6 +97,7 @@ INSTALLED_APPS = [
     'courses',
     'entitlements',
     'library',
+    'templates_bank',
 ]
 
 MIDDLEWARE = [
@@ -207,6 +208,10 @@ SIMPLE_JWT = {
     'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
+
+TEMPLATES_BANK_DOWNLOAD_TOKEN_MAX_AGE_SECONDS = int(
+    os.getenv('TEMPLATES_BANK_DOWNLOAD_TOKEN_MAX_AGE_SECONDS', '300')
+)
 
 NOTIFICATIONS_ENABLED = env_bool('NOTIFICATIONS_ENABLED', default=True)
 NOTIFICATIONS_PUSH_PROVIDER = (os.getenv('NOTIFICATIONS_PUSH_PROVIDER') or 'noop').strip().lower()
@@ -335,4 +340,20 @@ if SENTRY_DSN:
         # Não impede boot em caso de configuração parcial de observabilidade.
         pass
 
-LOGGING = build_logging_config(debug=DEBUG)
+DJANGO_LOG_PROFILE = (os.getenv('DJANGO_LOG_PROFILE') or ('dev' if DEBUG else 'prod')).strip().lower()
+DJANGO_LOG_LEVEL = (os.getenv('DJANGO_LOG_LEVEL') or '').strip().upper() or None
+DJANGO_LOG_DJANGO_LEVEL = (os.getenv('DJANGO_LOG_DJANGO_LEVEL') or '').strip().upper() or None
+DJANGO_LOG_INCLUDE_REQUESTS = env_bool('DJANGO_LOG_INCLUDE_REQUESTS', default=DEBUG)
+DJANGO_LOG_STRUCTURED = env_bool(
+    'DJANGO_LOG_STRUCTURED',
+    default=DJANGO_LOG_PROFILE in {'prod', 'production', 'stage', 'staging'},
+)
+
+LOGGING = build_logging_config(
+    debug=DEBUG,
+    profile=DJANGO_LOG_PROFILE,
+    root_level=DJANGO_LOG_LEVEL,
+    django_level=DJANGO_LOG_DJANGO_LEVEL,
+    include_request_logs=DJANGO_LOG_INCLUDE_REQUESTS,
+    structured=DJANGO_LOG_STRUCTURED,
+)
