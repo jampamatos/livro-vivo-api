@@ -137,6 +137,6 @@ class TemplatePieceViewSet(viewsets.ModelViewSet):
                 'file_mime_type': piece.file_mime_type,
                 'file_size_bytes': piece.file_size_bytes,
                 'file_sha256': piece.file_sha256,
-                'file_url': piece.file_url,
+                'file_url': piece.resolved_file_url(request=request),
             }
         )

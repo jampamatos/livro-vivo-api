@@ -1,8 +1,14 @@
+import hashlib
+import shutil
+import tempfile
 import time
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.admin.sites import site
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -12,6 +18,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from entitlements.models import Subscription
 
+from .file_metadata import FileMetadata
 from .models import PublicationStatus, TemplatePiece
 
 User = get_user_model()
@@ -284,6 +291,32 @@ class TemplatesBankApiTests(TestCase):
         response = self.client.get(f'/templates-bank/templates/{self.piece_v1.id}/download/', {'token': token})
         self.assertEqual(response.status_code, 403)
 
+    def test_download_returns_media_url_for_uploaded_file(self):
+        with tempfile.TemporaryDirectory(prefix='templates-bank-api-media-') as media_root:
+            with self.settings(MEDIA_ROOT=media_root):
+                upload_piece = TemplatePiece.objects.create(
+                    title='Modelo Upload API',
+                    slug='modelo-upload-api',
+                    template_code='modelo-upload-api',
+                    version='1.0.0',
+                    category=TemplatePiece.Category.OTHER,
+                    file_upload=SimpleUploadedFile(
+                        'modelo-upload-api.docx',
+                        b'conteudo para download seguro',
+                        content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    ),
+                    status=PublicationStatus.PUBLISHED,
+                )
+
+                self._auth(self.professional_token)
+                token_response = self.client.get(f'/templates-bank/templates/{upload_piece.id}/download-token/')
+                token = token_response.data['token']
+                response = self.client.get(f'/templates-bank/templates/{upload_piece.id}/download/', {'token': token})
+
+                self.assertEqual(response.status_code, 200)
+                self.assertTrue(response.data['file_url'].startswith('http://testserver/media/templates_bank/uploads/'))
+                self.assertEqual(response.data['file_name'], 'modelo-upload-api.docx')
+
 
 class TemplatesBankAdminTests(TestCase):
     def setUp(self):
@@ -317,3 +350,102 @@ class TemplatesBankAdminTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'template_code')
         self.assertContains(response, 'file_name')
+        self.assertContains(response, 'file_upload')
+
+
+class TemplatesBankFileMetadataTests(TestCase):
+    def setUp(self):
+        self.media_dir = tempfile.mkdtemp(prefix='templates-bank-tests-')
+        self.override_media = override_settings(MEDIA_ROOT=self.media_dir)
+        self.override_media.enable()
+
+    def tearDown(self):
+        self.override_media.disable()
+        shutil.rmtree(self.media_dir, ignore_errors=True)
+
+    def test_upload_auto_generates_file_metadata(self):
+        payload = b'modelo de peca para upload'
+        upload = SimpleUploadedFile(
+            'modelo-upload.docx',
+            payload,
+            content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        )
+        piece = TemplatePiece.objects.create(
+            title='Modelo Upload',
+            slug='modelo-upload',
+            template_code='modelo-upload',
+            version='1.0.0',
+            category=TemplatePiece.Category.OTHER,
+            file_upload=upload,
+            status=PublicationStatus.DRAFT,
+        )
+
+        self.assertEqual(piece.file_url, '')
+        self.assertEqual(piece.file_name, 'modelo-upload.docx')
+        self.assertEqual(
+            piece.file_mime_type,
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        )
+        self.assertEqual(piece.file_size_bytes, len(payload))
+        self.assertEqual(piece.file_sha256, hashlib.sha256(payload).hexdigest())
+
+    @patch('templates_bank.models.fetch_remote_file_metadata')
+    def test_remote_url_auto_generates_file_metadata(self, fetch_remote_metadata_mock):
+        fetch_remote_metadata_mock.return_value = FileMetadata(
+            file_name='modelo-remoto.docx',
+            file_mime_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            file_size_bytes=4096,
+            file_sha256='f' * 64,
+        )
+
+        piece = TemplatePiece.objects.create(
+            title='Modelo Remoto',
+            slug='modelo-remoto',
+            template_code='modelo-remoto',
+            version='1.0.0',
+            category=TemplatePiece.Category.OTHER,
+            file_url='https://files.example.com/modelo-remoto.docx',
+            status=PublicationStatus.DRAFT,
+        )
+
+        fetch_remote_metadata_mock.assert_called_once_with(
+            'https://files.example.com/modelo-remoto.docx',
+            timeout_seconds=8,
+            max_bytes=30 * 1024 * 1024,
+        )
+        self.assertEqual(piece.file_name, 'modelo-remoto.docx')
+        self.assertEqual(
+            piece.file_mime_type,
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        )
+        self.assertEqual(piece.file_size_bytes, 4096)
+        self.assertEqual(piece.file_sha256, 'f' * 64)
+
+    def test_rejects_when_no_file_source_is_provided(self):
+        with self.assertRaises(ValidationError):
+            TemplatePiece.objects.create(
+                title='Sem Arquivo',
+                slug='sem-arquivo',
+                template_code='sem-arquivo',
+                version='1.0.0',
+                category=TemplatePiece.Category.OTHER,
+                status=PublicationStatus.DRAFT,
+            )
+
+    def test_rejects_when_upload_and_remote_url_are_provided_together(self):
+        upload = SimpleUploadedFile(
+            'modelo-conflito.docx',
+            b'conteudo',
+            content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        )
+        with self.assertRaises(ValidationError):
+            TemplatePiece.objects.create(
+                title='Fonte Duplicada',
+                slug='fonte-duplicada',
+                template_code='fonte-duplicada',
+                version='1.0.0',
+                category=TemplatePiece.Category.OTHER,
+                file_upload=upload,
+                file_url='https://files.example.com/modelo-conflito.docx',
+                status=PublicationStatus.DRAFT,
+            )
