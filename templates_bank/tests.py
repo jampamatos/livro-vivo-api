@@ -1,0 +1,319 @@
+import time
+from datetime import timedelta
+
+from django.contrib.admin.sites import site
+from django.contrib.auth import get_user_model
+from django.test import Client, TestCase, override_settings
+from django.urls import reverse
+from django.utils import timezone
+
+from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from entitlements.models import Subscription
+
+from .models import PublicationStatus, TemplatePiece
+
+User = get_user_model()
+
+
+class TemplatesBankApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+        self.professional_user = User.objects.create_user(
+            username='professional@example.com',
+            email='professional@example.com',
+            password='StrongPass123',
+        )
+        self.essential_user = User.objects.create_user(
+            username='essential@example.com',
+            email='essential@example.com',
+            password='StrongPass123',
+        )
+        self.staff_user = User.objects.create_superuser(
+            username='staff@example.com',
+            email='staff@example.com',
+            password='StrongPass123',
+        )
+
+        now = timezone.now()
+        Subscription.objects.create(
+            user=self.professional_user,
+            tier=Subscription.Tier.PROFESSIONAL,
+            status=Subscription.Status.ACTIVE,
+            started_at=now - timedelta(days=5),
+        )
+        Subscription.objects.create(
+            user=self.essential_user,
+            tier=Subscription.Tier.ESSENTIAL,
+            status=Subscription.Status.ACTIVE,
+            started_at=now - timedelta(days=5),
+        )
+
+        self.professional_token = str(RefreshToken.for_user(self.professional_user).access_token)
+        self.essential_token = str(RefreshToken.for_user(self.essential_user).access_token)
+        self.staff_token = str(RefreshToken.for_user(self.staff_user).access_token)
+
+        self.piece_v1 = TemplatePiece.objects.create(
+            title='Ação de cobrança v1',
+            slug='acao-cobranca-v1',
+            template_code='acao-cobranca',
+            version='1.0.0',
+            changelog='Versão inicial.',
+            description='Peça inicial para cobrança.',
+            category=TemplatePiece.Category.PETITION,
+            tags=['cobranca'],
+            file_url='https://example.com/files/acao-cobranca-v1.docx',
+            file_name='acao-cobranca-v1.docx',
+            file_mime_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            file_size_bytes=10240,
+            file_sha256='a' * 64,
+            status=PublicationStatus.PUBLISHED,
+            published_at=now - timedelta(days=4),
+        )
+        self.piece_v2 = TemplatePiece.objects.create(
+            title='Ação de cobrança v2',
+            slug='acao-cobranca-v2',
+            template_code='acao-cobranca',
+            version='1.1.0',
+            changelog='Atualização com novos fundamentos.',
+            description='Versão revisada da peça.',
+            category=TemplatePiece.Category.PETITION,
+            tags=['cobranca', 'atualizado'],
+            file_url='https://example.com/files/acao-cobranca-v2.docx',
+            file_name='acao-cobranca-v2.docx',
+            file_mime_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            file_size_bytes=12288,
+            file_sha256='b' * 64,
+            status=PublicationStatus.PUBLISHED,
+            published_at=now - timedelta(days=2),
+        )
+        self.piece_draft = TemplatePiece.objects.create(
+            title='Contrato de locação draft',
+            slug='contrato-locacao-draft',
+            template_code='contrato-locacao',
+            version='0.1.0',
+            changelog='Rascunho interno.',
+            description='Peça em revisão.',
+            category=TemplatePiece.Category.CONTRACT,
+            file_url='https://example.com/files/contrato-locacao-draft.docx',
+            file_name='contrato-locacao-draft.docx',
+            file_mime_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            file_size_bytes=8096,
+            file_sha256='c' * 64,
+            status=PublicationStatus.DRAFT,
+        )
+
+    def _auth(self, token: str):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+
+    def test_list_requires_authentication(self):
+        response = self.client.get('/templates-bank/templates/')
+        self.assertIn(response.status_code, (401, 403))
+
+    def test_list_blocks_essential_tier(self):
+        self._auth(self.essential_token)
+        response = self.client.get('/templates-bank/templates/')
+        self.assertEqual(response.status_code, 403)
+
+    def test_list_for_professional_excludes_drafts(self):
+        self._auth(self.professional_token)
+        response = self.client.get('/templates-bank/templates/')
+        self.assertEqual(response.status_code, 200)
+
+        ids = {item['id'] for item in response.data}
+        self.assertIn(self.piece_v1.id, ids)
+        self.assertIn(self.piece_v2.id, ids)
+        self.assertNotIn(self.piece_draft.id, ids)
+
+    def test_list_staff_can_see_drafts(self):
+        self._auth(self.staff_token)
+        response = self.client.get('/templates-bank/templates/')
+        self.assertEqual(response.status_code, 200)
+
+        ids = {item['id'] for item in response.data}
+        self.assertIn(self.piece_draft.id, ids)
+
+    def test_filters_status_category_code_and_date(self):
+        self._auth(self.professional_token)
+        response = self.client.get(
+            '/templates-bank/templates/',
+            {
+                'status': PublicationStatus.PUBLISHED,
+                'category': TemplatePiece.Category.PETITION,
+                'template_code': 'acao-cobranca',
+                'date_from': (timezone.now() + timedelta(days=1)).date().isoformat(),
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 0)
+
+        response_all = self.client.get(
+            '/templates-bank/templates/',
+            {
+                'category': TemplatePiece.Category.PETITION,
+                'template_code': 'acao-cobranca',
+            },
+        )
+        self.assertEqual(response_all.status_code, 200)
+        self.assertEqual(len(response_all.data), 2)
+
+    def test_invalid_date_filter_returns_400(self):
+        self._auth(self.professional_token)
+        response = self.client.get('/templates-bank/templates/', {'date_from': '31-12-2026'})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('date_from', response.data)
+
+    def test_professional_cannot_retrieve_draft_piece(self):
+        self._auth(self.professional_token)
+        response = self.client.get(f'/templates-bank/templates/{self.piece_draft.id}/')
+        self.assertEqual(response.status_code, 404)
+
+    def test_professional_cannot_create_piece(self):
+        self._auth(self.professional_token)
+        payload = {
+            'title': 'Novo modelo',
+            'slug': 'novo-modelo',
+            'template_code': 'novo-modelo',
+            'version': '1.0.0',
+            'category': TemplatePiece.Category.OTHER,
+            'file_url': 'https://example.com/files/novo-modelo.docx',
+            'file_name': 'novo-modelo.docx',
+            'status': PublicationStatus.PUBLISHED,
+        }
+        response = self.client.post('/templates-bank/templates/', payload, format='json')
+        self.assertEqual(response.status_code, 403)
+
+    def test_staff_can_create_piece(self):
+        self._auth(self.staff_token)
+        payload = {
+            'title': 'Modelo novo',
+            'slug': 'modelo-novo',
+            'template_code': 'modelo-novo',
+            'version': '1.0.0',
+            'changelog': 'Versão inicial.',
+            'description': 'Peça nova.',
+            'category': TemplatePiece.Category.MOTION,
+            'tags': ['novo'],
+            'file_url': 'https://example.com/files/modelo-novo.docx',
+            'file_name': 'modelo-novo.docx',
+            'file_mime_type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'file_size_bytes': 9000,
+            'file_sha256': 'd' * 64,
+            'status': PublicationStatus.PUBLISHED,
+        }
+        response = self.client.post('/templates-bank/templates/', payload, format='json')
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data['template_code'], 'modelo-novo')
+
+    def test_duplicate_code_and_version_is_rejected(self):
+        self._auth(self.staff_token)
+        payload = {
+            'title': 'Duplicado',
+            'slug': 'duplicado',
+            'template_code': self.piece_v1.template_code,
+            'version': self.piece_v1.version,
+            'category': TemplatePiece.Category.PETITION,
+            'file_url': 'https://example.com/files/duplicado.docx',
+            'file_name': 'duplicado.docx',
+            'status': PublicationStatus.DRAFT,
+        }
+        response = self.client.post('/templates-bank/templates/', payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('non_field_errors', response.data)
+
+    def test_professional_can_generate_download_token(self):
+        self._auth(self.professional_token)
+        response = self.client.get(f'/templates-bank/templates/{self.piece_v2.id}/download-token/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('token', response.data)
+        self.assertIn('download_url', response.data)
+        self.assertIn('/templates-bank/templates/', response.data['download_url'])
+        self.assertIn('/download/', response.data['download_url'])
+
+    def test_download_returns_file_metadata_with_valid_token(self):
+        self._auth(self.professional_token)
+        token_response = self.client.get(f'/templates-bank/templates/{self.piece_v2.id}/download-token/')
+        token = token_response.data['token']
+
+        response = self.client.get(f'/templates-bank/templates/{self.piece_v2.id}/download/', {'token': token})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['id'], self.piece_v2.id)
+        self.assertEqual(response.data['file_url'], self.piece_v2.file_url)
+        self.assertEqual(response.data['file_name'], self.piece_v2.file_name)
+
+    def test_download_blocks_essential_even_with_token_from_other_user(self):
+        self._auth(self.professional_token)
+        token_response = self.client.get(f'/templates-bank/templates/{self.piece_v1.id}/download-token/')
+        token = token_response.data['token']
+
+        self._auth(self.essential_token)
+        response = self.client.get(f'/templates-bank/templates/{self.piece_v1.id}/download/', {'token': token})
+        self.assertEqual(response.status_code, 403)
+
+    def test_download_requires_token(self):
+        self._auth(self.professional_token)
+        response = self.client.get(f'/templates-bank/templates/{self.piece_v1.id}/download/')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('token', response.data)
+
+    def test_download_rejects_invalid_token(self):
+        self._auth(self.professional_token)
+        response = self.client.get(f'/templates-bank/templates/{self.piece_v1.id}/download/', {'token': 'invalid'})
+        self.assertEqual(response.status_code, 403)
+
+    def test_download_rejects_token_for_other_piece(self):
+        self._auth(self.professional_token)
+        token_response = self.client.get(f'/templates-bank/templates/{self.piece_v1.id}/download-token/')
+        token = token_response.data['token']
+
+        response = self.client.get(f'/templates-bank/templates/{self.piece_v2.id}/download/', {'token': token})
+        self.assertEqual(response.status_code, 403)
+
+    @override_settings(TEMPLATES_BANK_DOWNLOAD_TOKEN_MAX_AGE_SECONDS=1)
+    def test_download_rejects_expired_token(self):
+        self._auth(self.professional_token)
+        token_response = self.client.get(f'/templates-bank/templates/{self.piece_v1.id}/download-token/')
+        token = token_response.data['token']
+
+        time.sleep(1.1)
+
+        response = self.client.get(f'/templates-bank/templates/{self.piece_v1.id}/download/', {'token': token})
+        self.assertEqual(response.status_code, 403)
+
+
+class TemplatesBankAdminTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.admin_user = User.objects.create_superuser(
+            username='admin@example.com',
+            email='admin@example.com',
+            password='StrongPass123',
+        )
+        self.client.force_login(self.admin_user)
+        self.piece = TemplatePiece.objects.create(
+            title='Modelo Admin',
+            slug='modelo-admin',
+            template_code='modelo-admin',
+            version='1.0.0',
+            category=TemplatePiece.Category.OTHER,
+            file_url='https://example.com/files/modelo-admin.docx',
+            file_name='modelo-admin.docx',
+            file_mime_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            file_size_bytes=1024,
+            file_sha256='e' * 64,
+            status=PublicationStatus.PUBLISHED,
+            published_at=timezone.now() - timedelta(days=1),
+        )
+
+    def test_model_registered_in_admin(self):
+        self.assertIn(TemplatePiece, site._registry)
+
+    def test_change_form_is_accessible(self):
+        response = self.client.get(reverse('admin:templates_bank_templatepiece_change', args=[self.piece.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'template_code')
+        self.assertContains(response, 'file_name')

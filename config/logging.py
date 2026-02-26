@@ -73,14 +73,55 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=True)
 
 
-def build_logging_config(*, debug: bool):
-    root_level = "DEBUG" if debug else "INFO"
-    django_level = "INFO" if debug else "WARNING"
+def _normalize_profile(value: str | None, *, debug: bool) -> str:
+    profile = (value or '').strip().lower()
+    if profile in {'dev', 'development', 'local'}:
+        return 'dev'
+    if profile in {'prod', 'production', 'stage', 'staging'}:
+        return 'prod'
+    return 'dev' if debug else 'prod'
+
+
+def _normalize_level(value: str | None, *, default: str) -> str:
+    allowed = {'CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'}
+    normalized = (value or '').strip().upper()
+    if normalized in allowed:
+        return normalized
+    return default
+
+
+def build_logging_config(
+    *,
+    debug: bool,
+    profile: str | None = None,
+    root_level: str | None = None,
+    django_level: str | None = None,
+    include_request_logs: bool = True,
+    structured: bool | None = None,
+):
+    resolved_profile = _normalize_profile(profile, debug=debug)
+
+    default_root_level = 'DEBUG' if resolved_profile == 'dev' and debug else 'INFO'
+    default_django_level = 'INFO' if resolved_profile == 'dev' else 'WARNING'
+
+    resolved_root_level = _normalize_level(root_level, default=default_root_level)
+    resolved_django_level = _normalize_level(django_level, default=default_django_level)
+
+    request_level_default = 'INFO' if resolved_profile == 'dev' and include_request_logs else 'WARNING'
+    resolved_request_level = _normalize_level(None, default=request_level_default)
+
+    if structured is None:
+        structured = resolved_profile == 'prod'
+
+    formatter_name = 'json' if structured else 'console'
 
     return {
         "version": 1,
         "disable_existing_loggers": False,
         "formatters": {
+            "console": {
+                "format": "%(asctime)s %(levelname)s [%(name)s] %(message)s",
+            },
             "json": {
                 "()": "config.logging.JsonFormatter",
             },
@@ -88,17 +129,17 @@ def build_logging_config(*, debug: bool):
         "handlers": {
             "console": {
                 "class": "logging.StreamHandler",
-                "formatter": "json",
+                "formatter": formatter_name,
             },
         },
         "root": {
             "handlers": ["console"],
-            "level": root_level,
+            "level": resolved_root_level,
         },
         "loggers": {
             "django": {
                 "handlers": ["console"],
-                "level": django_level,
+                "level": resolved_django_level,
                 "propagate": False,
             },
             "django.request": {
@@ -106,9 +147,14 @@ def build_logging_config(*, debug: bool):
                 "level": "WARNING",
                 "propagate": False,
             },
+            "django.server": {
+                "handlers": ["console"],
+                "level": resolved_request_level,
+                "propagate": False,
+            },
             "livro_vivo": {
                 "handlers": ["console"],
-                "level": root_level,
+                "level": resolved_root_level,
                 "propagate": False,
             },
         },

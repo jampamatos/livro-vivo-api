@@ -62,6 +62,11 @@ Variaveis principais:
 - `DJANGO_CSRF_TRUSTED_ORIGINS`: obrigatoria em stage/prod
 - `APP_VERSION`: versao exibida em health/readiness
 - `REDIS_URL`: opcional (cache/throttle distribuido)
+- `DJANGO_LOG_PROFILE`: `dev` | `prod` (padrao: `dev` com DEBUG=true; `prod` com DEBUG=false)
+- `DJANGO_LOG_INCLUDE_REQUESTS`: habilita logs request-by-request do `django.server`
+- `DJANGO_LOG_STRUCTURED`: `true` para JSON estruturado (recomendado em prod)
+- `DJANGO_LOG_LEVEL`: override opcional do nivel raiz (`DEBUG`, `INFO`, `WARNING`...)
+- `DJANGO_LOG_DJANGO_LEVEL`: override opcional do nivel do logger `django`
 
 Notificacoes (base pronta):
 
@@ -79,6 +84,14 @@ python manage.py migrate
 ### 5) Rodar servidor
 
 ```bash
+python manage.py runserver
+```
+
+Exemplo para reduzir ruido de terminal em desenvolvimento:
+
+```bash
+DJANGO_LOG_PROFILE=dev
+DJANGO_LOG_INCLUDE_REQUESTS=false
 python manage.py runserver
 ```
 
