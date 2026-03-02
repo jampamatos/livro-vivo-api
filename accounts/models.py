@@ -44,6 +44,7 @@ class NotificationPreference(models.Model):
     notifications_enabled = models.BooleanField(default=True)
     book_version_updates_enabled = models.BooleanField(default=True)
     new_content_updates_enabled = models.BooleanField(default=True)
+    community_interaction_updates_enabled = models.BooleanField(default=True)
     push_enabled = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -61,6 +62,9 @@ class NotificationEvent(models.Model):
     class EventType(models.TextChoices):
         BOOK_VERSION_PUBLISHED = 'book_version_published', 'Book version published'
         CONTENT_PUBLISHED = 'content_published', 'Content published'
+        COURSE_CONTENT_PUBLISHED = 'course_content_published', 'Course content published'
+        CASELAW_PUBLISHED = 'caselaw_published', 'Caselaw published'
+        COMMUNITY_INTERACTION = 'community_interaction', 'Community interaction'
 
     event_type = models.CharField(max_length=48, choices=EventType.choices)
     dedup_key = models.CharField(max_length=128, unique=True)
@@ -102,6 +106,7 @@ class NotificationDispatch(models.Model):
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
     reason = models.CharField(max_length=160, blank=True, default='')
     dispatched_at = models.DateTimeField(null=True, blank=True)
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -119,3 +124,30 @@ class NotificationDispatch(models.Model):
             f"NotificationDispatch(event_id={self.event_id}, user_id={self.user_id}, "
             f"channel={self.channel}, status={self.status})"
         )
+
+
+class PushDevice(models.Model):
+    """Dispositivo registrado para recebimento de push via Expo."""
+
+    class Platform(models.TextChoices):
+        ANDROID = 'android', 'Android'
+        IOS = 'ios', 'iOS'
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='push_devices',
+    )
+    platform = models.CharField(max_length=16, choices=Platform.choices)
+    expo_push_token = models.CharField(max_length=255, unique=True)
+    is_active = models.BooleanField(default=True)
+    last_seen_at = models.DateTimeField(auto_now=True)
+    disabled_reason = models.CharField(max_length=160, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-last_seen_at', '-created_at']
+
+    def __str__(self) -> str:
+        return f"PushDevice(user_id={self.user_id}, platform={self.platform}, active={self.is_active})"

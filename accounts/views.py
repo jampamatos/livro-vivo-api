@@ -1,6 +1,8 @@
 from django.contrib.auth import authenticate, get_user_model
+from django.utils import timezone
 
 from rest_framework import status
+from rest_framework.exceptions import NotFound
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -11,8 +13,15 @@ from rest_framework.views import APIView
 from entitlements.models import Entitlement
 from entitlements.services import get_effective_tier, get_subscription_snapshot
 
-from .models import NotificationPreference, Profile
-from .serializers import NotificationPreferenceSerializer, RegisterSerializer
+from .models import NotificationDispatch, NotificationPreference, Profile, PushDevice
+from .serializers import (
+    NotificationDispatchSerializer,
+    NotificationPreferenceSerializer,
+    PushDeviceRegisterSerializer,
+    PushDeviceSerializer,
+    PushDeviceUnregisterSerializer,
+    RegisterSerializer,
+)
 from .roles import get_user_role
 from community.services import (
     get_banned_login_message,
@@ -221,3 +230,104 @@ class MeNotificationPreferencesView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+
+class MeNotificationsView(APIView):
+    """Lista notificações do usuário para banner/inbox no app."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        status_filter = (request.query_params.get('status') or NotificationDispatch.Status.PENDING).strip().lower()
+        if status_filter not in NotificationDispatch.Status.values:
+            return Response(
+                {'detail': 'status inválido.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        include_acknowledged = (request.query_params.get('include_acknowledged') or '').strip().lower() in {
+            '1',
+            'true',
+            'yes',
+        }
+        try:
+            limit = int(request.query_params.get('limit') or 20)
+        except ValueError:
+            limit = 20
+        limit = max(1, min(limit, 50))
+
+        queryset = (
+            NotificationDispatch.objects
+            .filter(user=request.user, status=status_filter)
+            .select_related('event')
+            .order_by('-created_at')
+        )
+        if not include_acknowledged:
+            queryset = queryset.filter(acknowledged_at__isnull=True)
+
+        serializer = NotificationDispatchSerializer(queryset[:limit], many=True)
+        return Response(serializer.data)
+
+
+class MeNotificationAcknowledgeView(APIView):
+    """Marca uma notificação como consumida pelo usuário."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, dispatch_id: int):
+        try:
+            dispatch = NotificationDispatch.objects.select_related('event').get(
+                id=dispatch_id,
+                user=request.user,
+            )
+        except NotificationDispatch.DoesNotExist as exc:
+            raise NotFound('Notificação não encontrada.') from exc
+
+        if dispatch.acknowledged_at is None:
+            dispatch.acknowledged_at = timezone.now()
+            dispatch.save(update_fields=['acknowledged_at', 'updated_at'])
+
+        serializer = NotificationDispatchSerializer(dispatch)
+        return Response(serializer.data)
+
+
+class MePushDevicesView(APIView):
+    """Registro e desativação de dispositivos para push via Expo."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        devices = PushDevice.objects.filter(user=request.user).order_by('-last_seen_at')
+        serializer = PushDeviceSerializer(devices, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        serializer = PushDeviceRegisterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        device, _ = PushDevice.objects.update_or_create(
+            expo_push_token=serializer.validated_data['expo_push_token'],
+            defaults={
+                'user': request.user,
+                'platform': serializer.validated_data['platform'],
+                'is_active': True,
+                'disabled_reason': '',
+            },
+        )
+
+        response_serializer = PushDeviceSerializer(device)
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+    def delete(self, request):
+        serializer = PushDeviceUnregisterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        updated = PushDevice.objects.filter(
+            user=request.user,
+            expo_push_token=serializer.validated_data['expo_push_token'],
+        ).update(is_active=False, disabled_reason='unregistered_by_user')
+
+        if not updated:
+            raise NotFound('Dispositivo não encontrado.')
+
+        return Response(status=status.HTTP_204_NO_CONTENT)

@@ -17,7 +17,7 @@ from .permissions import (
     IsOwnerOrStaff,
     IsStaffOrReadOnlyAuthed,
 )
-from .services import ban_user_from_app
+from .services import ban_user_from_app, enqueue_new_comment_notifications
 from .serializers import CategorySerializer, PostSerializer, CommentSerializer, ReportSerializer
 
 from accounts.roles import user_is_moderator_or_above
@@ -80,7 +80,8 @@ class CommentViewSet(ModelViewSet):
         return qs
     
     def perform_create(self, serializer):
-        serializer.save(author=self.request.user)
+        comment = serializer.save(author=self.request.user)
+        enqueue_new_comment_notifications(comment=comment)
 
 class ReportViewSet(ModelViewSet):
     serializer_class = ReportSerializer

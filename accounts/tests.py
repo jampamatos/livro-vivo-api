@@ -5,7 +5,7 @@ from unittest import mock
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.db import connections
-from django.test import TestCase
+from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
@@ -13,9 +13,12 @@ from rest_framework.test import APIClient
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from community.models import ModerationConfig, UserModerationStatus
+from caselaw.models import CaseLaw
+from community.models import Category, ModerationConfig, Post as CommunityPost, UserModerationStatus
+from courses.models import CourseAsset, CoursePost, LiveEvent, PublicationStatus
 
-from .models import NotificationPreference, Profile
+from .models import NotificationDispatch, NotificationEvent, NotificationPreference, Profile, PushDevice
+from .services import dispatch_pending_push_notifications
 from .signals import cleanup_legacy_user_token_rows
 from entitlements.models import Entitlement, Subscription
 from library.models import Book
@@ -316,6 +319,7 @@ class AccountsAPITests(TestCase):
         self.assertTrue(response.data['notifications_enabled'])
         self.assertTrue(response.data['book_version_updates_enabled'])
         self.assertTrue(response.data['new_content_updates_enabled'])
+        self.assertTrue(response.data['community_interaction_updates_enabled'])
         self.assertTrue(response.data['push_enabled'])
         self.assertTrue(NotificationPreference.objects.filter(user=user).exists())
 
@@ -334,6 +338,7 @@ class AccountsAPITests(TestCase):
                 'notifications_enabled': True,
                 'book_version_updates_enabled': False,
                 'new_content_updates_enabled': True,
+                'community_interaction_updates_enabled': False,
                 'push_enabled': False,
             },
             format='json',
@@ -341,13 +346,124 @@ class AccountsAPITests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.data['book_version_updates_enabled'])
+        self.assertFalse(response.data['community_interaction_updates_enabled'])
         self.assertFalse(response.data['push_enabled'])
 
         preference = NotificationPreference.objects.get(user=user)
         self.assertTrue(preference.notifications_enabled)
         self.assertFalse(preference.book_version_updates_enabled)
         self.assertTrue(preference.new_content_updates_enabled)
+        self.assertFalse(preference.community_interaction_updates_enabled)
         self.assertFalse(preference.push_enabled)
+
+    def test_me_notifications_lists_only_pending_unacknowledged_dispatches_by_default(self):
+        user = User.objects.create_user(
+            username='notify@example.com',
+            email='notify@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        pending_event = NotificationEvent.objects.create(
+            event_type=NotificationEvent.EventType.COURSE_CONTENT_PUBLISHED,
+            dedup_key='course-post-published:api-list',
+            title='Novo post do curso',
+            payload={'resource_type': 'course_post', 'resource_id': 1},
+        )
+        pending_dispatch = NotificationDispatch.objects.create(
+            event=pending_event,
+            user=user,
+            status=NotificationDispatch.Status.PENDING,
+        )
+        acknowledged_dispatch = NotificationDispatch.objects.create(
+            event=NotificationEvent.objects.create(
+                event_type=NotificationEvent.EventType.COMMUNITY_INTERACTION,
+                dedup_key='community-comment-created:api-list',
+                title='Novo comentário',
+                payload={'resource_type': 'comment', 'resource_id': 2},
+            ),
+            user=user,
+            status=NotificationDispatch.Status.PENDING,
+            acknowledged_at=timezone.now(),
+        )
+        NotificationDispatch.objects.create(
+            event=NotificationEvent.objects.create(
+                event_type=NotificationEvent.EventType.CASELAW_PUBLISHED,
+                dedup_key='caselaw-published:api-list',
+                title='Nova jurisprudência',
+            ),
+            user=user,
+            status=NotificationDispatch.Status.SENT,
+            dispatched_at=timezone.now(),
+        )
+
+        response = self.client.get(reverse('me-notifications'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['dispatch_id'], pending_dispatch.id)
+        self.assertNotEqual(response.data[0]['dispatch_id'], acknowledged_dispatch.id)
+
+    def test_me_notification_ack_marks_dispatch_as_acknowledged(self):
+        user = User.objects.create_user(
+            username='notifyack@example.com',
+            email='notifyack@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        dispatch = NotificationDispatch.objects.create(
+            event=NotificationEvent.objects.create(
+                event_type=NotificationEvent.EventType.COURSE_CONTENT_PUBLISHED,
+                dedup_key='course-post-published:api-ack',
+                title='Novo conteúdo',
+            ),
+            user=user,
+            status=NotificationDispatch.Status.PENDING,
+        )
+
+        response = self.client.post(reverse('me-notification-ack', args=[dispatch.id]), {}, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        dispatch.refresh_from_db()
+        self.assertIsNotNone(dispatch.acknowledged_at)
+        self.assertEqual(response.data['dispatch_id'], dispatch.id)
+
+    def test_me_push_devices_register_list_and_unregister(self):
+        user = User.objects.create_user(
+            username='pushdevice@example.com',
+            email='pushdevice@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        register_response = self.client.post(
+            reverse('me-push-devices'),
+            {
+                'platform': PushDevice.Platform.ANDROID,
+                'expo_push_token': 'ExponentPushToken[test-device-token]',
+            },
+            format='json',
+        )
+        list_response = self.client.get(reverse('me-push-devices'))
+        unregister_response = self.client.delete(
+            reverse('me-push-devices'),
+            {'expo_push_token': 'ExponentPushToken[test-device-token]'},
+            format='json',
+        )
+
+        self.assertEqual(register_response.status_code, 200)
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(len(list_response.data), 1)
+        self.assertEqual(list_response.data[0]['platform'], PushDevice.Platform.ANDROID)
+        self.assertEqual(unregister_response.status_code, 204)
+
+        device = PushDevice.objects.get(expo_push_token='ExponentPushToken[test-device-token]')
+        self.assertFalse(device.is_active)
+        self.assertEqual(device.disabled_reason, 'unregistered_by_user')
 
     def test_auth_refresh_rotates_and_blacklists_old_refresh(self):
         user = User.objects.create_user(
@@ -603,6 +719,387 @@ class AccountsAPITests(TestCase):
 
         self.assertEqual(first.status_code, 201)
         self.assertEqual(second.status_code, 429)
+
+
+class NotificationTriggerTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.now = timezone.now()
+
+        self.professional_user = self._create_user('pro@example.com')
+        self.professional_opt_out_user = self._create_user('pro-optout@example.com')
+        self.essential_user = self._create_user('essential@example.com')
+        self.community_author = self._create_user('community-author@example.com')
+        self.community_opt_out_author = self._create_user('community-optout@example.com')
+        self.commenter = self._create_user('commenter@example.com')
+
+        self._create_subscription(self.professional_user, tier=Subscription.Tier.PROFESSIONAL)
+        self._create_subscription(self.professional_opt_out_user, tier=Subscription.Tier.PROFESSIONAL)
+        self._create_subscription(self.essential_user, tier=Subscription.Tier.ESSENTIAL)
+        self._create_subscription(self.community_author, tier=Subscription.Tier.ESSENTIAL)
+        self._create_subscription(self.community_opt_out_author, tier=Subscription.Tier.ESSENTIAL)
+        self._create_subscription(self.commenter, tier=Subscription.Tier.ESSENTIAL)
+
+        NotificationPreference.objects.create(
+            user=self.professional_opt_out_user,
+            new_content_updates_enabled=False,
+        )
+        NotificationPreference.objects.create(
+            user=self.community_opt_out_author,
+            community_interaction_updates_enabled=False,
+        )
+
+        self.category = Category.objects.create(name='Comunidade', slug='comunidade')
+
+    def _create_user(self, email: str):
+        return User.objects.create_user(
+            username=email,
+            email=email,
+            password='StrongPass123',
+        )
+
+    def _create_subscription(self, user, *, tier: str):
+        return Subscription.objects.create(
+            user=user,
+            tier=tier,
+            status=Subscription.Status.ACTIVE,
+            started_at=self.now - timedelta(days=1),
+            source='test',
+        )
+
+    def _auth(self, user):
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+    def test_published_course_post_enqueues_notifications_for_professional_users_only(self):
+        course_post = CoursePost.objects.create(
+            title='Novo módulo',
+            slug='novo-modulo',
+            author_name='Equipe',
+            excerpt='Resumo do novo módulo',
+            content_rich='<p>Conteúdo do curso</p>',
+            post_type=CoursePost.PostType.LESSON,
+            status=PublicationStatus.PUBLISHED,
+        )
+
+        event = NotificationEvent.objects.get(dedup_key=f'course-post-published:{course_post.pk}')
+        dispatches = {
+            dispatch.user_id: dispatch
+            for dispatch in NotificationDispatch.objects.filter(event=event)
+        }
+
+        self.assertEqual(event.event_type, NotificationEvent.EventType.COURSE_CONTENT_PUBLISHED)
+        self.assertEqual(event.payload['resource_type'], 'course_post')
+        self.assertEqual(set(dispatches), {self.professional_user.id, self.professional_opt_out_user.id})
+        self.assertEqual(dispatches[self.professional_user.id].status, NotificationDispatch.Status.PENDING)
+        self.assertEqual(dispatches[self.professional_opt_out_user.id].status, NotificationDispatch.Status.SKIPPED)
+        self.assertEqual(dispatches[self.professional_opt_out_user.id].reason, 'new_content_disabled')
+        self.assertNotIn(self.essential_user.id, dispatches)
+
+        course_post.excerpt = 'Resumo atualizado sem novo dispatch'
+        course_post.save()
+
+        self.assertEqual(
+            NotificationEvent.objects.filter(dedup_key=f'course-post-published:{course_post.pk}').count(),
+            1,
+        )
+
+    def test_published_course_asset_and_live_event_enqueue_notifications(self):
+        course_post = CoursePost.objects.create(
+            title='Post base',
+            slug='post-base',
+            author_name='Equipe',
+            excerpt='Base',
+            content_rich='<p>Base</p>',
+            post_type=CoursePost.PostType.BLOG,
+            status=PublicationStatus.PUBLISHED,
+        )
+        course_asset = CourseAsset.objects.create(
+            post=course_post,
+            title='Checklist da aula',
+            description='Checklist operacional',
+            asset_type=CourseAsset.AssetType.CHECKLIST,
+            file_url='https://example.com/checklist.pdf',
+            status=PublicationStatus.PUBLISHED,
+        )
+        live_event = LiveEvent.objects.create(
+            post=course_post,
+            title='Mentoria ao vivo',
+            description='Tire dúvidas na mentoria.',
+            event_type=LiveEvent.EventType.MENTORING,
+            status=LiveEvent.Status.SCHEDULED,
+            starts_at=self.now + timedelta(days=2),
+            meeting_url='https://example.com/live',
+        )
+
+        asset_event = NotificationEvent.objects.get(dedup_key=f'course-asset-published:{course_asset.pk}')
+        live_event_notification = NotificationEvent.objects.get(dedup_key=f'course-live-announced:{live_event.pk}')
+
+        self.assertEqual(asset_event.payload['resource_type'], 'course_asset')
+        self.assertEqual(live_event_notification.payload['resource_type'], 'live_event')
+        self.assertEqual(
+            NotificationDispatch.objects.filter(event=asset_event, status=NotificationDispatch.Status.PENDING).count(),
+            1,
+        )
+        self.assertEqual(
+            NotificationDispatch.objects.filter(
+                event=live_event_notification,
+                status=NotificationDispatch.Status.PENDING,
+            ).count(),
+            1,
+        )
+
+    def test_caselaw_creation_enqueues_notifications_with_dedup(self):
+        caselaw = CaseLaw.objects.create(
+            court='STJ',
+            case_number='REsp 999/DF',
+            decision_date=self.now.date(),
+            ementa_rich='<p>Nova tese em bagagem extraviada.</p>',
+            url='https://example.com/caselaw',
+        )
+
+        event = NotificationEvent.objects.get(dedup_key=f'caselaw-published:{caselaw.pk}')
+        dispatches = {
+            dispatch.user_id: dispatch
+            for dispatch in NotificationDispatch.objects.filter(event=event)
+        }
+
+        self.assertEqual(event.event_type, NotificationEvent.EventType.CASELAW_PUBLISHED)
+        self.assertEqual(set(dispatches), {self.professional_user.id, self.professional_opt_out_user.id})
+        self.assertEqual(dispatches[self.professional_user.id].status, NotificationDispatch.Status.PENDING)
+        self.assertEqual(dispatches[self.professional_opt_out_user.id].reason, 'new_content_disabled')
+        self.assertNotIn(self.essential_user.id, dispatches)
+
+        caselaw.tags = ['atualizado']
+        caselaw.save()
+
+        self.assertEqual(
+            NotificationEvent.objects.filter(dedup_key=f'caselaw-published:{caselaw.pk}').count(),
+            1,
+        )
+
+    def test_new_comment_notifies_post_author(self):
+        post = CommunityPost.objects.create(
+            author=self.community_author,
+            category=self.category,
+            title='Dúvida importante',
+            body='Texto do post',
+        )
+
+        self._auth(self.commenter)
+        response = self.client.post(
+            '/community/comments/',
+            {'post_id': post.pk, 'body': 'Tenho uma sugestão.'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+
+        event = NotificationEvent.objects.get(
+            dedup_key=f'community-comment-created:{response.data["id"]}'
+        )
+        dispatch = NotificationDispatch.objects.get(event=event, user=self.community_author)
+
+        self.assertEqual(event.event_type, NotificationEvent.EventType.COMMUNITY_INTERACTION)
+        self.assertEqual(dispatch.status, NotificationDispatch.Status.PENDING)
+        self.assertEqual(dispatch.reason, '')
+
+    def test_new_comment_respects_community_preference_and_self_comment_is_ignored(self):
+        opt_out_post = CommunityPost.objects.create(
+            author=self.community_opt_out_author,
+            category=self.category,
+            title='Post sem notificação',
+            body='Texto',
+        )
+
+        self._auth(self.commenter)
+        opt_out_response = self.client.post(
+            '/community/comments/',
+            {'post_id': opt_out_post.pk, 'body': 'Comentário para usuário opt-out'},
+            format='json',
+        )
+
+        self.assertEqual(opt_out_response.status_code, 201)
+
+        event = NotificationEvent.objects.get(
+            dedup_key=f'community-comment-created:{opt_out_response.data["id"]}'
+        )
+        dispatch = NotificationDispatch.objects.get(event=event, user=self.community_opt_out_author)
+        self.assertEqual(dispatch.status, NotificationDispatch.Status.SKIPPED)
+        self.assertEqual(dispatch.reason, 'community_interactions_disabled')
+
+        self.client.credentials()
+        self._auth(self.community_author)
+        self_comment_response = self.client.post(
+            '/community/comments/',
+            {'post_id': CommunityPost.objects.create(
+                author=self.community_author,
+                category=self.category,
+                title='Meu próprio post',
+                body='Texto',
+            ).pk, 'body': 'Comentário próprio'},
+            format='json',
+        )
+
+        self.assertEqual(self_comment_response.status_code, 201)
+        self.assertFalse(
+            NotificationEvent.objects.filter(
+                dedup_key=f'community-comment-created:{self_comment_response.data["id"]}'
+            ).exists()
+        )
+
+
+class NotificationDeliveryTests(TestCase):
+    def test_dispatch_pending_push_notifications_marks_success_and_failure(self):
+        user = User.objects.create_user(
+            username='push@example.com',
+            email='push@example.com',
+            password='StrongPass123',
+        )
+        success_device = PushDevice.objects.create(
+            user=user,
+            platform=PushDevice.Platform.ANDROID,
+            expo_push_token='ExponentPushToken[success-device]',
+        )
+        failed_device = PushDevice.objects.create(
+            user=user,
+            platform=PushDevice.Platform.IOS,
+            expo_push_token='ExponentPushToken[failed-device]',
+        )
+
+        success_dispatch = NotificationDispatch.objects.create(
+            event=NotificationEvent.objects.create(
+                event_type=NotificationEvent.EventType.COURSE_CONTENT_PUBLISHED,
+                dedup_key='course-post-published:delivery-success',
+                title='Post publicado',
+            ),
+            user=user,
+            status=NotificationDispatch.Status.PENDING,
+        )
+        failed_dispatch = NotificationDispatch.objects.create(
+            event=NotificationEvent.objects.create(
+                event_type=NotificationEvent.EventType.CASELAW_PUBLISHED,
+                dedup_key='caselaw-published:delivery-failed',
+                title='Jurisprudência publicada',
+            ),
+            user=user,
+            status=NotificationDispatch.Status.PENDING,
+            acknowledged_at=timezone.now(),
+        )
+
+        with mock.patch(
+            'accounts.services.get_active_push_devices_for_user_ids',
+            return_value=[success_device, failed_device],
+        ), mock.patch(
+            'accounts.services._send_expo_push_messages',
+            return_value=[
+                {'status': 'ok', 'id': 'ticket-success'},
+                {'status': 'error', 'details': {'error': 'DeviceNotRegistered'}},
+            ],
+        ):
+            summary = dispatch_pending_push_notifications(limit=10)
+
+        success_dispatch.refresh_from_db()
+        failed_dispatch.refresh_from_db()
+        success_device.refresh_from_db()
+        failed_device.refresh_from_db()
+
+        self.assertEqual(summary['queued'], 1)
+        self.assertEqual(summary['sent'], 1)
+        self.assertEqual(summary['failed'], 0)
+        self.assertEqual(summary['devices'], 2)
+        self.assertEqual(success_dispatch.status, NotificationDispatch.Status.SENT)
+        self.assertIsNotNone(success_dispatch.dispatched_at)
+        self.assertEqual(failed_dispatch.status, NotificationDispatch.Status.PENDING)
+        self.assertTrue(success_device.is_active)
+        self.assertFalse(failed_device.is_active)
+        self.assertEqual(failed_device.disabled_reason, 'device_not_registered')
+
+    def test_dispatch_pending_push_notifications_marks_failed_dispatch_when_all_devices_fail(self):
+        user = User.objects.create_user(
+            username='pushfail@example.com',
+            email='pushfail@example.com',
+            password='StrongPass123',
+        )
+        PushDevice.objects.create(
+            user=user,
+            platform=PushDevice.Platform.ANDROID,
+            expo_push_token='ExponentPushToken[all-fail-device]',
+        )
+        dispatch = NotificationDispatch.objects.create(
+            event=NotificationEvent.objects.create(
+                event_type=NotificationEvent.EventType.COMMUNITY_INTERACTION,
+                dedup_key='community-comment-created:delivery-failed',
+                title='Interação na comunidade',
+            ),
+            user=user,
+            status=NotificationDispatch.Status.PENDING,
+        )
+
+        with mock.patch(
+            'accounts.services._send_expo_push_messages',
+            return_value=[
+                {'status': 'error', 'details': {'error': 'MessageRateExceeded'}},
+            ],
+        ):
+            summary = dispatch_pending_push_notifications(limit=10)
+
+        dispatch.refresh_from_db()
+
+        self.assertEqual(summary['queued'], 1)
+        self.assertEqual(summary['sent'], 0)
+        self.assertEqual(summary['failed'], 1)
+        self.assertEqual(dispatch.status, NotificationDispatch.Status.FAILED)
+        self.assertEqual(dispatch.reason, 'MessageRateExceeded')
+
+
+class AccountsAdminTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.admin_user = User.objects.create_superuser(
+            username='admin@example.com',
+            email='admin@example.com',
+            password='StrongPass123',
+        )
+        self.client.force_login(self.admin_user)
+
+    def test_notification_models_are_registered_in_admin(self):
+        preference_user = User.objects.create_user(
+            username='pref-admin@example.com',
+            email='pref-admin@example.com',
+            password='StrongPass123',
+        )
+        NotificationPreference.objects.create(user=preference_user)
+        event = NotificationEvent.objects.create(
+            event_type=NotificationEvent.EventType.COURSE_CONTENT_PUBLISHED,
+            dedup_key='course-post-published:admin-check',
+            title='Evento de admin',
+            payload={'resource_type': 'course_post'},
+        )
+        NotificationDispatch.objects.create(
+            event=event,
+            user=preference_user,
+            status=NotificationDispatch.Status.PENDING,
+        )
+        PushDevice.objects.create(
+            user=preference_user,
+            platform=PushDevice.Platform.ANDROID,
+            expo_push_token='ExponentPushToken[admin-check-device]',
+        )
+
+        preference_response = self.client.get(reverse('admin:accounts_notificationpreference_changelist'))
+        event_response = self.client.get(reverse('admin:accounts_notificationevent_changelist'))
+        dispatch_response = self.client.get(reverse('admin:accounts_notificationdispatch_changelist'))
+        push_device_response = self.client.get(reverse('admin:accounts_pushdevice_changelist'))
+
+        self.assertEqual(preference_response.status_code, 200)
+        self.assertEqual(event_response.status_code, 200)
+        self.assertEqual(dispatch_response.status_code, 200)
+        self.assertEqual(push_device_response.status_code, 200)
+        self.assertContains(preference_response, 'community_interaction_updates_enabled')
+        self.assertContains(event_response, 'course-post-published:admin-check')
+        self.assertContains(dispatch_response, 'course-post-published:admin-check')
+        self.assertContains(push_device_response, 'pref-admin@example.com')
 
 
 class HealthAndReadinessTests(TestCase):

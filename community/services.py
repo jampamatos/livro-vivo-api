@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from accounts.models import NotificationEvent
+from accounts.services import enqueue_notification_event, get_active_subscription_user_ids
 from django.db.models import Q
 from django.utils import timezone
 
@@ -257,6 +259,39 @@ def user_is_banned_from_community(user) -> bool:
     except UserModerationStatus.DoesNotExist:
         return False
     return bool(status.is_banned)
+
+
+def enqueue_new_comment_notifications(*, comment):
+    if not comment or not comment.pk or not comment.post_id or not comment.author_id:
+        return None
+
+    recipient_id = comment.post.author_id
+    if recipient_id == comment.author_id:
+        return None
+
+    if user_is_banned_from_community(comment.post.author):
+        return None
+
+    active_user_ids = set(get_active_subscription_user_ids())
+    if recipient_id not in active_user_ids:
+        return None
+
+    return enqueue_notification_event(
+        event_type=NotificationEvent.EventType.COMMUNITY_INTERACTION,
+        dedup_key=f'community-comment-created:{comment.pk}',
+        title=f'Nova interação na comunidade: {comment.post.title}',
+        body=(comment.body or '').strip()[:180],
+        payload={
+            'post_id': comment.post_id,
+            'post_title': comment.post.title,
+            'comment_id': comment.pk,
+            'author_id': comment.author_id,
+            'author_display': str(comment.author),
+        },
+        recipient_user_ids=[recipient_id],
+        preference_field='community_interaction_updates_enabled',
+        preference_disabled_reason='community_interactions_disabled',
+    )
 
 
 def sync_banned_users_with_config(config: ModerationConfig | None = None):
