@@ -13,6 +13,12 @@ from entitlements.services import get_effective_tier, get_subscription_snapshot
 
 from .models import NotificationPreference, Profile
 from .serializers import NotificationPreferenceSerializer, RegisterSerializer
+from .roles import get_user_role
+from community.services import (
+    get_banned_login_message,
+    get_user_moderation_summary,
+    sync_user_activity_with_moderation,
+)
 
 User = get_user_model()
 
@@ -31,6 +37,7 @@ def _serialize_user_payload(user, profile: Profile):
         'email': user.email,
         'name': profile.full_name,
         'profession': profile.profession,
+        'role': get_user_role(user),
     }
 
 
@@ -71,7 +78,23 @@ class LoginView(APIView):
 
         if not email or not password:
             return Response({"detail": "email e password são obrigatórios."}, status=status.HTTP_400_BAD_REQUEST)
-        
+
+        candidate_user = User.objects.filter(email__iexact=email).first()
+        if candidate_user:
+            sync_user_activity_with_moderation(candidate_user)
+            candidate_user.refresh_from_db(fields=['is_active'])
+            message = get_banned_login_message(candidate_user)
+            if message:
+                return Response(
+                    {"detail": message, "code": "account_banned"},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        if candidate_user and not candidate_user.is_active:
+            return Response(
+                {"detail": "Esta conta está inativa."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         # Djano autentica por username; aqui a gente trata email como username (padrão simples)
         user = authenticate(request, username=email, password=password)
 
@@ -88,7 +111,14 @@ class LoginView(APIView):
             return Response({"detail": "Credenciais inválidas."}, status=status.HTTP_401_UNAUTHORIZED)
 
         tokens = issue_tokens_for_user(user)
-        return Response(tokens, status=status.HTTP_200_OK)
+        from community.services import pull_pending_login_notice
+
+        moderation_notice = pull_pending_login_notice(user)
+        payload = {**tokens}
+        if moderation_notice:
+            payload['moderation_notice'] = moderation_notice
+
+        return Response(payload, status=status.HTTP_200_OK)
 
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
@@ -165,6 +195,7 @@ class MeEntitlementsView(APIView):
                 "entitlements": data,
                 "effective_tier": effective_tier,
                 "subscription": subscription_snapshot,
+                "moderation": get_user_moderation_summary(request.user),
             }
         )
 
