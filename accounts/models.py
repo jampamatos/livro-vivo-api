@@ -5,6 +5,11 @@ from django.db import models
 class Profile(models.Model):
     """Informações extras do usuário."""
 
+    class Role(models.TextChoices):
+        MEMBER = 'member', 'Membro'
+        MODERATOR = 'moderator', 'Moderador'
+        OWNER = 'owner', 'Dono'
+
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -12,6 +17,17 @@ class Profile(models.Model):
     )
     full_name = models.CharField(max_length=150, blank=True)
     profession = models.CharField(max_length=120, blank=True)
+    role = models.CharField(
+        max_length=16,
+        choices=Role.choices,
+        default=Role.MEMBER,
+    )
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if self.role in {self.Role.MODERATOR, self.Role.OWNER} and not self.user.is_staff:
+            self.user.is_staff = True
+            self.user.save(update_fields=['is_staff'])
 
     def __str__(self) -> str:
         return f"Profile(user_id={self.user_id})"

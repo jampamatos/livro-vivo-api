@@ -4,6 +4,7 @@ from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db import connections
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -12,7 +13,10 @@ from rest_framework.test import APIClient
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import NotificationPreference
+from community.models import ModerationConfig, UserModerationStatus
+
+from .models import NotificationPreference, Profile
+from .signals import cleanup_legacy_user_token_rows
 from entitlements.models import Entitlement, Subscription
 from library.models import Book
 
@@ -62,6 +66,31 @@ class AccountsAPITests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('email', response.data)
 
+    def test_owner_or_moderator_profile_promotes_user_to_staff(self):
+        user = User.objects.create_user(
+            username='owner@example.com',
+            email='owner@example.com',
+            password='StrongPass123',
+            is_staff=False,
+        )
+        profile, _ = Profile.objects.get_or_create(user=user)
+        profile.role = Profile.Role.OWNER
+        profile.save()
+
+        user.refresh_from_db()
+        self.assertTrue(user.is_staff)
+
+    def test_cleanup_legacy_user_token_rows_deletes_authtoken_entries(self):
+        connection = connections['default']
+        quoted_table = connection.ops.quote_name('authtoken_token')
+
+        with mock.patch.object(connection.introspection, 'table_names', return_value=['authtoken_token']):
+            with mock.patch.object(connection, 'cursor') as cursor_mock:
+                cleanup_legacy_user_token_rows(user_id=42, using='default')
+
+        cursor = cursor_mock.return_value.__enter__.return_value
+        cursor.execute.assert_any_call(f'DELETE FROM {quoted_table} WHERE user_id = %s', [42])
+
     def test_login_success_returns_token(self):
         user = User.objects.create_user(
             username='user@example.com',
@@ -96,6 +125,117 @@ class AccountsAPITests(TestCase):
         )
 
         self.assertEqual(response.status_code, 401)
+
+    def test_login_returns_pending_moderation_notice_and_clears_it(self):
+        user = User.objects.create_user(
+            username='warned@example.com',
+            email='warned@example.com',
+            password='StrongPass123',
+        )
+        UserModerationStatus.objects.create(
+            user=user,
+            pending_login_message='Aviso de moderação de teste',
+            pending_login_message_level=UserModerationStatus.PendingLevel.WARNING,
+        )
+
+        response = self.client.post(
+            reverse('auth-login'),
+            {'email': 'warned@example.com', 'password': 'StrongPass123'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('moderation_notice', response.data)
+        self.assertEqual(response.data['moderation_notice']['message'], 'Aviso de moderação de teste')
+
+        status_obj = UserModerationStatus.objects.get(user=user)
+        self.assertEqual(status_obj.pending_login_message, '')
+        self.assertIsNone(status_obj.pending_login_message_created_at)
+
+    def test_login_returns_403_for_banned_user(self):
+        user = User.objects.create_user(
+            username='banned@example.com',
+            email='banned@example.com',
+            password='StrongPass123',
+            is_active=False,
+        )
+        UserModerationStatus.objects.create(
+            user=user,
+            is_banned=True,
+            ban_scope=UserModerationStatus.BanScope.APP_WIDE,
+            ban_reason='Reincidência em abuso',
+        )
+
+        response = self.client.post(
+            reverse('auth-login'),
+            {'email': 'banned@example.com', 'password': 'StrongPass123'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data['code'], 'account_banned')
+        self.assertIn('Reincidência em abuso', response.data['detail'])
+
+    def test_login_allows_community_only_ban_and_returns_notice(self):
+        ModerationConfig.objects.update_or_create(
+            singleton_key='default',
+            defaults={'ban_scope': ModerationConfig.BanScope.COMMUNITY_ONLY},
+        )
+        user = User.objects.create_user(
+            username='communitybanned@example.com',
+            email='communitybanned@example.com',
+            password='StrongPass123',
+            is_active=False,
+        )
+        UserModerationStatus.objects.create(
+            user=user,
+            is_banned=True,
+            ban_scope=UserModerationStatus.BanScope.COMMUNITY_ONLY,
+            pending_login_message='Seu acesso à comunidade foi suspenso.',
+            pending_login_message_level=UserModerationStatus.PendingLevel.DANGER,
+        )
+
+        response = self.client.post(
+            reverse('auth-login'),
+            {'email': 'communitybanned@example.com', 'password': 'StrongPass123'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('access', response.data)
+        self.assertEqual(
+            response.data['moderation_notice']['message'],
+            'Seu acesso à comunidade foi suspenso.',
+        )
+        user.refresh_from_db()
+        self.assertTrue(user.is_active)
+
+    def test_login_uses_current_global_ban_scope_for_already_banned_user(self):
+        ModerationConfig.objects.update_or_create(
+            singleton_key='default',
+            defaults={'ban_scope': ModerationConfig.BanScope.APP_WIDE},
+        )
+        user = User.objects.create_user(
+            username='scopeoverride@example.com',
+            email='scopeoverride@example.com',
+            password='StrongPass123',
+            is_active=True,
+        )
+        UserModerationStatus.objects.create(
+            user=user,
+            is_banned=True,
+            ban_scope=UserModerationStatus.BanScope.COMMUNITY_ONLY,
+            ban_reason='Escopo deve seguir config global',
+        )
+
+        response = self.client.post(
+            reverse('auth-login'),
+            {'email': 'scopeoverride@example.com', 'password': 'StrongPass123'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data['code'], 'account_banned')
 
     def test_login_requires_email_and_password(self):
         response = self.client.post(
@@ -358,11 +498,71 @@ class AccountsAPITests(TestCase):
         response = self.client.get(reverse('me-entitlements'))
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data['effective_tier'], Subscription.Tier.PROFESSIONAL)
-        self.assertIsNotNone(response.data['subscription'])
-        self.assertEqual(response.data['subscription']['tier'], Subscription.Tier.PROFESSIONAL)
-        self.assertEqual(response.data['subscription']['status'], Subscription.Status.ACTIVE)
-        self.assertEqual(response.data['subscription']['is_founder'], True)
+        self.assertEqual(response.data['moderation']['is_banned'], False)
+
+    def test_me_entitlements_includes_moderation_summary(self):
+        ModerationConfig.objects.update_or_create(
+            singleton_key='default',
+            defaults={'ban_scope': ModerationConfig.BanScope.COMMUNITY_ONLY},
+        )
+        user = User.objects.create_user(
+            username='modsummary@example.com',
+            email='modsummary@example.com',
+            password='StrongPass123',
+        )
+        UserModerationStatus.objects.create(
+            user=user,
+            is_banned=True,
+            ban_scope=UserModerationStatus.BanScope.COMMUNITY_ONLY,
+            warnings_issued=2,
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.get(reverse('me-entitlements'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['moderation']['is_banned'], True)
+        self.assertEqual(response.data['moderation']['ban_scope'], 'community_only')
+        self.assertEqual(response.data['moderation']['community_access'], False)
+        self.assertEqual(response.data['moderation']['app_access'], True)
+        self.assertEqual(response.data['moderation']['warnings_issued'], 2)
+
+    def test_me_entitlements_uses_current_global_ban_scope_for_summary(self):
+        config, _ = ModerationConfig.objects.update_or_create(
+            singleton_key='default',
+            defaults={'ban_scope': ModerationConfig.BanScope.APP_WIDE},
+        )
+        user = User.objects.create_user(
+            username='modscope@example.com',
+            email='modscope@example.com',
+            password='StrongPass123',
+        )
+        UserModerationStatus.objects.create(
+            user=user,
+            is_banned=True,
+            ban_scope=UserModerationStatus.BanScope.COMMUNITY_ONLY,
+            warnings_issued=1,
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        first_response = self.client.get(reverse('me-entitlements'))
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(first_response.data['moderation']['ban_scope'], 'app_wide')
+        self.assertEqual(first_response.data['moderation']['community_access'], False)
+        self.assertEqual(first_response.data['moderation']['app_access'], False)
+
+        config.ban_scope = ModerationConfig.BanScope.COMMUNITY_ONLY
+        config.save()
+
+        second_response = self.client.get(reverse('me-entitlements'))
+
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(second_response.data['moderation']['ban_scope'], 'community_only')
+        self.assertEqual(second_response.data['moderation']['community_access'], False)
+        self.assertEqual(second_response.data['moderation']['app_access'], True)
 
     def test_login_is_throttled(self):
         cache.clear()
