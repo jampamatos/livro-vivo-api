@@ -7,14 +7,17 @@ Backend Django/DRF do app Livro Vivo.
 Implementado e ativo em `main`:
 
 - Auth JWT (`register`, `login`, `refresh`, `logout`).
+- Perfil/roles e resumo de moderacao na resposta de entitlements.
 - Entitlements por assinatura (`essential` / `professional`) com suporte a founder.
-- Biblioteca chapter-first (`Book`, `BookVersion`, `BookChapter`) sem dependencia de PDF.
-- Busca por capitulo com FTS no Postgres e snippets por ocorrencia.
+- Biblioteca chapter-first (`Book`, `BookVersion`, `BookChapter`) com publicacao de versoes e changelog.
+- Busca de capitulos com FTS no Postgres e fallback para SQLite.
 - Anotacoes por capitulo com `selector + offsets`.
-- Jurisprudencia com `ementa_rich`, `ementa_plain`, `anchors` e tags.
-- Comunidade (categorias, posts, comentarios, reports).
-- Preferencias de notificacao por usuario e evento de publicacao de versao.
-- Health/readiness, rate limiting, CI e checks de seguranca de configuracao.
+- Jurisprudencia com ementa rich/plain, anchors, tags, busca e consumo no app.
+- Curso com `CoursePost`, `CourseAsset` e `LiveEvent`, gating Profissional, admin e notificacoes de publicacao.
+- Banco de Pecas versionado com metadados de arquivo, upload/URL remota, token temporario de download e gating Profissional.
+- Comunidade com categorias, posts, comentarios, reports, follow/unfollow de posts, fila de moderacao, trilha de acoes e banimento por escopo.
+- Notificacoes com preferencias por usuario, `NotificationEvent`, `NotificationDispatch`, inbox in-app, registro de devices e dispatcher de push.
+- Health/readiness, `check --deploy`, logs estruturados e Sentry opcional.
 
 ## Stack
 
@@ -62,18 +65,24 @@ Variaveis principais:
 - `DJANGO_CSRF_TRUSTED_ORIGINS`: obrigatoria em stage/prod
 - `APP_VERSION`: versao exibida em health/readiness
 - `REDIS_URL`: opcional (cache/throttle distribuido)
-- `DJANGO_LOG_PROFILE`: `dev` | `prod` (padrao: `dev` com DEBUG=true; `prod` com DEBUG=false)
+- `DJANGO_LOG_PROFILE`: `dev` | `prod`
 - `DJANGO_LOG_INCLUDE_REQUESTS`: habilita logs request-by-request do `django.server`
-- `DJANGO_LOG_STRUCTURED`: `true` para JSON estruturado (recomendado em prod)
-- `DJANGO_LOG_LEVEL`: override opcional do nivel raiz (`DEBUG`, `INFO`, `WARNING`...)
+- `DJANGO_LOG_STRUCTURED`: `true` para JSON estruturado
+- `DJANGO_LOG_LEVEL`: override opcional do nivel raiz
 - `DJANGO_LOG_DJANGO_LEVEL`: override opcional do nivel do logger `django`
 
-Notificacoes (base pronta):
+Notificacoes:
 
 - `NOTIFICATIONS_ENABLED`
 - `NOTIFICATIONS_PUSH_PROVIDER` (`noop` por padrao)
 - `NOTIFICATIONS_FCM_PROJECT_ID`
 - `NOTIFICATIONS_APNS_TOPIC`
+
+Banco de Pecas:
+
+- `TEMPLATES_BANK_DOWNLOAD_TOKEN_MAX_AGE_SECONDS`
+- `TEMPLATES_BANK_REMOTE_FILE_FETCH_TIMEOUT_SECONDS`
+- `TEMPLATES_BANK_REMOTE_FILE_MAX_BYTES`
 
 ### 4) Banco e migrations
 
@@ -114,7 +123,7 @@ python manage.py makemigrations --check --dry-run
 ```bash
 DJANGO_ENV=production \
 DEBUG=false \
-DJANGO_SECRET_KEY=change-me \
+DJANGO_SECRET_KEY=ci-production-secret-key-with-minimum-length-1234567890 \
 DJANGO_ALLOWED_HOSTS=api.example.com \
 DJANGO_CORS_ALLOWED_ORIGINS=https://app.example.com \
 DJANGO_CSRF_TRUSTED_ORIGINS=https://app.example.com \
@@ -144,19 +153,19 @@ curl -s http://127.0.0.1:8000/readyz/
 - `POST /auth/logout/`
 - `GET /me/`
 - `GET /me/entitlements/`
-- `GET /me/notification-preferences/`
-- `PATCH /me/notification-preferences/`
+- `GET /me/notifications/`
+- `POST /me/notifications/<dispatch_id>/ack/`
+- `POST /me/notifications/in-app/consume-latest/`
+- `GET/PATCH /me/notification-preferences/`
+- `GET/POST/DELETE /me/push-devices/`
 
-### Biblioteca (chapter-first)
+### Biblioteca
 
 - `GET /books/`
 - `GET /books/<book_id>/versions/`
 - `GET /books/<book_id>/current-version/`
 - `GET /books/<book_id>/current-version/chapters/`
 - `GET /books/<book_id>/current-version/chapters/<chapter_slug>/`
-
-Busca:
-
 - `GET /books/<book_id>/search/?q=...`
 - `GET /search/?q=...&book_id=...`
 - `GET /search/?q=...&book_version_id=...`
@@ -178,18 +187,43 @@ Filtros comuns:
 ### Jurisprudencia
 
 - `GET /caselaw/`
-- `POST /caselaw/` (staff)
 - `GET /caselaw/<id>/`
-- `PATCH /caselaw/<id>/` (staff)
-- `DELETE /caselaw/<id>/` (staff)
+
+Observacao:
+
+- o CRUD operacional de jurisprudencia hoje fica no Django Admin.
+
+### Curso
+
+- `GET /courses/posts/`
+- `GET /courses/posts/<id>/`
+- `GET /courses/assets/`
+- `GET /courses/assets/<id>/`
+- `GET /courses/lives/`
+- `GET /courses/lives/<id>/`
+- `POST/PATCH/DELETE` dessas rotas para staff
+
+### Banco de Pecas
+
+- `GET /templates-bank/templates/`
+- `GET /templates-bank/templates/<id>/`
+- `GET /templates-bank/templates/<id>/download-token/`
+- `GET /templates-bank/templates/<id>/download/?token=...`
+- `POST/PATCH/DELETE /templates-bank/templates/` para staff
 
 ### Comunidade
 
 - `GET/POST /community/categories/` (POST staff)
-- `GET/POST /community/posts/`
-- `GET/POST /community/comments/`
+- `GET/POST/PATCH/DELETE /community/posts/`
+- `POST /community/posts/<id>/follow/`
+- `POST /community/posts/<id>/unfollow/`
+- `GET/POST/PATCH/DELETE /community/comments/`
 - `POST /community/reports/`
 - `GET/PATCH /community/reports/<id>/` (staff)
+- `POST /community/reports/<id>/approve/` (staff)
+- `POST /community/reports/<id>/remove/` (staff)
+- `POST /community/reports/<id>/escalate/` (staff)
+- `POST /community/reports/<id>/ban-author/` (staff)
 
 ## Admin
 
@@ -204,10 +238,20 @@ Acesso:
 No admin ja existem fluxos para:
 
 - assinatura/entitlement (incluindo founder)
-- edicao de capitulos em rich text (TinyMCE)
-- clonagem/publicacao de novas versoes com changelog
+- edicao de capitulos em rich text e publicacao de versoes/changelog
 - jurisprudencia com ementa rich
-- moderacao basica da comunidade
+- curso (`CoursePost`, `CourseAsset`, `LiveEvent`)
+- banco de pecas com upload/URL remota e metadados
+- moderacao da comunidade com fila, acoes e trilha
+- status/eventos de moderacao de usuario
+- preferencias, eventos, dispatches e devices de notificacao
+
+## Limites conhecidos
+
+- Busca global cross-modulo ainda nao existe; `/search/` hoje e busca de livro.
+- LGPD (exportacao/exclusao de dados) ainda nao existe.
+- Em 2026-03-03, `python manage.py test` falhou em 1 teste de CORS do `/health/` para Expo web.
+- O hardening final de throttle/scans para os endpoints novos ainda faz parte do backlog pre-deploy.
 
 ## CI
 
@@ -218,11 +262,8 @@ Workflow API (`.github/workflows/ci.yml`) executa:
 - smoke em Postgres real
 - `check --deploy` com ambiente de producao simulado
 
-## Proximos epics (pre-deploy)
+## Backlog atual
 
-O backlog de pendencias pre-deploy esta em:
+As pendencias pre-deploy estao em:
 
 - `docs/BACKLOG_EXECUTAVEL_2026-02-25.md`
-
-Fora do estado atual: Curso (B9), Banco de Pecas (B10), moderacao operacional avancada,
-notificacoes expandidas e busca unificada cross-modulo.
