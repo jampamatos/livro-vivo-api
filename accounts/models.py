@@ -85,6 +85,7 @@ class NotificationDispatch(models.Model):
 
     class Channel(models.TextChoices):
         PUSH = 'push', 'Push'
+        IN_APP = 'in_app', 'In-app'
 
     class Status(models.TextChoices):
         PENDING = 'pending', 'Pending'

@@ -16,7 +16,11 @@ from .models import (
     BookVersion,
     sanitize_chapter_html,
 )
-from .services import create_preloaded_book_version, enqueue_book_version_publication_notifications
+from .services import (
+    create_preloaded_book_version,
+    enqueue_book_version_publication_notifications,
+    suppress_book_chapter_notifications_for_versions,
+)
 
 
 BOOK_CHAPTER_WORDLIKE_MCE_ATTRS = {
@@ -155,8 +159,25 @@ class BookVersionAdmin(admin.ModelAdmin):
         super().save_model(request, obj, form, change)
 
         became_published = obj.status == BookVersion.Status.PUBLISHED and previous_status != BookVersion.Status.PUBLISHED
+        request._suppress_chapter_notifications_for_version_ids = getattr(
+            request,
+            '_suppress_chapter_notifications_for_version_ids',
+            set(),
+        )
+        if became_published:
+            request._suppress_chapter_notifications_for_version_ids.add(obj.pk)
         if became_published:
             enqueue_book_version_publication_notifications(book_version=obj)
+
+    def save_related(self, request, form, formsets, change):
+        version_ids = tuple(
+            getattr(request, '_suppress_chapter_notifications_for_version_ids', set())
+        )
+        if not version_ids:
+            return super().save_related(request, form, formsets, change)
+
+        with suppress_book_chapter_notifications_for_versions(*version_ids):
+            return super().save_related(request, form, formsets, change)
 
     @admin.action(description='Create preloaded version from selected source')
     def create_preloaded_version(self, request, queryset):

@@ -63,6 +63,35 @@ class Post(models.Model):
     def __str__(self) -> str:
         return self.title
 
+
+class PostFollow(models.Model):
+    post = models.ForeignKey(
+        Post,
+        on_delete=models.CASCADE,
+        related_name='follows',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='community_post_follows',
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at', '-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['post', 'user'],
+                name='community_post_follow_unique',
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f'PostFollow(post_id={self.post_id}, user_id={self.user_id}, active={self.is_active})'
+
+
 class Comment(models.Model):
     class ModerationState(models.TextChoices):
         ACTIVE = 'active', 'Active'

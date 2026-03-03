@@ -18,7 +18,11 @@ from entitlements.models import Entitlement, Subscription
 
 from .models import Book, BookChapter, BookVersion
 from .permissions import HasActiveBookEntitlement
-from .services import create_preloaded_book_version, enqueue_book_version_publication_notifications
+from .services import (
+    create_preloaded_book_version,
+    enqueue_book_chapter_publication_notifications,
+    enqueue_book_version_publication_notifications,
+)
 from .views import _make_snippet
 
 User = get_user_model()
@@ -354,18 +358,36 @@ class LibraryServicesTests(LibraryBaseTestCase):
         self.assertEqual(event.event_type, NotificationEvent.EventType.BOOK_VERSION_PUBLISHED)
         self.assertEqual(event.payload['book_version_id'], created.id)
         self.assertEqual(event.payload['book_id'], book.id)
+        self.assertFalse(
+            NotificationEvent.objects.filter(
+                dedup_key__startswith='book-chapter-published:'
+            ).exists()
+        )
 
-        dispatches = NotificationDispatch.objects.filter(event=event).order_by('user_id')
-        self.assertEqual(dispatches.count(), 2)
+        push_dispatches = NotificationDispatch.objects.filter(
+            event=event,
+            channel=NotificationDispatch.Channel.PUSH,
+        ).order_by('user_id')
+        in_app_dispatches = NotificationDispatch.objects.filter(
+            event=event,
+            channel=NotificationDispatch.Channel.IN_APP,
+        ).order_by('user_id')
+        self.assertEqual(push_dispatches.count(), 2)
+        self.assertEqual(in_app_dispatches.count(), 2)
 
-        pending = dispatches.get(user=allowed_user)
+        pending = push_dispatches.get(user=allowed_user)
+        pending_in_app = in_app_dispatches.get(user=allowed_user)
         self.assertEqual(pending.status, NotificationDispatch.Status.PENDING)
+        self.assertEqual(pending_in_app.status, NotificationDispatch.Status.PENDING)
 
-        skipped = dispatches.get(user=blocked_user)
+        skipped = push_dispatches.get(user=blocked_user)
+        skipped_in_app = in_app_dispatches.get(user=blocked_user)
         self.assertEqual(skipped.status, NotificationDispatch.Status.SKIPPED)
         self.assertEqual(skipped.reason, 'book_updates_disabled')
+        self.assertEqual(skipped_in_app.status, NotificationDispatch.Status.SKIPPED)
+        self.assertEqual(skipped_in_app.reason, 'book_updates_disabled')
 
-        self.assertFalse(dispatches.filter(user=ignored_user).exists())
+        self.assertFalse(push_dispatches.filter(user=ignored_user).exists())
 
     def test_enqueue_book_version_publication_notifications_is_idempotent(self):
         book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
@@ -390,7 +412,129 @@ class LibraryServicesTests(LibraryBaseTestCase):
         self.assertIsNotNone(first)
         self.assertEqual(first.id, second.id)
         self.assertEqual(NotificationEvent.objects.filter(dedup_key=f'book-version-published:{version.id}').count(), 1)
-        self.assertEqual(NotificationDispatch.objects.filter(event=first, user=user).count(), 1)
+        self.assertEqual(NotificationDispatch.objects.filter(event=first, user=user).count(), 2)
+
+    def test_new_chapter_in_published_version_queues_notification_event(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        version = BookVersion.objects.create(
+            book=book,
+            version='2024.11',
+            status=BookVersion.Status.PUBLISHED,
+            changelog='Atualização incremental',
+            published_at=timezone.localdate(),
+        )
+        allowed_user = self._create_user(email='chapter-allowed@example.com')
+        blocked_user = self._create_user(email='chapter-blocked@example.com')
+
+        Subscription.objects.create(
+            user=allowed_user,
+            tier=Subscription.Tier.ESSENTIAL,
+            status=Subscription.Status.ACTIVE,
+        )
+        Subscription.objects.create(
+            user=blocked_user,
+            tier=Subscription.Tier.ESSENTIAL,
+            status=Subscription.Status.ACTIVE,
+        )
+        NotificationPreference.objects.create(
+            user=blocked_user,
+            notifications_enabled=True,
+            book_version_updates_enabled=False,
+            push_enabled=True,
+        )
+
+        chapter = BookChapter.objects.create(
+            book_version=version,
+            order=1,
+            title='Novo capítulo',
+            slug='novo-capitulo',
+            content_rich='<p>Conteúdo novo do capítulo.</p>',
+        )
+
+        event = NotificationEvent.objects.get(dedup_key=f'book-chapter-published:{chapter.id}')
+        push_dispatches = {
+            dispatch.user_id: dispatch
+            for dispatch in NotificationDispatch.objects.filter(
+                event=event,
+                channel=NotificationDispatch.Channel.PUSH,
+            )
+        }
+        in_app_dispatches = {
+            dispatch.user_id: dispatch
+            for dispatch in NotificationDispatch.objects.filter(
+                event=event,
+                channel=NotificationDispatch.Channel.IN_APP,
+            )
+        }
+
+        self.assertEqual(event.event_type, NotificationEvent.EventType.CONTENT_PUBLISHED)
+        self.assertEqual(event.payload['resource_type'], 'book_chapter')
+        self.assertEqual(event.payload['book_chapter_id'], chapter.id)
+        self.assertEqual(push_dispatches[allowed_user.id].status, NotificationDispatch.Status.PENDING)
+        self.assertEqual(in_app_dispatches[allowed_user.id].status, NotificationDispatch.Status.PENDING)
+        self.assertEqual(push_dispatches[blocked_user.id].status, NotificationDispatch.Status.SKIPPED)
+        self.assertEqual(in_app_dispatches[blocked_user.id].status, NotificationDispatch.Status.SKIPPED)
+        self.assertEqual(push_dispatches[blocked_user.id].reason, 'book_updates_disabled')
+        self.assertEqual(in_app_dispatches[blocked_user.id].reason, 'book_updates_disabled')
+
+    def test_new_chapter_in_draft_version_does_not_queue_notification(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        version = BookVersion.objects.create(
+            book=book,
+            version='2024.12',
+            status=BookVersion.Status.DRAFT,
+        )
+        user = self._create_user(email='chapter-draft@example.com')
+        Subscription.objects.create(
+            user=user,
+            tier=Subscription.Tier.ESSENTIAL,
+            status=Subscription.Status.ACTIVE,
+        )
+
+        chapter = BookChapter.objects.create(
+            book_version=version,
+            order=1,
+            title='Capítulo rascunho',
+            slug='capitulo-rascunho',
+            content_rich='<p>Texto</p>',
+        )
+
+        self.assertFalse(
+            NotificationEvent.objects.filter(dedup_key=f'book-chapter-published:{chapter.id}').exists()
+        )
+
+    def test_enqueue_book_chapter_publication_notifications_is_idempotent(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        version = BookVersion.objects.create(
+            book=book,
+            version='2024.13',
+            status=BookVersion.Status.PUBLISHED,
+            changelog='Atualização incremental',
+            published_at=timezone.localdate(),
+        )
+        user = self._create_user(email='chapter-idempotent@example.com')
+
+        Subscription.objects.create(
+            user=user,
+            tier=Subscription.Tier.ESSENTIAL,
+            status=Subscription.Status.ACTIVE,
+        )
+
+        chapter = BookChapter.objects.create(
+            book_version=version,
+            order=1,
+            title='Capítulo único',
+            slug='capitulo-unico',
+            content_rich='<p>Texto</p>',
+        )
+
+        first = enqueue_book_chapter_publication_notifications(book_chapter=chapter)
+        second = enqueue_book_chapter_publication_notifications(book_chapter=chapter)
+
+        self.assertIsNotNone(first)
+        self.assertEqual(first.id, second.id)
+        self.assertEqual(NotificationEvent.objects.filter(dedup_key=f'book-chapter-published:{chapter.id}').count(), 1)
+        self.assertEqual(NotificationDispatch.objects.filter(event=first, user=user).count(), 2)
 
 
 class LibraryAdminTests(TestCase):
@@ -602,6 +746,59 @@ class LibraryAdminTests(TestCase):
         self.assertEqual(draft.status, BookVersion.Status.PUBLISHED)
         self.assertTrue(
             NotificationEvent.objects.filter(dedup_key=f'book-version-published:{draft.id}').exists()
+        )
+
+    def test_book_version_admin_publish_with_inline_chapter_suppresses_chapter_notifications(self):
+        target_user = User.objects.create_user(
+            username='notify-inline@example.com',
+            email='notify-inline@example.com',
+            password='StrongPass123',
+        )
+        Subscription.objects.create(
+            user=target_user,
+            tier=Subscription.Tier.ESSENTIAL,
+            status=Subscription.Status.ACTIVE,
+        )
+
+        draft = BookVersion.objects.create(
+            book=self.book,
+            version='2024.92',
+            changelog='',
+            status=BookVersion.Status.DRAFT,
+        )
+
+        response = self.client.post(
+            reverse('admin:library_bookversion_change', args=[draft.id]),
+            data={
+                'book': self.book.id,
+                'version': '2024.92',
+                'published_at': timezone.localdate().isoformat(),
+                'changelog': 'Versão com capítulo novo',
+                'status': BookVersion.Status.PUBLISHED,
+                'chapters-TOTAL_FORMS': '1',
+                'chapters-INITIAL_FORMS': '0',
+                'chapters-MIN_NUM_FORMS': '0',
+                'chapters-MAX_NUM_FORMS': '1000',
+                'chapters-0-id': '',
+                'chapters-0-book_version': str(draft.id),
+                'chapters-0-order': '1',
+                'chapters-0-title': 'Capítulo inédito',
+                'chapters-0-slug': 'capitulo-inedito',
+                'chapters-0-content_rich': '<p>Conteúdo inédito</p>',
+                '_save': 'Save',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        draft.refresh_from_db()
+        chapter = draft.chapters.get(slug='capitulo-inedito')
+
+        self.assertTrue(
+            NotificationEvent.objects.filter(dedup_key=f'book-version-published:{draft.id}').exists()
+        )
+        self.assertFalse(
+            NotificationEvent.objects.filter(dedup_key=f'book-chapter-published:{chapter.id}').exists()
         )
 
 

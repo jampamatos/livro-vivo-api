@@ -102,32 +102,41 @@ def enqueue_notification_event(
             else True
         )
 
-        status = NotificationDispatch.Status.PENDING
-        reason = ''
+        base_status = NotificationDispatch.Status.PENDING
+        base_reason = ''
         if not notifications_enabled:
-            status = NotificationDispatch.Status.SKIPPED
-            reason = 'notifications_disabled'
+            base_status = NotificationDispatch.Status.SKIPPED
+            base_reason = 'notifications_disabled'
         elif preference_field and not domain_enabled:
-            status = NotificationDispatch.Status.SKIPPED
-            reason = preference_disabled_reason or f'{preference_field}_disabled'
-        elif not push_enabled:
-            status = NotificationDispatch.Status.SKIPPED
-            reason = 'push_disabled'
+            base_status = NotificationDispatch.Status.SKIPPED
+            base_reason = preference_disabled_reason or f'{preference_field}_disabled'
 
-        if status == NotificationDispatch.Status.PENDING:
-            pending_count += 1
-        else:
-            skipped_count += 1
+        in_app_status = base_status
+        in_app_reason = base_reason
+        push_status = base_status
+        push_reason = base_reason
+        if push_status == NotificationDispatch.Status.PENDING and not push_enabled:
+            push_status = NotificationDispatch.Status.SKIPPED
+            push_reason = 'push_disabled'
 
-        NotificationDispatch.objects.get_or_create(
-            event=event,
-            user_id=user_id,
-            channel=NotificationDispatch.Channel.PUSH,
-            defaults={
-                'status': status,
-                'reason': reason,
-            },
-        )
+        for channel, status, reason in (
+            (NotificationDispatch.Channel.IN_APP, in_app_status, in_app_reason),
+            (NotificationDispatch.Channel.PUSH, push_status, push_reason),
+        ):
+            if status == NotificationDispatch.Status.PENDING:
+                pending_count += 1
+            else:
+                skipped_count += 1
+
+            NotificationDispatch.objects.get_or_create(
+                event=event,
+                user_id=user_id,
+                channel=channel,
+                defaults={
+                    'status': status,
+                    'reason': reason,
+                },
+            )
 
     logger.info(
         'notification_event_enqueued',

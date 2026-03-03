@@ -238,6 +238,13 @@ class MeNotificationsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        channel_filter = (request.query_params.get('channel') or '').strip().lower()
+        if channel_filter and channel_filter not in NotificationDispatch.Channel.values:
+            return Response(
+                {'detail': 'channel inválido.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         status_filter = (request.query_params.get('status') or NotificationDispatch.Status.PENDING).strip().lower()
         if status_filter not in NotificationDispatch.Status.values:
             return Response(
@@ -262,6 +269,8 @@ class MeNotificationsView(APIView):
             .select_related('event')
             .order_by('-created_at')
         )
+        if channel_filter:
+            queryset = queryset.filter(channel=channel_filter)
         if not include_acknowledged:
             queryset = queryset.filter(acknowledged_at__isnull=True)
 
@@ -284,9 +293,49 @@ class MeNotificationAcknowledgeView(APIView):
             raise NotFound('Notificação não encontrada.') from exc
 
         if dispatch.acknowledged_at is None:
-            dispatch.acknowledged_at = timezone.now()
-            dispatch.save(update_fields=['acknowledged_at', 'updated_at'])
+            acked_at = timezone.now()
+            NotificationDispatch.objects.filter(
+                user=request.user,
+                event_id=dispatch.event_id,
+                acknowledged_at__isnull=True,
+            ).update(acknowledged_at=acked_at, updated_at=acked_at)
+            dispatch.refresh_from_db()
 
+        serializer = NotificationDispatchSerializer(dispatch)
+        return Response(serializer.data)
+
+
+class MeInAppNotificationConsumeLatestView(APIView):
+    """Entrega só o último banner pendente e colapsa o backlog mais antigo."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        dispatch = (
+            NotificationDispatch.objects
+            .filter(
+                user=request.user,
+                channel=NotificationDispatch.Channel.IN_APP,
+                status=NotificationDispatch.Status.PENDING,
+                acknowledged_at__isnull=True,
+            )
+            .select_related('event')
+            .order_by('-created_at')
+            .first()
+        )
+        if dispatch is None:
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        acked_at = timezone.now()
+        NotificationDispatch.objects.filter(
+            user=request.user,
+            channel=NotificationDispatch.Channel.IN_APP,
+            status=NotificationDispatch.Status.PENDING,
+            acknowledged_at__isnull=True,
+            created_at__lte=dispatch.created_at,
+        ).update(acknowledged_at=acked_at, updated_at=acked_at)
+
+        dispatch.refresh_from_db()
         serializer = NotificationDispatchSerializer(dispatch)
         return Response(serializer.data)
 

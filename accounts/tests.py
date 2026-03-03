@@ -14,7 +14,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from caselaw.models import CaseLaw
-from community.models import Category, ModerationConfig, Post as CommunityPost, UserModerationStatus
+from community.models import Category, ModerationConfig, Post as CommunityPost, PostFollow, UserModerationStatus
 from courses.models import CourseAsset, CoursePost, LiveEvent, PublicationStatus
 
 from .models import NotificationDispatch, NotificationEvent, NotificationPreference, Profile, PushDevice
@@ -374,6 +374,7 @@ class AccountsAPITests(TestCase):
         pending_dispatch = NotificationDispatch.objects.create(
             event=pending_event,
             user=user,
+            channel=NotificationDispatch.Channel.IN_APP,
             status=NotificationDispatch.Status.PENDING,
         )
         acknowledged_dispatch = NotificationDispatch.objects.create(
@@ -384,6 +385,7 @@ class AccountsAPITests(TestCase):
                 payload={'resource_type': 'comment', 'resource_id': 2},
             ),
             user=user,
+            channel=NotificationDispatch.Channel.IN_APP,
             status=NotificationDispatch.Status.PENDING,
             acknowledged_at=timezone.now(),
         )
@@ -394,6 +396,7 @@ class AccountsAPITests(TestCase):
                 title='Nova jurisprudência',
             ),
             user=user,
+            channel=NotificationDispatch.Channel.PUSH,
             status=NotificationDispatch.Status.SENT,
             dispatched_at=timezone.now(),
         )
@@ -404,6 +407,44 @@ class AccountsAPITests(TestCase):
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]['dispatch_id'], pending_dispatch.id)
         self.assertNotEqual(response.data[0]['dispatch_id'], acknowledged_dispatch.id)
+
+    def test_me_notifications_filters_by_channel(self):
+        user = User.objects.create_user(
+            username='notifychannel@example.com',
+            email='notifychannel@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        event = NotificationEvent.objects.create(
+            event_type=NotificationEvent.EventType.COURSE_CONTENT_PUBLISHED,
+            dedup_key='course-post-published:channel-filter',
+            title='Novo post do curso',
+        )
+        in_app_dispatch = NotificationDispatch.objects.create(
+            event=event,
+            user=user,
+            channel=NotificationDispatch.Channel.IN_APP,
+            status=NotificationDispatch.Status.PENDING,
+        )
+        NotificationDispatch.objects.create(
+            event=event,
+            user=user,
+            channel=NotificationDispatch.Channel.PUSH,
+            status=NotificationDispatch.Status.SENT,
+            dispatched_at=timezone.now(),
+        )
+
+        response = self.client.get(
+            reverse('me-notifications'),
+            {'channel': NotificationDispatch.Channel.IN_APP},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['dispatch_id'], in_app_dispatch.id)
+        self.assertEqual(response.data[0]['channel'], NotificationDispatch.Channel.IN_APP)
 
     def test_me_notification_ack_marks_dispatch_as_acknowledged(self):
         user = User.objects.create_user(
@@ -421,6 +462,13 @@ class AccountsAPITests(TestCase):
                 title='Novo conteúdo',
             ),
             user=user,
+            channel=NotificationDispatch.Channel.PUSH,
+            status=NotificationDispatch.Status.PENDING,
+        )
+        sibling_in_app_dispatch = NotificationDispatch.objects.create(
+            event=dispatch.event,
+            user=user,
+            channel=NotificationDispatch.Channel.IN_APP,
             status=NotificationDispatch.Status.PENDING,
         )
 
@@ -428,8 +476,50 @@ class AccountsAPITests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         dispatch.refresh_from_db()
+        sibling_in_app_dispatch.refresh_from_db()
         self.assertIsNotNone(dispatch.acknowledged_at)
+        self.assertIsNotNone(sibling_in_app_dispatch.acknowledged_at)
         self.assertEqual(response.data['dispatch_id'], dispatch.id)
+
+    def test_me_notification_consume_latest_returns_latest_in_app_and_collapses_backlog(self):
+        user = User.objects.create_user(
+            username='notifylatest@example.com',
+            email='notifylatest@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        older_dispatch = NotificationDispatch.objects.create(
+            event=NotificationEvent.objects.create(
+                event_type=NotificationEvent.EventType.CONTENT_PUBLISHED,
+                dedup_key='book-chapter-published:latest-older',
+                title='Capítulo antigo',
+            ),
+            user=user,
+            channel=NotificationDispatch.Channel.IN_APP,
+            status=NotificationDispatch.Status.PENDING,
+        )
+        latest_dispatch = NotificationDispatch.objects.create(
+            event=NotificationEvent.objects.create(
+                event_type=NotificationEvent.EventType.BOOK_VERSION_PUBLISHED,
+                dedup_key='book-version-published:latest-newer',
+                title='Versão nova',
+            ),
+            user=user,
+            channel=NotificationDispatch.Channel.IN_APP,
+            status=NotificationDispatch.Status.PENDING,
+        )
+
+        response = self.client.post(reverse('me-notification-consume-latest'), {}, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['dispatch_id'], latest_dispatch.id)
+
+        older_dispatch.refresh_from_db()
+        latest_dispatch.refresh_from_db()
+        self.assertIsNotNone(older_dispatch.acknowledged_at)
+        self.assertIsNotNone(latest_dispatch.acknowledged_at)
 
     def test_me_push_devices_register_list_and_unregister(self):
         user = User.objects.create_user(
@@ -728,21 +818,31 @@ class NotificationTriggerTests(TestCase):
 
         self.professional_user = self._create_user('pro@example.com')
         self.professional_opt_out_user = self._create_user('pro-optout@example.com')
+        self.professional_push_off_user = self._create_user('pro-push-off@example.com')
         self.essential_user = self._create_user('essential@example.com')
         self.community_author = self._create_user('community-author@example.com')
         self.community_opt_out_author = self._create_user('community-optout@example.com')
+        self.community_follower = self._create_user('community-follower@example.com')
+        self.community_observer = self._create_user('community-observer@example.com')
         self.commenter = self._create_user('commenter@example.com')
 
         self._create_subscription(self.professional_user, tier=Subscription.Tier.PROFESSIONAL)
         self._create_subscription(self.professional_opt_out_user, tier=Subscription.Tier.PROFESSIONAL)
+        self._create_subscription(self.professional_push_off_user, tier=Subscription.Tier.PROFESSIONAL)
         self._create_subscription(self.essential_user, tier=Subscription.Tier.ESSENTIAL)
         self._create_subscription(self.community_author, tier=Subscription.Tier.ESSENTIAL)
         self._create_subscription(self.community_opt_out_author, tier=Subscription.Tier.ESSENTIAL)
+        self._create_subscription(self.community_follower, tier=Subscription.Tier.ESSENTIAL)
+        self._create_subscription(self.community_observer, tier=Subscription.Tier.ESSENTIAL)
         self._create_subscription(self.commenter, tier=Subscription.Tier.ESSENTIAL)
 
         NotificationPreference.objects.create(
             user=self.professional_opt_out_user,
             new_content_updates_enabled=False,
+        )
+        NotificationPreference.objects.create(
+            user=self.professional_push_off_user,
+            push_enabled=False,
         )
         NotificationPreference.objects.create(
             user=self.community_opt_out_author,
@@ -783,18 +883,41 @@ class NotificationTriggerTests(TestCase):
         )
 
         event = NotificationEvent.objects.get(dedup_key=f'course-post-published:{course_post.pk}')
-        dispatches = {
+        push_dispatches = {
             dispatch.user_id: dispatch
-            for dispatch in NotificationDispatch.objects.filter(event=event)
+            for dispatch in NotificationDispatch.objects.filter(
+                event=event,
+                channel=NotificationDispatch.Channel.PUSH,
+            )
+        }
+        in_app_dispatches = {
+            dispatch.user_id: dispatch
+            for dispatch in NotificationDispatch.objects.filter(
+                event=event,
+                channel=NotificationDispatch.Channel.IN_APP,
+            )
         }
 
         self.assertEqual(event.event_type, NotificationEvent.EventType.COURSE_CONTENT_PUBLISHED)
         self.assertEqual(event.payload['resource_type'], 'course_post')
-        self.assertEqual(set(dispatches), {self.professional_user.id, self.professional_opt_out_user.id})
-        self.assertEqual(dispatches[self.professional_user.id].status, NotificationDispatch.Status.PENDING)
-        self.assertEqual(dispatches[self.professional_opt_out_user.id].status, NotificationDispatch.Status.SKIPPED)
-        self.assertEqual(dispatches[self.professional_opt_out_user.id].reason, 'new_content_disabled')
-        self.assertNotIn(self.essential_user.id, dispatches)
+        self.assertEqual(
+            set(push_dispatches),
+            {self.professional_user.id, self.professional_opt_out_user.id, self.professional_push_off_user.id},
+        )
+        self.assertEqual(
+            set(in_app_dispatches),
+            {self.professional_user.id, self.professional_opt_out_user.id, self.professional_push_off_user.id},
+        )
+        self.assertEqual(push_dispatches[self.professional_user.id].status, NotificationDispatch.Status.PENDING)
+        self.assertEqual(in_app_dispatches[self.professional_user.id].status, NotificationDispatch.Status.PENDING)
+        self.assertEqual(push_dispatches[self.professional_opt_out_user.id].status, NotificationDispatch.Status.SKIPPED)
+        self.assertEqual(in_app_dispatches[self.professional_opt_out_user.id].status, NotificationDispatch.Status.SKIPPED)
+        self.assertEqual(push_dispatches[self.professional_opt_out_user.id].reason, 'new_content_disabled')
+        self.assertEqual(in_app_dispatches[self.professional_opt_out_user.id].reason, 'new_content_disabled')
+        self.assertEqual(push_dispatches[self.professional_push_off_user.id].status, NotificationDispatch.Status.SKIPPED)
+        self.assertEqual(push_dispatches[self.professional_push_off_user.id].reason, 'push_disabled')
+        self.assertEqual(in_app_dispatches[self.professional_push_off_user.id].status, NotificationDispatch.Status.PENDING)
+        self.assertNotIn(self.essential_user.id, push_dispatches)
 
         course_post.excerpt = 'Resumo atualizado sem novo dispatch'
         course_post.save()
@@ -838,15 +961,36 @@ class NotificationTriggerTests(TestCase):
         self.assertEqual(asset_event.payload['resource_type'], 'course_asset')
         self.assertEqual(live_event_notification.payload['resource_type'], 'live_event')
         self.assertEqual(
-            NotificationDispatch.objects.filter(event=asset_event, status=NotificationDispatch.Status.PENDING).count(),
+            NotificationDispatch.objects.filter(
+                event=asset_event,
+                channel=NotificationDispatch.Channel.PUSH,
+                status=NotificationDispatch.Status.PENDING,
+            ).count(),
             1,
         )
         self.assertEqual(
             NotificationDispatch.objects.filter(
                 event=live_event_notification,
+                channel=NotificationDispatch.Channel.PUSH,
                 status=NotificationDispatch.Status.PENDING,
             ).count(),
             1,
+        )
+        self.assertEqual(
+            NotificationDispatch.objects.filter(
+                event=asset_event,
+                channel=NotificationDispatch.Channel.IN_APP,
+                status=NotificationDispatch.Status.PENDING,
+            ).count(),
+            2,
+        )
+        self.assertEqual(
+            NotificationDispatch.objects.filter(
+                event=live_event_notification,
+                channel=NotificationDispatch.Channel.IN_APP,
+                status=NotificationDispatch.Status.PENDING,
+            ).count(),
+            2,
         )
 
     def test_caselaw_creation_enqueues_notifications_with_dedup(self):
@@ -859,16 +1003,38 @@ class NotificationTriggerTests(TestCase):
         )
 
         event = NotificationEvent.objects.get(dedup_key=f'caselaw-published:{caselaw.pk}')
-        dispatches = {
+        push_dispatches = {
             dispatch.user_id: dispatch
-            for dispatch in NotificationDispatch.objects.filter(event=event)
+            for dispatch in NotificationDispatch.objects.filter(
+                event=event,
+                channel=NotificationDispatch.Channel.PUSH,
+            )
+        }
+        in_app_dispatches = {
+            dispatch.user_id: dispatch
+            for dispatch in NotificationDispatch.objects.filter(
+                event=event,
+                channel=NotificationDispatch.Channel.IN_APP,
+            )
         }
 
         self.assertEqual(event.event_type, NotificationEvent.EventType.CASELAW_PUBLISHED)
-        self.assertEqual(set(dispatches), {self.professional_user.id, self.professional_opt_out_user.id})
-        self.assertEqual(dispatches[self.professional_user.id].status, NotificationDispatch.Status.PENDING)
-        self.assertEqual(dispatches[self.professional_opt_out_user.id].reason, 'new_content_disabled')
-        self.assertNotIn(self.essential_user.id, dispatches)
+        self.assertEqual(
+            set(push_dispatches),
+            {self.professional_user.id, self.professional_opt_out_user.id, self.professional_push_off_user.id},
+        )
+        self.assertEqual(
+            set(in_app_dispatches),
+            {self.professional_user.id, self.professional_opt_out_user.id, self.professional_push_off_user.id},
+        )
+        self.assertEqual(push_dispatches[self.professional_user.id].status, NotificationDispatch.Status.PENDING)
+        self.assertEqual(in_app_dispatches[self.professional_user.id].status, NotificationDispatch.Status.PENDING)
+        self.assertEqual(push_dispatches[self.professional_opt_out_user.id].reason, 'new_content_disabled')
+        self.assertEqual(in_app_dispatches[self.professional_opt_out_user.id].reason, 'new_content_disabled')
+        self.assertEqual(push_dispatches[self.professional_push_off_user.id].status, NotificationDispatch.Status.SKIPPED)
+        self.assertEqual(push_dispatches[self.professional_push_off_user.id].reason, 'push_disabled')
+        self.assertEqual(in_app_dispatches[self.professional_push_off_user.id].status, NotificationDispatch.Status.PENDING)
+        self.assertNotIn(self.essential_user.id, push_dispatches)
 
         caselaw.tags = ['atualizado']
         caselaw.save()
@@ -878,12 +1044,17 @@ class NotificationTriggerTests(TestCase):
             1,
         )
 
-    def test_new_comment_notifies_post_author(self):
+    def test_new_comment_notifies_active_post_followers_only(self):
         post = CommunityPost.objects.create(
             author=self.community_author,
             category=self.category,
             title='Dúvida importante',
             body='Texto do post',
+        )
+        PostFollow.objects.create(
+            post=post,
+            user=self.community_follower,
+            is_active=True,
         )
 
         self._auth(self.commenter)
@@ -898,18 +1069,45 @@ class NotificationTriggerTests(TestCase):
         event = NotificationEvent.objects.get(
             dedup_key=f'community-comment-created:{response.data["id"]}'
         )
-        dispatch = NotificationDispatch.objects.get(event=event, user=self.community_author)
+        push_dispatches = {
+            dispatch.user_id: dispatch
+            for dispatch in NotificationDispatch.objects.filter(
+                event=event,
+                channel=NotificationDispatch.Channel.PUSH,
+            )
+        }
+        in_app_dispatches = {
+            dispatch.user_id: dispatch
+            for dispatch in NotificationDispatch.objects.filter(
+                event=event,
+                channel=NotificationDispatch.Channel.IN_APP,
+            )
+        }
 
         self.assertEqual(event.event_type, NotificationEvent.EventType.COMMUNITY_INTERACTION)
-        self.assertEqual(dispatch.status, NotificationDispatch.Status.PENDING)
-        self.assertEqual(dispatch.reason, '')
+        self.assertEqual(set(push_dispatches), {self.community_author.id, self.community_follower.id})
+        self.assertEqual(set(in_app_dispatches), {self.community_author.id, self.community_follower.id})
+        self.assertEqual(push_dispatches[self.community_author.id].status, NotificationDispatch.Status.PENDING)
+        self.assertEqual(in_app_dispatches[self.community_author.id].status, NotificationDispatch.Status.PENDING)
+        self.assertEqual(push_dispatches[self.community_author.id].reason, '')
+        self.assertEqual(in_app_dispatches[self.community_author.id].reason, '')
+        self.assertEqual(push_dispatches[self.community_follower.id].status, NotificationDispatch.Status.PENDING)
+        self.assertEqual(in_app_dispatches[self.community_follower.id].status, NotificationDispatch.Status.PENDING)
+        self.assertNotIn(self.community_observer.id, push_dispatches)
+        self.assertNotIn(self.commenter.id, push_dispatches)
 
-    def test_new_comment_respects_community_preference_and_self_comment_is_ignored(self):
+    def test_new_comment_respects_community_preference_unfollow_and_self_comment_is_ignored(self):
         opt_out_post = CommunityPost.objects.create(
             author=self.community_opt_out_author,
             category=self.category,
             title='Post sem notificação',
             body='Texto',
+        )
+        PostFollow.objects.filter(post=opt_out_post, user=self.community_opt_out_author).update(is_active=False)
+        PostFollow.objects.create(
+            post=opt_out_post,
+            user=self.community_follower,
+            is_active=True,
         )
 
         self._auth(self.commenter)
@@ -924,9 +1122,74 @@ class NotificationTriggerTests(TestCase):
         event = NotificationEvent.objects.get(
             dedup_key=f'community-comment-created:{opt_out_response.data["id"]}'
         )
-        dispatch = NotificationDispatch.objects.get(event=event, user=self.community_opt_out_author)
-        self.assertEqual(dispatch.status, NotificationDispatch.Status.SKIPPED)
-        self.assertEqual(dispatch.reason, 'community_interactions_disabled')
+        push_dispatches = {
+            dispatch.user_id: dispatch
+            for dispatch in NotificationDispatch.objects.filter(
+                event=event,
+                channel=NotificationDispatch.Channel.PUSH,
+            )
+        }
+        in_app_dispatches = {
+            dispatch.user_id: dispatch
+            for dispatch in NotificationDispatch.objects.filter(
+                event=event,
+                channel=NotificationDispatch.Channel.IN_APP,
+            )
+        }
+        self.assertEqual(set(push_dispatches), {self.community_follower.id})
+        self.assertEqual(set(in_app_dispatches), {self.community_follower.id})
+        self.assertEqual(push_dispatches[self.community_follower.id].status, NotificationDispatch.Status.PENDING)
+        self.assertEqual(in_app_dispatches[self.community_follower.id].status, NotificationDispatch.Status.PENDING)
+        self.assertNotIn(self.community_opt_out_author.id, push_dispatches)
+
+        opted_out_follower_post = CommunityPost.objects.create(
+            author=self.community_author,
+            category=self.category,
+            title='Post com follower opt-out',
+            body='Texto',
+        )
+        PostFollow.objects.create(
+            post=opted_out_follower_post,
+            user=self.community_opt_out_author,
+            is_active=True,
+        )
+
+        preference_response = self.client.post(
+            '/community/comments/',
+            {'post_id': opted_out_follower_post.pk, 'body': 'Comentário para follower opt-out'},
+            format='json',
+        )
+        self.assertEqual(preference_response.status_code, 201)
+
+        preference_event = NotificationEvent.objects.get(
+            dedup_key=f'community-comment-created:{preference_response.data["id"]}'
+        )
+        push_dispatches = {
+            dispatch.user_id: dispatch
+            for dispatch in NotificationDispatch.objects.filter(
+                event=preference_event,
+                channel=NotificationDispatch.Channel.PUSH,
+            )
+        }
+        in_app_dispatches = {
+            dispatch.user_id: dispatch
+            for dispatch in NotificationDispatch.objects.filter(
+                event=preference_event,
+                channel=NotificationDispatch.Channel.IN_APP,
+            )
+        }
+        self.assertEqual(push_dispatches[self.community_author.id].status, NotificationDispatch.Status.PENDING)
+        self.assertEqual(in_app_dispatches[self.community_author.id].status, NotificationDispatch.Status.PENDING)
+        self.assertEqual(push_dispatches[self.community_opt_out_author.id].status, NotificationDispatch.Status.SKIPPED)
+        self.assertEqual(in_app_dispatches[self.community_opt_out_author.id].status, NotificationDispatch.Status.SKIPPED)
+        self.assertEqual(
+            push_dispatches[self.community_opt_out_author.id].reason,
+            'community_interactions_disabled',
+        )
+        self.assertEqual(
+            in_app_dispatches[self.community_opt_out_author.id].reason,
+            'community_interactions_disabled',
+        )
 
         self.client.credentials()
         self._auth(self.community_author)
