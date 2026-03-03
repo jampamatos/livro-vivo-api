@@ -100,10 +100,18 @@ class CaseLaw(models.Model):
         return f"{self.court} {self.case_number} ({self.decision_date})"
 
     def save(self, *args, **kwargs):
+        is_create = self._state.adding
         self.ementa_rich = self.ementa_rich or ''
         self.ementa_plain = _to_plain_text(self.ementa_rich)
         self.anchors = _normalize_anchors(self.anchors)
         if not isinstance(self.tags, list):
             self.tags = []
         self.tags = [str(tag).strip() for tag in self.tags if str(tag).strip()]
-        return super().save(*args, **kwargs)
+        result = super().save(*args, **kwargs)
+
+        if is_create:
+            from .services import enqueue_caselaw_publication_notifications
+
+            enqueue_caselaw_publication_notifications(caselaw=self)
+
+        return result

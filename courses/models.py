@@ -57,13 +57,26 @@ class CoursePost(models.Model):
         return f'{self.title} ({self.status})'
 
     def save(self, *args, **kwargs):
+        previous_status = None
+        if self.pk:
+            previous_status = (
+                type(self).objects.filter(pk=self.pk).values_list('status', flat=True).first()
+            )
+
         self.content_rich = sanitize_chapter_html(self.content_rich or '')
         self.content_plain = _to_plain_text(self.content_rich)
         self.tags = _normalize_tags(self.tags)
 
         if self.status == PublicationStatus.PUBLISHED and self.published_at is None:
             self.published_at = timezone.now()
-        return super().save(*args, **kwargs)
+        result = super().save(*args, **kwargs)
+
+        if self.status == PublicationStatus.PUBLISHED and previous_status != PublicationStatus.PUBLISHED:
+            from .services import enqueue_course_post_publication_notifications
+
+            enqueue_course_post_publication_notifications(course_post=self)
+
+        return result
 
 
 class CourseAsset(models.Model):
@@ -99,10 +112,23 @@ class CourseAsset(models.Model):
         return f'{self.title} ({self.asset_type})'
 
     def save(self, *args, **kwargs):
+        previous_status = None
+        if self.pk:
+            previous_status = (
+                type(self).objects.filter(pk=self.pk).values_list('status', flat=True).first()
+            )
+
         self.tags = _normalize_tags(self.tags)
         if self.status == PublicationStatus.PUBLISHED and self.published_at is None:
             self.published_at = timezone.now()
-        return super().save(*args, **kwargs)
+        result = super().save(*args, **kwargs)
+
+        if self.status == PublicationStatus.PUBLISHED and previous_status != PublicationStatus.PUBLISHED:
+            from .services import enqueue_course_asset_publication_notifications
+
+            enqueue_course_asset_publication_notifications(course_asset=self)
+
+        return result
 
 
 class LiveEvent(models.Model):
@@ -143,5 +169,23 @@ class LiveEvent(models.Model):
         return f'{self.title} ({self.status})'
 
     def save(self, *args, **kwargs):
+        previous_status = None
+        if self.pk:
+            previous_status = (
+                type(self).objects.filter(pk=self.pk).values_list('status', flat=True).first()
+            )
+
         self.description = sanitize_chapter_html(self.description or '')
-        return super().save(*args, **kwargs)
+        result = super().save(*args, **kwargs)
+
+        notifiable_statuses = {
+            self.Status.SCHEDULED,
+            self.Status.LIVE,
+            self.Status.FINISHED,
+        }
+        if self.status in notifiable_statuses and previous_status not in notifiable_statuses:
+            from .services import enqueue_live_event_notifications
+
+            enqueue_live_event_notifications(live_event=self)
+
+        return result

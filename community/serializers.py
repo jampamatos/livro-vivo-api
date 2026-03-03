@@ -12,6 +12,7 @@ class CategorySerializer(serializers.ModelSerializer):
 
 class PostSerializer(serializers.ModelSerializer):
     author_display = serializers.SerializerMethodField(read_only=True)
+    is_following = serializers.SerializerMethodField(read_only=True)
     last_activity = serializers.DateTimeField(read_only=True)
     category = CategorySerializer(read_only=True)
     category_id = serializers.PrimaryKeyRelatedField(
@@ -36,6 +37,7 @@ class PostSerializer(serializers.ModelSerializer):
             'moderated_by',
             'moderated_at',
             'moderation_note',
+            'is_following',
             'last_activity',
             'created_at',
             'updated_at',
@@ -54,6 +56,16 @@ class PostSerializer(serializers.ModelSerializer):
     
     def get_author_display(self, obj) -> str:
         return str(obj.author)
+
+    def get_is_following(self, obj) -> bool:
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if not user or not user.is_authenticated:
+            return False
+        annotated = getattr(obj, 'is_following', None)
+        if annotated is not None:
+            return bool(annotated)
+        return obj.follows.filter(user=user, is_active=True).exists()
 
 class CommentSerializer(serializers.ModelSerializer):
     author_display = serializers.SerializerMethodField(read_only=True)

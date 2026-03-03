@@ -278,9 +278,23 @@ class BookChapter(models.Model):
         return re.sub(r'\s+', ' ', text).strip()
 
     def save(self, *args, **kwargs):
+        is_create = self._state.adding
         self.content_rich = sanitize_chapter_html(self.content_rich or '')
         self.content_plain = self.to_plain_text(self.content_rich)
-        return super().save(*args, **kwargs)
+        result = super().save(*args, **kwargs)
+
+        if is_create:
+            from .services import (
+                book_chapter_notifications_suppressed_for_version,
+                enqueue_book_chapter_publication_notifications,
+            )
+
+            if book_chapter_notifications_suppressed_for_version(version_id=self.book_version_id):
+                return result
+
+            enqueue_book_chapter_publication_notifications(book_chapter=self)
+
+        return result
 
     def __str__(self) -> str:
         return f'{self.book_version} :: {self.order} - {self.slug}'

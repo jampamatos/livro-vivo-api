@@ -1,18 +1,50 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date
 import logging
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Q
-from django.utils import timezone
+from django.utils.text import Truncator
 
-from accounts.models import NotificationDispatch, NotificationEvent, NotificationPreference
-from entitlements.models import Subscription
+from accounts.models import NotificationEvent
+from accounts.services import enqueue_notification_event, get_active_subscription_user_ids
 from .models import BookChapter, BookVersion
 
 logger = logging.getLogger('livro_vivo.notifications')
+_suppressed_book_chapter_notification_version_ids: ContextVar[frozenset[int]] = ContextVar(
+    'suppressed_book_chapter_notification_version_ids',
+    default=frozenset(),
+)
+
+
+def _compact_text(value: str, *, length: int = 180) -> str:
+    return Truncator((value or '').strip()).chars(length)
+
+
+@contextmanager
+def suppress_book_chapter_notifications_for_versions(*version_ids: int):
+    normalized_ids = {int(version_id) for version_id in version_ids if version_id}
+    if not normalized_ids:
+        yield
+        return
+
+    current_ids = set(_suppressed_book_chapter_notification_version_ids.get())
+    token = _suppressed_book_chapter_notification_version_ids.set(
+        frozenset(current_ids | normalized_ids)
+    )
+    try:
+        yield
+    finally:
+        _suppressed_book_chapter_notification_version_ids.reset(token)
+
+
+def book_chapter_notifications_suppressed_for_version(*, version_id: int | None) -> bool:
+    if not version_id:
+        return False
+    return int(version_id) in _suppressed_book_chapter_notification_version_ids.get()
 
 
 def enqueue_book_version_publication_notifications(
@@ -37,99 +69,69 @@ def enqueue_book_version_publication_notifications(
         )
         return None
 
-    dedup_key = f'book-version-published:{book_version.id}'
-    event, created = NotificationEvent.objects.get_or_create(
-        dedup_key=dedup_key,
-        defaults={
-            'event_type': NotificationEvent.EventType.BOOK_VERSION_PUBLISHED,
-            'title': f'Nova versão publicada: {book_version.book.title}',
-            'body': (book_version.changelog or '').strip(),
-            'payload': {
-                'book_id': book_version.book_id,
-                'book_title': book_version.book.title,
-                'book_version_id': book_version.id,
-                'version': book_version.version,
-                'published_at': book_version.published_at.isoformat() if book_version.published_at else None,
-            },
+    return enqueue_notification_event(
+        event_type=NotificationEvent.EventType.BOOK_VERSION_PUBLISHED,
+        dedup_key=f'book-version-published:{book_version.id}',
+        title=f'Nova versão publicada: {book_version.book.title}',
+        body=(book_version.changelog or '').strip(),
+        payload={
+            'book_id': book_version.book_id,
+            'book_title': book_version.book.title,
+            'book_version_id': book_version.id,
+            'version': book_version.version,
+            'published_at': book_version.published_at.isoformat() if book_version.published_at else None,
         },
+        recipient_user_ids=get_active_subscription_user_ids(),
+        preference_field='book_version_updates_enabled',
+        preference_disabled_reason='book_updates_disabled',
     )
-    if not created:
+
+
+def enqueue_book_chapter_publication_notifications(
+    *,
+    book_chapter: BookChapter,
+) -> NotificationEvent | None:
+    if not getattr(settings, 'NOTIFICATIONS_ENABLED', True):
+        logger.info('book_chapter_notifications_skipped', extra={'reason': 'notifications_disabled_global'})
+        return None
+    if not book_chapter or not book_chapter.pk:
+        logger.warning('book_chapter_notifications_skipped', extra={'reason': 'book_chapter_missing'})
+        return None
+
+    book_version = book_chapter.book_version
+    if book_version.status != BookVersion.Status.PUBLISHED:
         logger.info(
-            'book_version_notifications_dedup_hit',
-            extra={'book_version_id': book_version.pk, 'event_id': event.pk},
-        )
-        return event
-
-    now = timezone.now()
-    subscribed_user_ids = list(
-        Subscription.objects.filter(status=Subscription.Status.ACTIVE)
-        .filter(Q(started_at__isnull=True) | Q(started_at__lte=now))
-        .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
-        .values_list('user_id', flat=True)
-        .distinct()
-    )
-    if not subscribed_user_ids:
-        logger.info(
-            'book_version_notifications_no_subscribers',
-            extra={'book_version_id': book_version.pk, 'event_id': event.pk},
-        )
-        return event
-
-    preference_by_user_id = {
-        preference.user_id: preference
-        for preference in NotificationPreference.objects.filter(user_id__in=subscribed_user_ids)
-    }
-
-    pending_count = 0
-    skipped_count = 0
-    for user_id in subscribed_user_ids:
-        preference = preference_by_user_id.get(user_id)
-        notifications_enabled = (
-            preference.notifications_enabled if preference is not None else True
-        )
-        book_updates_enabled = (
-            preference.book_version_updates_enabled if preference is not None else True
-        )
-        push_enabled = preference.push_enabled if preference is not None else True
-
-        status = NotificationDispatch.Status.PENDING
-        reason = ''
-        if not notifications_enabled:
-            status = NotificationDispatch.Status.SKIPPED
-            reason = 'notifications_disabled'
-        elif not book_updates_enabled:
-            status = NotificationDispatch.Status.SKIPPED
-            reason = 'book_updates_disabled'
-        elif not push_enabled:
-            status = NotificationDispatch.Status.SKIPPED
-            reason = 'push_disabled'
-        if status == NotificationDispatch.Status.PENDING:
-            pending_count += 1
-        else:
-            skipped_count += 1
-
-        NotificationDispatch.objects.get_or_create(
-            event=event,
-            user_id=user_id,
-            channel=NotificationDispatch.Channel.PUSH,
-            defaults={
-                'status': status,
-                'reason': reason,
+            'book_chapter_notifications_skipped',
+            extra={
+                'reason': 'book_version_not_published',
+                'book_chapter_id': book_chapter.pk,
+                'book_version_id': book_version.pk,
+                'status': book_version.status,
             },
         )
+        return None
 
-    logger.info(
-        'book_version_notifications_enqueued',
-        extra={
+    return enqueue_notification_event(
+        event_type=NotificationEvent.EventType.CONTENT_PUBLISHED,
+        dedup_key=f'book-chapter-published:{book_chapter.pk}',
+        title=f'Novo capítulo disponível: {book_version.book.title}',
+        body=_compact_text(f'{book_chapter.title}. {book_chapter.content_plain}'),
+        payload={
+            'resource_type': 'book_chapter',
+            'book_id': book_version.book_id,
+            'book_title': book_version.book.title,
             'book_version_id': book_version.pk,
-            'event_id': event.pk,
-            'subscriber_count': len(subscribed_user_ids),
-            'pending_count': pending_count,
-            'skipped_count': skipped_count,
+            'book_version': book_version.version,
+            'book_chapter_id': book_chapter.pk,
+            'chapter_title': book_chapter.title,
+            'chapter_slug': book_chapter.slug,
+            'chapter_order': book_chapter.order,
+            'created_at': book_chapter.created_at.isoformat() if book_chapter.created_at else None,
         },
+        recipient_user_ids=get_active_subscription_user_ids(),
+        preference_field='book_version_updates_enabled',
+        preference_disabled_reason='book_updates_disabled',
     )
-
-    return event
 
 
 def create_preloaded_book_version(
@@ -164,14 +166,16 @@ def create_preloaded_book_version(
         )
 
         source_chapters = source_version.chapters.order_by('order', 'id')
-        for chapter in source_chapters:
-            BookChapter.objects.create(
-                book_version=created_version,
-                title=chapter.title,
-                slug=chapter.slug,
-                order=chapter.order,
-                content_rich=chapter.content_rich,
-            )
+        chapter_context = suppress_book_chapter_notifications_for_versions(created_version.id)
+        with chapter_context:
+            for chapter in source_chapters:
+                BookChapter.objects.create(
+                    book_version=created_version,
+                    title=chapter.title,
+                    slug=chapter.slug,
+                    order=chapter.order,
+                    content_rich=chapter.content_rich,
+                )
 
         if created_version.status == BookVersion.Status.PUBLISHED:
             enqueue_book_version_publication_notifications(book_version=created_version)

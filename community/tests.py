@@ -13,7 +13,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from accounts.models import Profile
 from entitlements.models import Entitlement, Subscription
 
-from .models import Category, Post, Comment, Report, ReportModerationAction
+from .models import Category, Post, PostFollow, Comment, Report, ReportModerationAction
 from .models import ModerationConfig, UserModerationStatus
 
 
@@ -96,6 +96,36 @@ class CommunityApiTests(APITestCase):
         self.auth(self.staff_access)
         res = self.client.delete(f"/community/posts/{post_id}/")
         self.assertEqual(res.status_code, 204)
+
+    def test_post_author_follows_own_post_by_default(self):
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+
+        follow = PostFollow.objects.get(post=post, user=self.user)
+
+        self.assertTrue(follow.is_active)
+
+    def test_post_serializer_exposes_follow_state_and_user_can_follow_unfollow(self):
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+
+        self.auth(self.other_access)
+        list_response = self.client.get("/community/posts/")
+        self.assertEqual(list_response.status_code, 200)
+        listed_post = next(item for item in list_response.data if item["id"] == post.id)
+        self.assertFalse(listed_post["is_following"])
+
+        follow_response = self.client.post(f"/community/posts/{post.id}/follow/")
+        self.assertEqual(follow_response.status_code, 200)
+        self.assertTrue(follow_response.data["is_following"])
+
+        follow = PostFollow.objects.get(post=post, user=self.other)
+        self.assertTrue(follow.is_active)
+
+        unfollow_response = self.client.post(f"/community/posts/{post.id}/unfollow/")
+        self.assertEqual(unfollow_response.status_code, 200)
+        self.assertFalse(unfollow_response.data["is_following"])
+
+        follow.refresh_from_db()
+        self.assertFalse(follow.is_active)
 
     def test_posts_require_auth(self):
         res = self.client.get("/community/posts/")

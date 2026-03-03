@@ -1,4 +1,4 @@
-from django.db.models import F, Max
+from django.db.models import Exists, F, Max, OuterRef
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -10,14 +10,14 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.viewsets import ModelViewSet
 
-from .models import Category, Post, Comment, Report, ReportModerationAction
+from .models import Category, Post, PostFollow, Comment, Report, ReportModerationAction
 from .permissions import (
     IsModeratorOrAbove,
     IsNotCommunityBanned,
     IsOwnerOrStaff,
     IsStaffOrReadOnlyAuthed,
 )
-from .services import ban_user_from_app
+from .services import ban_user_from_app, deactivate_post_follow, enqueue_new_comment_notifications, ensure_post_follow
 from .serializers import CategorySerializer, PostSerializer, CommentSerializer, ReportSerializer
 
 from accounts.roles import user_is_moderator_or_above
@@ -49,6 +49,16 @@ class PostViewSet(ModelViewSet):
             .annotate(last_activity=Coalesce(Max('comments__created_at'), F('created_at')))
             .all()
         )
+        if self.request.user and self.request.user.is_authenticated:
+            qs = qs.annotate(
+                is_following=Exists(
+                    PostFollow.objects.filter(
+                        post_id=OuterRef('pk'),
+                        user_id=self.request.user.id,
+                        is_active=True,
+                    )
+                )
+            )
 
         if not user_is_moderator_or_above(self.request.user):
             qs = qs.filter(moderation_state=Post.ModerationState.ACTIVE)
@@ -60,6 +70,32 @@ class PostViewSet(ModelViewSet):
     
     def perform_create(self, serializer):
         serializer.save(author=self.request.user)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='follow',
+        permission_classes=[IsAuthenticated, IsNotCommunityBanned],
+    )
+    def follow(self, request, pk=None):
+        post = self.get_object()
+        ensure_post_follow(post=post, user=request.user)
+        post.is_following = True
+        serializer = self.get_serializer(post)
+        return Response(serializer.data)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='unfollow',
+        permission_classes=[IsAuthenticated, IsNotCommunityBanned],
+    )
+    def unfollow(self, request, pk=None):
+        post = self.get_object()
+        deactivate_post_follow(post=post, user=request.user)
+        post.is_following = False
+        serializer = self.get_serializer(post)
+        return Response(serializer.data)
     
 class CommentViewSet(ModelViewSet):
     serializer_class = CommentSerializer
@@ -80,7 +116,8 @@ class CommentViewSet(ModelViewSet):
         return qs
     
     def perform_create(self, serializer):
-        serializer.save(author=self.request.user)
+        comment = serializer.save(author=self.request.user)
+        enqueue_new_comment_notifications(comment=comment)
 
 class ReportViewSet(ModelViewSet):
     serializer_class = ReportSerializer

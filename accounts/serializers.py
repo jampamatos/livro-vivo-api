@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from .models import NotificationPreference, Profile
+from .models import NotificationDispatch, NotificationPreference, Profile, PushDevice
 
 User = get_user_model()
 
@@ -76,7 +76,72 @@ class NotificationPreferenceSerializer(serializers.ModelSerializer):
             'notifications_enabled',
             'book_version_updates_enabled',
             'new_content_updates_enabled',
+            'community_interaction_updates_enabled',
             'push_enabled',
             'updated_at',
         )
         read_only_fields = ('updated_at',)
+
+
+class NotificationDispatchSerializer(serializers.ModelSerializer):
+    dispatch_id = serializers.IntegerField(source='id', read_only=True)
+    event_type = serializers.CharField(source='event.event_type', read_only=True)
+    title = serializers.CharField(source='event.title', read_only=True)
+    body = serializers.CharField(source='event.body', read_only=True)
+    payload = serializers.JSONField(source='event.payload', read_only=True)
+    event_created_at = serializers.DateTimeField(source='event.created_at', read_only=True)
+
+    class Meta:
+        model = NotificationDispatch
+        fields = (
+            'dispatch_id',
+            'event_type',
+            'title',
+            'body',
+            'payload',
+            'channel',
+            'status',
+            'reason',
+            'created_at',
+            'event_created_at',
+            'dispatched_at',
+            'acknowledged_at',
+        )
+
+
+class PushDeviceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PushDevice
+        fields = (
+            'id',
+            'platform',
+            'expo_push_token',
+            'is_active',
+            'disabled_reason',
+            'last_seen_at',
+            'updated_at',
+        )
+        read_only_fields = ('id', 'is_active', 'disabled_reason', 'last_seen_at', 'updated_at')
+
+
+class PushDeviceRegisterSerializer(serializers.Serializer):
+    platform = serializers.ChoiceField(choices=PushDevice.Platform.choices)
+    expo_push_token = serializers.CharField(max_length=255)
+
+    def validate_expo_push_token(self, value: str) -> str:
+        token = value.strip()
+        if not token:
+            raise serializers.ValidationError("expo_push_token é obrigatório.")
+        if not (token.startswith('ExponentPushToken[') or token.startswith('ExpoPushToken[')):
+            raise serializers.ValidationError("expo_push_token inválido.")
+        return token
+
+
+class PushDeviceUnregisterSerializer(serializers.Serializer):
+    expo_push_token = serializers.CharField(max_length=255)
+
+    def validate_expo_push_token(self, value: str) -> str:
+        token = value.strip()
+        if not token:
+            raise serializers.ValidationError("expo_push_token é obrigatório.")
+        return token
