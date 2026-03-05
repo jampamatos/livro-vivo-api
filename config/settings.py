@@ -274,9 +274,11 @@ _default_dev_cors = (
     'http://127.0.0.1:19006'
 )
 
+_default_non_production_cors = _default_dev_cors if not (IS_PRODUCTION or IS_STAGE) else ''
+
 CORS_ALLOWED_ORIGINS = env_list(
     'DJANGO_CORS_ALLOWED_ORIGINS',
-    _default_dev_cors if DEBUG else '',
+    _default_non_production_cors,
 )
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = env_bool('DJANGO_CORS_ALLOW_CREDENTIALS', default=False)
