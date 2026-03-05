@@ -33,6 +33,42 @@ class Profile(models.Model):
         return f"Profile(user_id={self.user_id})"
 
 
+class DataPrivacyRequest(models.Model):
+    """Registro auditável de solicitações LGPD do próprio usuário."""
+
+    class RequestType(models.TextChoices):
+        EXPORT = 'export', 'Export'
+        ERASURE = 'erasure', 'Erasure'
+
+    class Status(models.TextChoices):
+        REQUESTED = 'requested', 'Requested'
+        COMPLETED = 'completed', 'Completed'
+        FAILED = 'failed', 'Failed'
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='data_privacy_requests',
+    )
+    request_type = models.CharField(max_length=16, choices=RequestType.choices)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.REQUESTED)
+    retention_policy = models.TextField(blank=True, default='')
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self) -> str:
+        return (
+            f"DataPrivacyRequest(user_id={self.user_id}, "
+            f"type={self.request_type}, status={self.status})"
+        )
+
+
 class NotificationPreference(models.Model):
     """Preferências de notificações do usuário."""
 

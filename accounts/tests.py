@@ -13,15 +13,31 @@ from rest_framework.test import APIClient
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from annotations.models import Annotation
 from caselaw.models import CaseLaw
-from community.models import Category, ModerationConfig, Post as CommunityPost, PostFollow, UserModerationStatus
+from community.models import (
+    Category,
+    Comment as CommunityComment,
+    ModerationConfig,
+    Post as CommunityPost,
+    PostFollow,
+    Report,
+    UserModerationStatus,
+)
 from courses.models import CourseAsset, CoursePost, LiveEvent, PublicationStatus
 
-from .models import NotificationDispatch, NotificationEvent, NotificationPreference, Profile, PushDevice
+from .models import (
+    DataPrivacyRequest,
+    NotificationDispatch,
+    NotificationEvent,
+    NotificationPreference,
+    Profile,
+    PushDevice,
+)
 from .services import dispatch_pending_push_notifications
 from .signals import cleanup_legacy_user_token_rows
 from entitlements.models import Entitlement, Subscription
-from library.models import Book
+from library.models import Book, BookChapter, BookVersion
 
 User = get_user_model()
 
@@ -303,6 +319,245 @@ class AccountsAPITests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['email'], 'user@example.com')
+
+    def test_me_data_export_returns_profile_subscription_annotations_and_activity(self):
+        user = User.objects.create_user(
+            username='export@example.com',
+            email='export@example.com',
+            password='StrongPass123',
+        )
+        profile, _ = Profile.objects.get_or_create(user=user)
+        profile.full_name = 'Usuário Exportação'
+        profile.profession = 'Advogado'
+        profile.save()
+
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        book = Book.objects.create(title='Livro de Exportação', status=Book.Status.PUBLISHED)
+        book_version = BookVersion.objects.create(
+            book=book,
+            version='2026.01',
+            status=BookVersion.Status.PUBLISHED,
+        )
+        chapter = BookChapter.objects.create(
+            book_version=book_version,
+            order=1,
+            title='Capítulo LGPD',
+            slug='cap-lgpd',
+            content_rich='<p>Conteúdo</p>',
+        )
+        Annotation.objects.create(
+            user=user,
+            book_version=book_version,
+            chapter=chapter,
+            selector={'type': 'range'},
+            start_offset=0,
+            end_offset=8,
+            excerpt='Conteúdo',
+            note='Minha nota',
+            color='yellow',
+        )
+
+        subscription = Subscription.objects.create(
+            user=user,
+            tier=Subscription.Tier.PROFESSIONAL,
+            status=Subscription.Status.ACTIVE,
+            source='test',
+        )
+        Entitlement.objects.create(
+            user=user,
+            product=Entitlement.Product.SUBSCRIPTION,
+            subscription=subscription,
+            status=Entitlement.Status.ACTIVE,
+            source='test',
+        )
+
+        category = Category.objects.create(name='LGPD', slug='lgpd')
+        post = CommunityPost.objects.create(
+            author=user,
+            category=category,
+            title='Post LGPD',
+            body='Conteúdo do post',
+        )
+        comment = CommunityComment.objects.create(
+            post=post,
+            author=user,
+            body='Comentário relevante',
+        )
+        Report.objects.create(
+            reporter=user,
+            post=post,
+            reason='Denúncia de teste',
+        )
+
+        response = self.client.get(reverse('me-data-export'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['profile']['email'], 'export@example.com')
+        self.assertEqual(response.data['profile']['full_name'], 'Usuário Exportação')
+        self.assertEqual(response.data['subscription']['tier'], Subscription.Tier.PROFESSIONAL)
+        self.assertEqual(len(response.data['entitlements']), 1)
+        self.assertEqual(len(response.data['annotations']), 1)
+        self.assertEqual(response.data['annotations'][0]['note'], 'Minha nota')
+        self.assertEqual(len(response.data['activity']['community_posts']), 1)
+        self.assertEqual(len(response.data['activity']['community_comments']), 1)
+        self.assertEqual(len(response.data['activity']['community_reports']), 1)
+        self.assertIn('retention_policy', response.data)
+        self.assertIn('community', response.data['retention_policy'])
+        self.assertTrue(
+            DataPrivacyRequest.objects.filter(
+                user=user,
+                request_type=DataPrivacyRequest.RequestType.EXPORT,
+                status=DataPrivacyRequest.Status.COMPLETED,
+            ).exists()
+        )
+
+    def test_me_data_erasure_requires_explicit_confirmation(self):
+        user = User.objects.create_user(
+            username='erase-confirm@example.com',
+            email='erase-confirm@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.post(
+            reverse('me-data-erasure'),
+            {'confirmation': 'no'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['required_confirmation'], 'DELETE')
+        user.refresh_from_db()
+        self.assertTrue(user.is_active)
+        self.assertFalse(
+            DataPrivacyRequest.objects.filter(
+                user=user,
+                request_type=DataPrivacyRequest.RequestType.ERASURE,
+            ).exists()
+        )
+
+    def test_me_data_erasure_anonymizes_account_and_keeps_community_retention_trail(self):
+        user = User.objects.create_user(
+            username='erase@example.com',
+            email='erase@example.com',
+            password='StrongPass123',
+        )
+        profile, _ = Profile.objects.get_or_create(user=user)
+        profile.full_name = 'Usuário a remover'
+        profile.profession = 'Profissional'
+        profile.save()
+        NotificationPreference.objects.create(user=user)
+        device = PushDevice.objects.create(
+            user=user,
+            platform=PushDevice.Platform.ANDROID,
+            expo_push_token='ExponentPushToken[lgpd-erasure]',
+        )
+
+        book = Book.objects.create(title='Livro remoção', status=Book.Status.PUBLISHED)
+        book_version = BookVersion.objects.create(
+            book=book,
+            version='2026.02',
+            status=BookVersion.Status.PUBLISHED,
+        )
+        chapter = BookChapter.objects.create(
+            book_version=book_version,
+            order=1,
+            title='Capítulo remoção',
+            slug='cap-remocao',
+            content_rich='<p>Texto</p>',
+        )
+        Annotation.objects.create(
+            user=user,
+            book_version=book_version,
+            chapter=chapter,
+            selector={'type': 'range'},
+            start_offset=0,
+            end_offset=5,
+            excerpt='Texto',
+            note='Nota para apagar',
+        )
+
+        subscription = Subscription.objects.create(
+            user=user,
+            tier=Subscription.Tier.ESSENTIAL,
+            status=Subscription.Status.ACTIVE,
+            source='test',
+        )
+        entitlement = Entitlement.objects.create(
+            user=user,
+            product=Entitlement.Product.SUBSCRIPTION,
+            subscription=subscription,
+            status=Entitlement.Status.ACTIVE,
+            source='test',
+        )
+
+        category = Category.objects.create(name='Retenção', slug='retencao')
+        post = CommunityPost.objects.create(
+            author=user,
+            category=category,
+            title='Post preservado',
+            body='Conteúdo a reter',
+        )
+        CommunityComment.objects.create(
+            post=post,
+            author=user,
+            body='Comentário preservado',
+        )
+        Report.objects.create(
+            reporter=user,
+            post=post,
+            reason='Denúncia preservada',
+        )
+
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.post(
+            reverse('me-data-erasure'),
+            {'confirmation': 'DELETE', 'reason': 'Solicitação LGPD de teste'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.data['status'], DataPrivacyRequest.Status.COMPLETED)
+        self.assertIn('retention_policy', response.data)
+
+        user.refresh_from_db()
+        profile.refresh_from_db()
+        subscription.refresh_from_db()
+        entitlement.refresh_from_db()
+
+        self.assertFalse(user.is_active)
+        self.assertTrue(user.username.startswith(f'deleted-user-{user.id}-'))
+        self.assertTrue(user.email.startswith(f'deleted+{user.id}-'))
+        self.assertEqual(profile.full_name, 'Conta anonimizada')
+        self.assertEqual(profile.profession, '')
+        self.assertEqual(subscription.status, Subscription.Status.INACTIVE)
+        self.assertEqual(entitlement.status, Entitlement.Status.REVOKED)
+        device.refresh_from_db()
+        self.assertFalse(device.is_active)
+        self.assertEqual(Annotation.objects.filter(user=user).count(), 0)
+        self.assertEqual(CommunityPost.objects.filter(author=user).count(), 1)
+        self.assertEqual(CommunityComment.objects.filter(author=user).count(), 1)
+        self.assertEqual(Report.objects.filter(reporter=user).count(), 1)
+
+        preference = NotificationPreference.objects.get(user=user)
+        self.assertFalse(preference.notifications_enabled)
+        self.assertFalse(preference.book_version_updates_enabled)
+        self.assertFalse(preference.new_content_updates_enabled)
+        self.assertFalse(preference.community_interaction_updates_enabled)
+        self.assertFalse(preference.push_enabled)
+
+        privacy_request = DataPrivacyRequest.objects.get(pk=response.data['request_id'])
+        self.assertEqual(privacy_request.request_type, DataPrivacyRequest.RequestType.ERASURE)
+        self.assertEqual(privacy_request.status, DataPrivacyRequest.Status.COMPLETED)
+        self.assertIn('moderação', privacy_request.retention_policy)
+        self.assertEqual(privacy_request.payload['actions']['community_posts_retained_total'], 1)
+        self.assertEqual(privacy_request.payload['actions']['community_comments_retained_total'], 1)
+        self.assertEqual(privacy_request.payload['actions']['community_reports_retained_total'], 1)
 
     def test_me_notification_preferences_get_creates_defaults(self):
         user = User.objects.create_user(
@@ -1326,7 +1581,7 @@ class AccountsAdminTests(TestCase):
         )
         self.client.force_login(self.admin_user)
 
-    def test_notification_models_are_registered_in_admin(self):
+    def test_notification_and_privacy_models_are_registered_in_admin(self):
         preference_user = User.objects.create_user(
             username='pref-admin@example.com',
             email='pref-admin@example.com',
@@ -1349,20 +1604,31 @@ class AccountsAdminTests(TestCase):
             platform=PushDevice.Platform.ANDROID,
             expo_push_token='ExponentPushToken[admin-check-device]',
         )
+        DataPrivacyRequest.objects.create(
+            user=preference_user,
+            request_type=DataPrivacyRequest.RequestType.ERASURE,
+            status=DataPrivacyRequest.Status.COMPLETED,
+            retention_policy='Retenção de comunidade e reports para moderação.',
+            payload={'source': 'test'},
+            processed_at=timezone.now(),
+        )
 
         preference_response = self.client.get(reverse('admin:accounts_notificationpreference_changelist'))
         event_response = self.client.get(reverse('admin:accounts_notificationevent_changelist'))
         dispatch_response = self.client.get(reverse('admin:accounts_notificationdispatch_changelist'))
         push_device_response = self.client.get(reverse('admin:accounts_pushdevice_changelist'))
+        privacy_response = self.client.get(reverse('admin:accounts_dataprivacyrequest_changelist'))
 
         self.assertEqual(preference_response.status_code, 200)
         self.assertEqual(event_response.status_code, 200)
         self.assertEqual(dispatch_response.status_code, 200)
         self.assertEqual(push_device_response.status_code, 200)
+        self.assertEqual(privacy_response.status_code, 200)
         self.assertContains(preference_response, 'community_interaction_updates_enabled')
         self.assertContains(event_response, 'course-post-published:admin-check')
         self.assertContains(dispatch_response, 'course-post-published:admin-check')
         self.assertContains(push_device_response, 'pref-admin@example.com')
+        self.assertContains(privacy_response, 'Retenção de comunidade e reports para moderação.')
 
 
 class HealthAndReadinessTests(TestCase):

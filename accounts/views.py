@@ -22,6 +22,7 @@ from .serializers import (
     PushDeviceUnregisterSerializer,
     RegisterSerializer,
 )
+from .services import create_user_data_export_package, request_user_data_erasure
 from .roles import get_user_role
 from community.services import (
     get_banned_login_message,
@@ -155,6 +156,37 @@ class MeView(APIView):
         profile, _ = Profile.objects.get_or_create(user=user)
 
         return Response(_serialize_user_payload(user, profile))
+
+
+class MeDataExportView(APIView):
+    """Exporta os dados do usuário autenticado em um pacote JSON."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        export_payload = create_user_data_export_package(user=request.user)
+        return Response(export_payload, status=status.HTTP_200_OK)
+
+
+class MeDataErasureRequestView(APIView):
+    """Inicia solicitação de exclusão com soft-delete e anonimização da conta."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        confirmation = (request.data.get('confirmation') or '').strip().upper()
+        if confirmation != 'DELETE':
+            return Response(
+                {
+                    'detail': 'Confirmação inválida. Envie confirmation="DELETE".',
+                    'required_confirmation': 'DELETE',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        reason = (request.data.get('reason') or '').strip()
+        result = request_user_data_erasure(user=request.user, reason=reason)
+        return Response(result, status=status.HTTP_202_ACCEPTED)
 
 
 class MeEntitlementsView(APIView):
