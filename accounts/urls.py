@@ -2,6 +2,8 @@ from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from .views import (
+    MeDataErasureRequestView,
+    MeDataExportView,
     LoginView,
     LogoutView,
     MeNotificationAcknowledgeView,
@@ -23,6 +25,8 @@ urlpatterns = [
     path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
 
     path('me/', MeView.as_view(), name='me'),
+    path('me/data-export/', MeDataExportView.as_view(), name='me-data-export'),
+    path('me/data-erasure/', MeDataErasureRequestView.as_view(), name='me-data-erasure'),
     path('me/entitlements/', MeEntitlementsView.as_view(), name='me-entitlements'),
     path('me/notifications/', MeNotificationsView.as_view(), name='me-notifications'),
     path('me/notifications/<int:dispatch_id>/ack/', MeNotificationAcknowledgeView.as_view(), name='me-notification-ack'),

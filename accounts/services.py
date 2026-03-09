@@ -8,15 +8,307 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from entitlements.models import Subscription
+from annotations.models import Annotation
+from community.models import Comment as CommunityComment
+from community.models import Post as CommunityPost
+from community.models import Report
+from entitlements.models import Entitlement, Subscription
 
-from .models import NotificationDispatch, NotificationEvent, NotificationPreference, PushDevice
+from .models import (
+    DataPrivacyRequest,
+    NotificationDispatch,
+    NotificationEvent,
+    NotificationPreference,
+    Profile,
+    PushDevice,
+)
 
 
 logger = logging.getLogger('livro_vivo.notifications')
+
+COMMUNITY_RETENTION_POLICY = (
+    'Posts, comentários e denúncias da comunidade são preservados por requisito de moderação e '
+    'integridade operacional. A identificação pessoal fica reduzida à conta anonimizada.'
+)
+
+
+def _serialize_profile_for_export(*, user, profile: Profile) -> dict:
+    return {
+        'id': user.id,
+        'email': user.email,
+        'username': user.username,
+        'is_active': user.is_active,
+        'full_name': profile.full_name,
+        'profession': profile.profession,
+        'role': profile.role,
+    }
+
+
+def _serialize_subscription_for_export(subscription: Subscription | None) -> dict | None:
+    if subscription is None:
+        return None
+    return {
+        'id': subscription.id,
+        'tier': subscription.tier,
+        'status': subscription.status,
+        'is_founder': subscription.is_founder,
+        'started_at': subscription.started_at,
+        'expires_at': subscription.expires_at,
+        'source': subscription.source,
+        'created_at': subscription.created_at,
+        'updated_at': subscription.updated_at,
+    }
+
+
+def create_user_data_export_package(*, user) -> dict:
+    profile, _ = Profile.objects.get_or_create(user=user)
+    notification_preference, _ = NotificationPreference.objects.get_or_create(user=user)
+
+    subscriptions = list(
+        Subscription.objects.filter(user=user)
+        .order_by('-updated_at', '-created_at')
+    )
+    entitlements = list(
+        Entitlement.objects.filter(user=user)
+        .select_related('book', 'subscription')
+        .order_by('-created_at')
+    )
+    annotations = list(
+        Annotation.objects.filter(user=user)
+        .select_related('book_version__book', 'chapter')
+        .order_by('-updated_at', '-created_at')
+    )
+    community_posts = list(
+        CommunityPost.objects.filter(author=user)
+        .select_related('category')
+        .order_by('-created_at')
+    )
+    community_comments = list(
+        CommunityComment.objects.filter(author=user)
+        .order_by('-created_at')
+    )
+    community_reports = list(
+        Report.objects.filter(reporter=user)
+        .order_by('-created_at')
+    )
+
+    export_payload = {
+        'generated_at': timezone.now(),
+        'profile': _serialize_profile_for_export(user=user, profile=profile),
+        'subscription': _serialize_subscription_for_export(subscriptions[0] if subscriptions else None),
+        'subscriptions': [_serialize_subscription_for_export(item) for item in subscriptions],
+        'entitlements': [
+            {
+                'id': entitlement.id,
+                'product': entitlement.product,
+                'status': entitlement.status,
+                'book_id': entitlement.book_id,
+                'book_title': entitlement.book.title if entitlement.book_id else '',
+                'subscription_id': entitlement.subscription_id,
+                'expires_at': entitlement.expires_at,
+                'source': entitlement.source,
+                'created_at': entitlement.created_at,
+                'updated_at': entitlement.updated_at,
+            }
+            for entitlement in entitlements
+        ],
+        'annotations': [
+            {
+                'id': annotation.id,
+                'book_id': annotation.book_version.book_id,
+                'book_title': annotation.book_version.book.title,
+                'book_version_id': annotation.book_version_id,
+                'book_version': annotation.book_version.version,
+                'chapter_id': annotation.chapter_id,
+                'chapter_title': annotation.chapter.title,
+                'selector': annotation.selector,
+                'start_offset': annotation.start_offset,
+                'end_offset': annotation.end_offset,
+                'excerpt': annotation.excerpt,
+                'note': annotation.note,
+                'color': annotation.color,
+                'created_at': annotation.created_at,
+                'updated_at': annotation.updated_at,
+            }
+            for annotation in annotations
+        ],
+        'activity': {
+            'community_posts': [
+                {
+                    'id': post.id,
+                    'title': post.title,
+                    'category': post.category.slug if post.category_id else '',
+                    'moderation_state': post.moderation_state,
+                    'created_at': post.created_at,
+                    'updated_at': post.updated_at,
+                }
+                for post in community_posts
+            ],
+            'community_comments': [
+                {
+                    'id': comment.id,
+                    'post_id': comment.post_id,
+                    'moderation_state': comment.moderation_state,
+                    'created_at': comment.created_at,
+                    'updated_at': comment.updated_at,
+                }
+                for comment in community_comments
+            ],
+            'community_reports': [
+                {
+                    'id': report.id,
+                    'post_id': report.post_id,
+                    'comment_id': report.comment_id,
+                    'reason': report.reason,
+                    'status': report.status,
+                    'priority': report.priority,
+                    'decision': report.decision,
+                    'created_at': report.created_at,
+                    'updated_at': report.updated_at,
+                }
+                for report in community_reports
+            ],
+        },
+        'notification_preferences': {
+            'notifications_enabled': notification_preference.notifications_enabled,
+            'book_version_updates_enabled': notification_preference.book_version_updates_enabled,
+            'new_content_updates_enabled': notification_preference.new_content_updates_enabled,
+            'community_interaction_updates_enabled': notification_preference.community_interaction_updates_enabled,
+            'push_enabled': notification_preference.push_enabled,
+            'updated_at': notification_preference.updated_at,
+        },
+        'retention_policy': {
+            'community': COMMUNITY_RETENTION_POLICY,
+        },
+    }
+
+    DataPrivacyRequest.objects.create(
+        user=user,
+        request_type=DataPrivacyRequest.RequestType.EXPORT,
+        status=DataPrivacyRequest.Status.COMPLETED,
+        retention_policy=COMMUNITY_RETENTION_POLICY,
+        payload={
+            'summary': {
+                'subscriptions': len(subscriptions),
+                'entitlements': len(entitlements),
+                'annotations': len(annotations),
+                'community_posts': len(community_posts),
+                'community_comments': len(community_comments),
+                'community_reports': len(community_reports),
+            }
+        },
+        processed_at=timezone.now(),
+    )
+
+    return export_payload
+
+
+def request_user_data_erasure(*, user, reason: str = '') -> dict:
+    now = timezone.now()
+
+    with transaction.atomic():
+        privacy_request = DataPrivacyRequest.objects.create(
+            user=user,
+            request_type=DataPrivacyRequest.RequestType.ERASURE,
+            status=DataPrivacyRequest.Status.REQUESTED,
+            retention_policy=COMMUNITY_RETENTION_POLICY,
+            payload={'reason': (reason or '').strip()},
+        )
+
+        profile, _ = Profile.objects.get_or_create(user=user)
+        notification_preferences, _ = NotificationPreference.objects.get_or_create(user=user)
+
+        deleted_annotations, _ = Annotation.objects.filter(user=user).delete()
+        deactivated_push_devices = PushDevice.objects.filter(user=user, is_active=True).update(
+            is_active=False,
+            disabled_reason='lgpd_erasure_request',
+        )
+        revoked_entitlements = Entitlement.objects.filter(
+            user=user,
+            status=Entitlement.Status.ACTIVE,
+        ).update(
+            status=Entitlement.Status.REVOKED,
+            expires_at=now,
+            updated_at=now,
+        )
+        deactivated_subscriptions = Subscription.objects.filter(
+            user=user,
+            status=Subscription.Status.ACTIVE,
+        ).update(
+            status=Subscription.Status.INACTIVE,
+            expires_at=now,
+            updated_at=now,
+        )
+
+        notification_preferences.notifications_enabled = False
+        notification_preferences.book_version_updates_enabled = False
+        notification_preferences.new_content_updates_enabled = False
+        notification_preferences.community_interaction_updates_enabled = False
+        notification_preferences.push_enabled = False
+        notification_preferences.save(
+            update_fields=[
+                'notifications_enabled',
+                'book_version_updates_enabled',
+                'new_content_updates_enabled',
+                'community_interaction_updates_enabled',
+                'push_enabled',
+                'updated_at',
+            ]
+        )
+
+        anonymized_suffix = now.strftime('%Y%m%d%H%M%S')
+        user.username = f'deleted-user-{user.pk}-{anonymized_suffix}'
+        user.email = f'deleted+{user.pk}-{anonymized_suffix}@anon.livrovivo.local'
+        user.first_name = ''
+        user.last_name = ''
+        user.is_active = False
+        user.is_staff = False
+        user.is_superuser = False
+        user.set_unusable_password()
+        user.save(
+            update_fields=[
+                'username',
+                'email',
+                'first_name',
+                'last_name',
+                'is_active',
+                'is_staff',
+                'is_superuser',
+                'password',
+            ]
+        )
+
+        profile.full_name = 'Conta anonimizada'
+        profile.profession = ''
+        profile.role = Profile.Role.MEMBER
+        profile.save(update_fields=['full_name', 'profession', 'role'])
+
+        privacy_request.status = DataPrivacyRequest.Status.COMPLETED
+        privacy_request.processed_at = now
+        privacy_request.payload = {
+            'reason': (reason or '').strip(),
+            'actions': {
+                'annotations_deleted_total': deleted_annotations,
+                'push_devices_deactivated_total': deactivated_push_devices,
+                'entitlements_revoked_total': revoked_entitlements,
+                'subscriptions_deactivated_total': deactivated_subscriptions,
+                'community_posts_retained_total': CommunityPost.objects.filter(author=user).count(),
+                'community_comments_retained_total': CommunityComment.objects.filter(author=user).count(),
+                'community_reports_retained_total': Report.objects.filter(reporter=user).count(),
+            },
+        }
+        privacy_request.save(update_fields=['status', 'processed_at', 'payload'])
+
+    return {
+        'request_id': privacy_request.id,
+        'status': privacy_request.status,
+        'processed_at': privacy_request.processed_at,
+        'retention_policy': COMMUNITY_RETENTION_POLICY,
+    }
 
 
 def get_active_subscription_user_ids(*, tiers: Iterable[str] | None = None) -> list[int]:
