@@ -1,12 +1,15 @@
 from datetime import timedelta
+from unittest import mock
 
 from django.contrib.admin.sites import site
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from rest_framework.test import APIClient
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from entitlements.models import Subscription
@@ -259,6 +262,17 @@ class CoursesApiTests(TestCase):
         res = self.client.get('/courses/posts/', {'date_from': '31-12-2026'})
         self.assertEqual(res.status_code, 400)
         self.assertIn('date_from', res.data)
+
+    def test_courses_endpoints_are_throttled(self):
+        cache.clear()
+        self._auth(self.professional_token)
+
+        with mock.patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {'courses_api': '1/min'}):
+            first = self.client.get('/courses/posts/')
+            second = self.client.get('/courses/posts/')
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 429)
 
 
 class CoursesAdminTests(TestCase):

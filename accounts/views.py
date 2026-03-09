@@ -245,6 +245,8 @@ class MeNotificationPreferencesView(APIView):
     """Leitura/atualização das preferências de notificação do usuário."""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'notifications_sensitive'
 
     @staticmethod
     def _get_preferences(user):
@@ -268,6 +270,8 @@ class MeNotificationsView(APIView):
     """Lista notificações do usuário para banner/inbox no app."""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'notifications_sensitive'
 
     def get(self, request):
         channel_filter = (request.query_params.get('channel') or '').strip().lower()
@@ -314,6 +318,8 @@ class MeNotificationAcknowledgeView(APIView):
     """Marca uma notificação como consumida pelo usuário."""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'notifications_sensitive'
 
     def post(self, request, dispatch_id: int):
         try:
@@ -341,6 +347,8 @@ class MeInAppNotificationConsumeLatestView(APIView):
     """Entrega só o último banner pendente e colapsa o backlog mais antigo."""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'notifications_sensitive'
 
     def post(self, request):
         dispatch = (
@@ -376,6 +384,8 @@ class MePushDevicesView(APIView):
     """Registro e desativação de dispositivos para push via Expo."""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'notifications_sensitive'
 
     def get(self, request):
         devices = PushDevice.objects.filter(user=request.user).order_by('-last_seen_at')

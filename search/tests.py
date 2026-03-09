@@ -163,6 +163,29 @@ class GlobalSearchApiTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn('caselaw', {row['type'] for row in response.data['results']})
 
+    def test_global_search_allows_staff_without_subscription(self):
+        staff = User.objects.create_superuser(
+            username='searchstaff',
+            email='searchstaff@example.com',
+            password='StrongPass123',
+        )
+        self.client.force_authenticate(user=staff)
+
+        CaseLaw.objects.create(
+            court='STF',
+            case_number='ARE 3333/SP',
+            decision_date=timezone.now().date(),
+            ementa_rich='<p>Tema de bagagem para staff.</p>',
+            url='https://example.com/caselaw/staff',
+            anchors=['fundamentos'],
+            tags=['bagagem'],
+        )
+
+        response = self.client.get(reverse('global-search'), {'q': 'bagagem'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('caselaw', {row['type'] for row in response.data['results']})
+
     def test_global_search_is_throttled(self):
         cache.clear()
         user = self._create_user('throttle-search@example.com')

@@ -198,7 +198,10 @@ REST_FRAMEWORK = {
         'auth_register': '5/min',
         'auth_login': '10/min',
         'library_search': '60/min',
-        'global_search': '60/min',
+        'global_search': '45/min',
+        'courses_api': '90/min',
+        'templates_bank_api': '90/min',
+        'notifications_sensitive': '60/min',
         'community_api': '120/min',
     },
 }

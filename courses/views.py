@@ -3,6 +3,7 @@ from django.utils.dateparse import parse_date
 from rest_framework import filters, viewsets
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from rest_framework.throttling import ScopedRateThrottle
 
 from .models import CourseAsset, CoursePost, LiveEvent, PublicationStatus
 from .permissions import IsProfessionalSubscriberOrStaff
@@ -24,6 +25,8 @@ class ProfessionalReadStaffWriteViewSet(viewsets.ModelViewSet):
     - list/retrieve: profissional (ou staff)
     - create/update/delete: apenas staff
     """
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'courses_api'
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
