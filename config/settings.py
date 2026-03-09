@@ -97,6 +97,7 @@ INSTALLED_APPS = [
     'courses',
     'entitlements',
     'library',
+    'search',
     'templates_bank',
 ]
 
@@ -197,6 +198,7 @@ REST_FRAMEWORK = {
         'auth_register': '5/min',
         'auth_login': '10/min',
         'library_search': '60/min',
+        'global_search': '60/min',
         'community_api': '120/min',
     },
 }
