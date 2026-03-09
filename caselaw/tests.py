@@ -1,8 +1,10 @@
 from datetime import date
 
+from django.contrib.admin.sites import site
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.test import Client, TestCase
+from django.urls import reverse
 
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -144,3 +146,36 @@ class CaseLawApiTests(TestCase):
         self.assertIn('anchors', resp.data)
         self.assertNotIn('summary', resp.data)
         self.assertNotIn('relevance', resp.data)
+
+
+class CaseLawAdminTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        user_model = get_user_model()
+        self.admin_user = user_model.objects.create_superuser(
+            username='admin@example.com',
+            email='admin@example.com',
+            password='StrongPass123',
+        )
+        self.client.force_login(self.admin_user)
+        self.caselaw = CaseLaw.objects.create(
+            court='STJ',
+            case_number='REsp 999/DF',
+            decision_date=date(2026, 3, 1),
+            ementa_rich='<p>Ementa com <strong>formatação</strong>.</p>',
+            url='https://example.com/caselaw/999',
+            tags=['bagagem'],
+            anchors=[{'label': 'Fundamentos'}],
+        )
+
+    def test_model_registered_in_admin(self):
+        self.assertIn(CaseLaw, site._registry)
+
+    def test_change_form_loads_key_fields(self):
+        response = self.client.get(reverse('admin:caselaw_caselaw_change', args=[self.caselaw.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'ementa_rich')
+        self.assertContains(response, 'ementa_plain')
+        self.assertContains(response, 'anchors')
+        self.assertContains(response, 'tags')

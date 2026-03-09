@@ -246,6 +246,16 @@ No admin ja existem fluxos para:
 - status/eventos de moderacao de usuario
 - preferencias, eventos, dispatches e devices de notificacao
 
+Auditoria funcional (A1-01 / UX-A1.1):
+
+- documento: `docs/ADMIN_AUDITORIA_FUNCIONAL_A1-01_2026-03-09.md`
+- conteudo: inventario de telas/fluxos, friccoes por severidade e backlog priorizado para A1-02/A1-03
+
+Norteador UX do Admin para operacao juridica (nao-tech):
+
+- principios: `docs/ADMIN_PRINCIPIOS_UX_OPERACAO_JURIDICA_2026-03-09.md`
+- proposta inicial A1-02: `docs/ADMIN_PROPOSTA_ARQUITETURA_A1-02_2026-03-09.md`
+
 ## Limites conhecidos
 
 - Busca global cross-modulo ainda nao existe; `/search/` hoje e busca de livro.
@@ -264,6 +274,6 @@ Workflow API (`.github/workflows/ci.yml`) executa:
 
 ## Backlog atual
 
-As pendencias pre-deploy estao em:
+As pendencias do ciclo atual estao em:
 
-- `docs/BACKLOG_EXECUTAVEL_2026-02-25.md`
+- `../docs/BACKLOG_EXECUTAVEL_2026-03-09.md`
