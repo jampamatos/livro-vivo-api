@@ -810,6 +810,34 @@ class AccountsAPITests(TestCase):
         self.assertFalse(device.is_active)
         self.assertEqual(device.disabled_reason, 'unregistered_by_user')
 
+    def test_notifications_sensitive_endpoints_are_throttled(self):
+        cache.clear()
+        user = User.objects.create_user(
+            username='notify-throttle@example.com',
+            email='notify-throttle@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        dispatch = NotificationDispatch.objects.create(
+            event=NotificationEvent.objects.create(
+                event_type=NotificationEvent.EventType.CONTENT_PUBLISHED,
+                dedup_key='book-chapter-published:notify-throttle',
+                title='Throttle notification',
+            ),
+            user=user,
+            channel=NotificationDispatch.Channel.IN_APP,
+            status=NotificationDispatch.Status.PENDING,
+        )
+
+        with mock.patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {'notifications_sensitive': '1/min'}):
+            first = self.client.get(reverse('me-notifications'))
+            second = self.client.post(reverse('me-notification-ack', args=[dispatch.id]), {}, format='json')
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 429)
+
     def test_auth_refresh_rotates_and_blacklists_old_refresh(self):
         user = User.objects.create_user(
             username='user@example.com',

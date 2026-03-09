@@ -12,6 +12,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 
 from .models import PublicationStatus, TemplatePiece
 from .permissions import IsProfessionalSubscriberOrStaff
@@ -41,6 +42,8 @@ def _download_token_ttl_seconds() -> int:
 class TemplatePieceViewSet(viewsets.ModelViewSet):
     serializer_class = TemplatePieceSerializer
     queryset = TemplatePiece.objects.all()
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'templates_bank_api'
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ['updated_at', 'created_at', 'published_at', 'template_code', 'version']
     ordering = ['template_code', '-created_at', '-updated_at']

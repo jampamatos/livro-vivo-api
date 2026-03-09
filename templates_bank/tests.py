@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from django.contrib.admin.sites import site
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase, override_settings
@@ -14,6 +15,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from rest_framework.test import APIClient
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from entitlements.models import Subscription
@@ -316,6 +318,17 @@ class TemplatesBankApiTests(TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertTrue(response.data['file_url'].startswith('http://testserver/media/templates_bank/uploads/'))
                 self.assertEqual(response.data['file_name'], 'modelo-upload-api.docx')
+
+    def test_templates_bank_endpoints_are_throttled(self):
+        cache.clear()
+        self._auth(self.professional_token)
+
+        with patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {'templates_bank_api': '1/min'}):
+            first = self.client.get('/templates-bank/templates/')
+            second = self.client.get('/templates-bank/templates/')
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 429)
 
 
 class TemplatesBankAdminTests(TestCase):
