@@ -1,4 +1,6 @@
+from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from .models import NotificationDispatch, NotificationPreference, Profile, PushDevice
@@ -19,6 +21,17 @@ class RegisterSerializer(serializers.Serializer):
         if User.objects.filter(email__iexact=email).exists():
             raise serializers.ValidationError("Email já cadastrado.")
         return email
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        email = (attrs.get('email') or '').strip().lower()
+        password = attrs.get('password') or ''
+        candidate_user = User(username=email, email=email)
+        try:
+            validate_password(password, candidate_user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'password': list(exc.messages)})
+        return attrs
 
     def create(self, validated_data):
         email = validated_data['email']

@@ -2,7 +2,7 @@ from django.contrib.auth import authenticate, get_user_model
 from django.utils import timezone
 
 from rest_framework import status
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -89,23 +89,7 @@ class LoginView(APIView):
         if not email or not password:
             return Response({"detail": "email e password são obrigatórios."}, status=status.HTTP_400_BAD_REQUEST)
 
-        candidate_user = User.objects.filter(email__iexact=email).first()
-        if candidate_user:
-            sync_user_activity_with_moderation(candidate_user)
-            candidate_user.refresh_from_db(fields=['is_active'])
-            message = get_banned_login_message(candidate_user)
-            if message:
-                return Response(
-                    {"detail": message, "code": "account_banned"},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-        if candidate_user and not candidate_user.is_active:
-            return Response(
-                {"detail": "Esta conta está inativa."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        # Djano autentica por username; aqui a gente trata email como username (padrão simples)
+        # Django autentica por username; aqui tratamos email como username.
         user = authenticate(request, username=email, password=password)
 
         if not user:
@@ -116,9 +100,28 @@ class LoginView(APIView):
                 u = None
             if u:
                 user = authenticate(request, username=u.username, password=password)
-        
+
+        if not user:
+            candidate_user = User.objects.filter(email__iexact=email).first()
+            if candidate_user and candidate_user.check_password(password):
+                user = candidate_user
+
         if not user:
             return Response({"detail": "Credenciais inválidas."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        sync_user_activity_with_moderation(user)
+        user.refresh_from_db(fields=['is_active'])
+        message = get_banned_login_message(user)
+        if message:
+            return Response(
+                {"detail": message, "code": "account_banned"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if not user.is_active:
+            return Response(
+                {"detail": "Esta conta está inativa."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         tokens = issue_tokens_for_user(user)
         from community.services import pull_pending_login_notice
@@ -396,8 +399,15 @@ class MePushDevicesView(APIView):
         serializer = PushDeviceRegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        token = serializer.validated_data['expo_push_token']
+        existing_device = PushDevice.objects.filter(expo_push_token=token).first()
+        if existing_device and existing_device.user_id != request.user.id:
+            raise ValidationError(
+                {'expo_push_token': 'Este dispositivo já está vinculado a outra conta.'}
+            )
+
         device, _ = PushDevice.objects.update_or_create(
-            expo_push_token=serializer.validated_data['expo_push_token'],
+            expo_push_token=token,
             defaults={
                 'user': request.user,
                 'platform': serializer.validated_data['platform'],

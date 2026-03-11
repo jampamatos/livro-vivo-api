@@ -25,8 +25,9 @@ class Profile(models.Model):
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
-        if self.role in {self.Role.MODERATOR, self.Role.OWNER} and not self.user.is_staff:
-            self.user.is_staff = True
+        should_be_staff = self.role in {self.Role.MODERATOR, self.Role.OWNER} or self.user.is_superuser
+        if self.user.is_staff != should_be_staff:
+            self.user.is_staff = should_be_staff
             self.user.save(update_fields=['is_staff'])
 
     def __str__(self) -> str:

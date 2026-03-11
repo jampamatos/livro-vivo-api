@@ -4,6 +4,8 @@ from html import unescape
 from django.db import models
 from django.utils.text import slugify
 
+from library.models import sanitize_chapter_html
+
 
 def _to_plain_text(value: str) -> str:
     if not value:
@@ -101,7 +103,7 @@ class CaseLaw(models.Model):
 
     def save(self, *args, **kwargs):
         is_create = self._state.adding
-        self.ementa_rich = self.ementa_rich or ''
+        self.ementa_rich = sanitize_chapter_html(self.ementa_rich or '')
         self.ementa_plain = _to_plain_text(self.ementa_rich)
         self.anchors = _normalize_anchors(self.anchors)
         if not isinstance(self.tags, list):

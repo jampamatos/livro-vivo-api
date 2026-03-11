@@ -1,16 +1,73 @@
 import hashlib
+import ipaddress
 import mimetypes
 import os
 import re
+import socket
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from django.core.exceptions import ValidationError
 
 
 CONTENT_DISPOSITION_FILENAME_RE = re.compile(r'filename="?([^";]+)"?')
+ALLOWED_REMOTE_FILE_SCHEMES = {'http', 'https'}
+
+
+def _is_public_ip(ip_value) -> bool:
+    return not (
+        ip_value.is_private
+        or ip_value.is_loopback
+        or ip_value.is_link_local
+        or ip_value.is_multicast
+        or ip_value.is_reserved
+        or ip_value.is_unspecified
+    )
+
+
+def _validate_remote_file_url(file_url: str) -> None:
+    parsed = urlparse(file_url or '')
+    scheme = (parsed.scheme or '').strip().lower()
+    host = (parsed.hostname or '').strip()
+
+    if scheme not in ALLOWED_REMOTE_FILE_SCHEMES:
+        raise ValidationError('A URL remota deve usar HTTP ou HTTPS.')
+    if not host:
+        raise ValidationError('A URL remota precisa informar um host valido.')
+    if parsed.username or parsed.password:
+        raise ValidationError('A URL remota nao pode conter credenciais embutidas.')
+
+    try:
+        host_ip = ipaddress.ip_address(host)
+    except ValueError:
+        host_ip = None
+
+    if host_ip and not _is_public_ip(host_ip):
+        raise ValidationError('A URL remota aponta para um endereço de rede não permitido.')
+
+    target_port = parsed.port or (443 if scheme == 'https' else 80)
+    try:
+        addr_infos = socket.getaddrinfo(host, target_port, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise ValidationError('Nao foi possivel resolver o host da URL remota.') from exc
+
+    for addr_info in addr_infos:
+        resolved_ip = ipaddress.ip_address(addr_info[4][0])
+        if not _is_public_ip(resolved_ip):
+            raise ValidationError('A URL remota resolve para um endereço de rede não permitido.')
+
+
+class _SafeRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_remote_file_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open_remote_url(request: Request, *, timeout_seconds: int):
+    opener = build_opener(_SafeRedirectHandler())
+    return opener.open(request, timeout=timeout_seconds)
 
 
 @dataclass(frozen=True)
@@ -109,6 +166,7 @@ def fetch_remote_file_metadata(
 ) -> FileMetadata:
     if not file_url:
         raise ValidationError('URL remota invalida.')
+    _validate_remote_file_url(file_url)
 
     request = Request(
         file_url,
@@ -116,7 +174,8 @@ def fetch_remote_file_metadata(
     )
 
     try:
-        with urlopen(request, timeout=timeout_seconds) as response:
+        with _open_remote_url(request, timeout_seconds=timeout_seconds) as response:
+            _validate_remote_file_url(response.geturl())
             headers = response.headers
             content_disposition = headers.get('Content-Disposition', '')
             file_name = (

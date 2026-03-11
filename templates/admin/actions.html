@@ -97,9 +97,9 @@
       modal.className = "lv-sensitive-action-modal";
       modal.setAttribute("hidden", "");
       modal.innerHTML =
-        '<div class="lv-sensitive-action-modal__card" role="dialog" aria-modal="true" aria-labelledby="lv-sensitive-action-modal-title">' +
+        '<div class="lv-sensitive-action-modal__card" role="dialog" aria-modal="true" aria-labelledby="lv-sensitive-action-modal-title" aria-describedby="lv-sensitive-action-modal-message">' +
         '<h3 id="lv-sensitive-action-modal-title">Confirmar ação sensível</h3>' +
-        '<p class="lv-sensitive-action-modal__message"></p>' +
+        '<p id="lv-sensitive-action-modal-message" class="lv-sensitive-action-modal__message"></p>' +
         '<p class="lv-sensitive-action-modal__status" role="status" aria-live="polite" hidden></p>' +
         '<div class="lv-sensitive-action-modal__actions">' +
         '<button type="button" class="button default lv-sensitive-action-modal__confirm">Confirmar</button>' +
@@ -155,9 +155,59 @@
         submitActionButton(actionButton);
       });
 
+      function getModalFocusableElements() {
+        if (!sensitiveModal) {
+          return [];
+        }
+        const card = sensitiveModal.querySelector(".lv-sensitive-action-modal__card");
+        if (!card) {
+          return [];
+        }
+        return Array.from(
+          card.querySelectorAll(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+          )
+        ).filter(function(element) {
+          return (
+            !element.hasAttribute("disabled")
+            && element.getAttribute("aria-hidden") !== "true"
+          );
+        });
+      }
+
       document.addEventListener("keydown", function(event) {
-        if (event.key === "Escape" && sensitiveModal && !sensitiveModal.hasAttribute("hidden")) {
+        if (!sensitiveModal || sensitiveModal.hasAttribute("hidden")) {
+          return;
+        }
+        if (event.key === "Escape") {
           closeSensitiveModal();
+          return;
+        }
+        if (event.key !== "Tab") {
+          return;
+        }
+
+        const focusableElements = getModalFocusableElements();
+        if (!focusableElements.length) {
+          event.preventDefault();
+          return;
+        }
+
+        const first = focusableElements[0];
+        const last = focusableElements[focusableElements.length - 1];
+        const activeElement = document.activeElement;
+
+        if (event.shiftKey) {
+          if (activeElement === first || !sensitiveModal.contains(activeElement)) {
+            event.preventDefault();
+            last.focus();
+          }
+          return;
+        }
+
+        if (activeElement === last) {
+          event.preventDefault();
+          first.focus();
         }
       });
     }

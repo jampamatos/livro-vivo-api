@@ -33,8 +33,8 @@ def readiness(_request):
             cursor.execute('SELECT 1')
             cursor.fetchone()
         checks['database'] = 'ok'
-    except Exception as exc:
-        checks['database'] = f'error: {exc.__class__.__name__}'
+    except Exception:
+        checks['database'] = 'error'
         http_status = 503
 
     try:
@@ -43,8 +43,8 @@ def readiness(_request):
         checks['cache'] = 'ok' if cache.get(cache_key) == 'ok' else 'error'
         if checks['cache'] != 'ok':
             http_status = 503
-    except Exception as exc:
-        checks['cache'] = f'error: {exc.__class__.__name__}'
+    except Exception:
+        checks['cache'] = 'error'
         http_status = 503
 
     return JsonResponse(
