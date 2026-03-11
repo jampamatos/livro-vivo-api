@@ -5,6 +5,14 @@
   background: var(--body-bg);
 }
 
+.lv-version-pipeline--submitting {
+  opacity: 0.96;
+}
+
+.lv-version-pipeline__feedback {
+  margin-bottom: 0.75rem;
+}
+
 .lv-version-pipeline__header {
   display: flex;
   justify-content: flex-end;
@@ -27,6 +35,10 @@
   text-align: left;
   font-size: 0.84rem;
   color: var(--body-medium-color);
+}
+
+.lv-version-pipeline__table td:last-child {
+  min-width: 260px;
 }
 
 .lv-status-badge {
@@ -99,9 +111,22 @@
   color: var(--body-fg);
 }
 
+.lv-version-modal__note {
+  margin: 0.68rem 0 0;
+  color: var(--body-quiet-color);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
 .lv-version-modal__actions {
   margin-top: 0.9rem;
   display: flex;
   gap: 0.5rem;
   justify-content: flex-end;
+}
+
+.lv-version-modal__actions .button:disabled,
+.lv-version-pipeline .button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
 }

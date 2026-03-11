@@ -55,6 +55,7 @@
     });
 
     document.body.appendChild(form);
+    document.body.classList.add("lv-page-loading");
     form.submit();
   }
 
@@ -74,16 +75,94 @@
     const publishMessage = panel.querySelector("#lv-publish-version-message");
     const versionNameInput = panel.querySelector("#lv-new-version-name");
     const changelogInput = panel.querySelector("#lv-new-version-changelog");
+    const feedback = panel.querySelector("#lv-version-feedback");
 
     let pendingPublishUrl = "";
+    let submitting = false;
+
+    function setButtonLoading(button, loading, label) {
+      if (!button) {
+        return;
+      }
+      if (loading) {
+        if (!button.dataset.lvOriginalLabel) {
+          button.dataset.lvOriginalLabel = button.textContent.trim();
+        }
+        button.classList.add("is-loading");
+        button.disabled = true;
+        if (label) {
+          button.textContent = label;
+        }
+        return;
+      }
+
+      button.classList.remove("is-loading");
+      button.disabled = false;
+      if (button.dataset.lvOriginalLabel) {
+        button.textContent = button.dataset.lvOriginalLabel;
+      }
+    }
+
+    function toggleDisabled(elements, disabled) {
+      (elements || []).forEach(function (element) {
+        if (!element) {
+          return;
+        }
+        element.disabled = !!disabled;
+      });
+    }
+
+    function clearFeedback() {
+      if (!feedback) {
+        return;
+      }
+      feedback.hidden = true;
+      feedback.textContent = "";
+      feedback.classList.remove(
+        "lv-feedback-banner--error",
+        "lv-feedback-banner--success",
+        "lv-feedback-banner--info",
+        "lv-feedback-banner--loading"
+      );
+    }
+
+    function setFeedback(kind, message) {
+      if (!feedback) {
+        return;
+      }
+      feedback.hidden = false;
+      feedback.textContent = message || "";
+      feedback.classList.remove(
+        "lv-feedback-banner--error",
+        "lv-feedback-banner--success",
+        "lv-feedback-banner--info",
+        "lv-feedback-banner--loading"
+      );
+      feedback.classList.add("lv-feedback-banner--" + kind);
+    }
+
+    function setSubmittingState(isSubmitting) {
+      submitting = isSubmitting;
+      panel.classList.toggle("lv-version-pipeline--submitting", isSubmitting);
+      toggleDisabled(
+        [addBtn, addCancelBtn, publishCancelBtn, versionNameInput, changelogInput],
+        isSubmitting
+      );
+    }
 
     function closeAddModal() {
+      if (submitting) {
+        return;
+      }
       if (addModal) {
         addModal.hidden = true;
       }
     }
 
     function closePublishModal() {
+      if (submitting) {
+        return;
+      }
       if (publishModal) {
         publishModal.hidden = true;
       }
@@ -92,6 +171,7 @@
 
     if (addBtn && addModal) {
       addBtn.addEventListener("click", function () {
+        clearFeedback();
         addModal.hidden = false;
         if (versionNameInput) {
           versionNameInput.focus();
@@ -105,26 +185,43 @@
 
     if (addConfirmBtn) {
       addConfirmBtn.addEventListener("click", function () {
+        if (submitting) {
+          return;
+        }
         const createUrl = panel.dataset.createUrl;
         const versionName = versionNameInput ? versionNameInput.value.trim() : "";
         const changelog = changelogInput ? changelogInput.value.trim() : "";
         if (!createUrl) {
+          setFeedback("error", "Nao foi possivel identificar a rota para criar a versao.");
           return;
         }
         if (!versionName) {
-          window.alert("Informe o nome da nova versao.");
+          setFeedback("error", "Informe o nome da nova versao.");
+          if (versionNameInput) {
+            versionNameInput.focus();
+          }
           return;
         }
         if (!changelog) {
-          window.alert("Informe o changelog da nova versao.");
+          setFeedback("error", "Informe o changelog da nova versao.");
+          if (changelogInput) {
+            changelogInput.focus();
+          }
           return;
         }
+        setFeedback("loading", "Criando nova versao em rascunho...");
+        setButtonLoading(addConfirmBtn, true, "Criando...");
+        setSubmittingState(true);
         submitPost(createUrl, { version: versionName, changelog: changelog });
       });
     }
 
     panel.querySelectorAll(".lv-publish-version-btn").forEach(function (btn) {
       btn.addEventListener("click", function () {
+        if (submitting) {
+          return;
+        }
+        clearFeedback();
         pendingPublishUrl = btn.dataset.publishUrl || "";
         const versionLabel = btn.dataset.versionLabel || "esta versao";
         if (publishMessage) {
@@ -143,12 +240,43 @@
 
     if (publishConfirmBtn) {
       publishConfirmBtn.addEventListener("click", function () {
-        if (!pendingPublishUrl) {
+        if (submitting || !pendingPublishUrl) {
           return;
         }
+        setFeedback("loading", "Publicando versao e consolidando status...");
+        setButtonLoading(publishConfirmBtn, true, "Publicando...");
+        setSubmittingState(true);
         submitPost(pendingPublishUrl, {});
       });
     }
+
+    if (addModal) {
+      addModal.addEventListener("click", function (event) {
+        if (event.target === addModal) {
+          closeAddModal();
+        }
+      });
+    }
+
+    if (publishModal) {
+      publishModal.addEventListener("click", function (event) {
+        if (event.target === publishModal) {
+          closePublishModal();
+        }
+      });
+    }
+
+    document.addEventListener("keydown", function (event) {
+      if (event.key !== "Escape") {
+        return;
+      }
+      if (addModal && !addModal.hidden) {
+        closeAddModal();
+      }
+      if (publishModal && !publishModal.hidden) {
+        closePublishModal();
+      }
+    });
   }
 
   document.addEventListener("DOMContentLoaded", bootVersionPipeline);

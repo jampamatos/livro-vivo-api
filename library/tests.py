@@ -607,6 +607,7 @@ class LibraryAdminTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Pipeline de versoes')
         self.assertContains(response, 'Adicionar nova versao')
+        self.assertContains(response, 'id="lv-version-feedback"')
         self.assertContains(response, f'data-create-url="{reverse("admin:library_book_create_version", args=[self.book.id])}"')
         self.assertContains(response, f'data-version-label="{draft_version.version}"')
         self.assertContains(response, reverse('admin:library_book_publish_version', args=[self.book.id, draft_version.id]))
@@ -762,6 +763,7 @@ class LibraryAdminTests(TestCase):
         self.assertContains(response, 'data-lv-confirm-message="Tem certeza que deseja publicar os itens selecionados?"')
         self.assertContains(response, 'Confirmar ação sensível')
         self.assertContains(response, 'lv-sensitive-action-modal__card')
+        self.assertContains(response, 'lv-sensitive-action-modal__status')
         self.assertNotContains(response, 'Confirmo ação sensível')
 
     def test_book_version_admin_action_creates_preloaded_version_with_chapters(self):

@@ -435,13 +435,17 @@ class PostAdmin(admin.ModelAdmin):
 
     def open_reports(self, obj: Post):
         return getattr(obj, "_open_reports", 0)
-    open_reports.short_description = "Reports (open)"
+    open_reports.short_description = "Denuncias abertas"
     open_reports.admin_order_field = "_open_reports"
 
     @admin.display(description="Comentarios")
     def comments_panel(self, obj: Post):
         if not obj or not obj.pk:
-            return "Salve o post para gerenciar comentarios."
+            return format_html(
+                '<div class="lv-empty-state">'
+                '<p class="lv-empty-state__title">Salve o post para gerenciar comentarios.</p>'
+                '</div>'
+            )
 
         comments = (
             obj.comments.select_related("author")
@@ -453,8 +457,11 @@ class PostAdmin(admin.ModelAdmin):
 
         if not comments.exists():
             return format_html(
-                "<p>Este post ainda nao possui comentarios.</p>"
-                '<p><a class="button" href="{}">Adicionar comentario</a></p>',
+                '<div class="lv-empty-state">'
+                '<p class="lv-empty-state__title">Este post ainda nao possui comentarios.</p>'
+                '<p class="lv-empty-state__text">Use o botao abaixo para criar o primeiro comentario.</p>'
+                "</div>"
+                '<div class="lv-inline-actions"><a class="button" href="{}">Adicionar comentario</a></div>',
                 add_comment_url,
             )
 
@@ -475,7 +482,7 @@ class PostAdmin(admin.ModelAdmin):
             )
 
         return format_html(
-            '<p><a class="button" href="{}">Ver lista completa de comentarios</a></p>'
+            '<div class="lv-inline-actions"><a class="button" href="{}">Ver lista completa de comentarios</a></div>'
             '<table class="admin-comments-panel">'
             "<thead>"
             "<tr>"
@@ -618,7 +625,7 @@ class CommentAdmin(admin.ModelAdmin):
 
     def open_reports(self, obj: Comment):
         return getattr(obj, "_open_reports", 0)
-    open_reports.short_description = "Reports (open)"
+    open_reports.short_description = "Denuncias abertas"
     open_reports.admin_order_field = "_open_reports"
 
     @admin.display(description="Comentario")
@@ -758,13 +765,19 @@ class CategoryAdmin(admin.ModelAdmin):
     @admin.display(description="Acoes")
     def posts_panel_links(self, obj: Category):
         if not obj or not obj.pk:
-            return "Salve a categoria para acessar os posts."
+            return format_html(
+                '<div class="lv-empty-state">'
+                '<p class="lv-empty-state__title">Salve a categoria para acessar os posts.</p>'
+                '</div>'
+            )
 
         posts_url = f"{reverse('admin:community_post_changelist')}?category__id__exact={obj.id}"
         add_post_url = f"{reverse('admin:community_post_add')}?category={obj.id}"
         return format_html(
+            '<div class="lv-inline-actions">'
             '<a class="button" href="{}">Abrir posts da categoria</a> '
-            '<a class="button" href="{}">Criar novo post</a>',
+            '<a class="button" href="{}">Criar novo post</a>'
+            '</div>',
             posts_url,
             add_post_url,
         )

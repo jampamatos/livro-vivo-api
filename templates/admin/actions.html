@@ -83,6 +83,7 @@
     window.__lvBulkActionsButtonsInitialized = true;
     let sensitiveModal = null;
     let sensitiveModalMessage = null;
+    let sensitiveModalStatus = null;
     let sensitiveModalConfirmBtn = null;
     let sensitiveModalCancelBtn = null;
     let pendingSensitiveButton = null;
@@ -99,6 +100,7 @@
         '<div class="lv-sensitive-action-modal__card" role="dialog" aria-modal="true" aria-labelledby="lv-sensitive-action-modal-title">' +
         '<h3 id="lv-sensitive-action-modal-title">Confirmar ação sensível</h3>' +
         '<p class="lv-sensitive-action-modal__message"></p>' +
+        '<p class="lv-sensitive-action-modal__status" role="status" aria-live="polite" hidden></p>' +
         '<div class="lv-sensitive-action-modal__actions">' +
         '<button type="button" class="button default lv-sensitive-action-modal__confirm">Confirmar</button>' +
         '<button type="button" class="button lv-sensitive-action-modal__cancel">Cancelar</button>' +
@@ -109,6 +111,7 @@
 
       sensitiveModal = modal;
       sensitiveModalMessage = modal.querySelector(".lv-sensitive-action-modal__message");
+      sensitiveModalStatus = modal.querySelector(".lv-sensitive-action-modal__status");
       sensitiveModalConfirmBtn = modal.querySelector(".lv-sensitive-action-modal__confirm");
       sensitiveModalCancelBtn = modal.querySelector(".lv-sensitive-action-modal__cancel");
 
@@ -125,6 +128,14 @@
           closeSensitiveModal({ restoreFocus: false });
           return;
         }
+        setButtonLoading(sensitiveModalConfirmBtn, true, "Executando...");
+        if (sensitiveModalCancelBtn) {
+          sensitiveModalCancelBtn.disabled = true;
+        }
+        if (sensitiveModalStatus) {
+          sensitiveModalStatus.hidden = false;
+          sensitiveModalStatus.textContent = "Executando ação, aguarde...";
+        }
 
         const actionButton = pendingSensitiveButton;
         const actionsContainer = actionButton.closest(".actions");
@@ -140,6 +151,7 @@
         }
 
         closeSensitiveModal({ restoreFocus: false });
+        setButtonLoading(actionButton, true, "Executando...");
         submitActionButton(actionButton);
       });
 
@@ -155,6 +167,14 @@
       pendingSensitiveButton = button;
       sensitiveModalMessage.textContent =
         message || "Tem certeza que deseja executar esta ação nos itens selecionados?";
+      if (sensitiveModalStatus) {
+        sensitiveModalStatus.hidden = true;
+        sensitiveModalStatus.textContent = "";
+      }
+      setButtonLoading(sensitiveModalConfirmBtn, false);
+      if (sensitiveModalCancelBtn) {
+        sensitiveModalCancelBtn.disabled = false;
+      }
       sensitiveModal.removeAttribute("hidden");
       document.body.classList.add("lv-modal-open");
       window.setTimeout(function() {
@@ -174,9 +194,40 @@
       }
       sensitiveModal.setAttribute("hidden", "");
       document.body.classList.remove("lv-modal-open");
+      setButtonLoading(sensitiveModalConfirmBtn, false);
+      if (sensitiveModalCancelBtn) {
+        sensitiveModalCancelBtn.disabled = false;
+      }
+      if (sensitiveModalStatus) {
+        sensitiveModalStatus.hidden = true;
+        sensitiveModalStatus.textContent = "";
+      }
 
       if (restoreFocus && buttonToFocus) {
         buttonToFocus.focus();
+      }
+    }
+
+    function setButtonLoading(button, loading, label) {
+      if (!button) {
+        return;
+      }
+      if (loading) {
+        if (!button.dataset.lvOriginalLabel) {
+          button.dataset.lvOriginalLabel = button.textContent.trim();
+        }
+        button.classList.add("is-loading");
+        button.disabled = true;
+        if (label) {
+          button.textContent = label;
+        }
+        return;
+      }
+
+      button.classList.remove("is-loading");
+      button.disabled = false;
+      if (button.dataset.lvOriginalLabel) {
+        button.textContent = button.dataset.lvOriginalLabel;
       }
     }
 
@@ -186,6 +237,7 @@
       }
 
       const form = button.form;
+      document.body.classList.add("lv-page-loading");
       if (typeof form.requestSubmit === "function") {
         form.requestSubmit(button);
         return;
@@ -233,6 +285,8 @@
             openSensitiveModal(button, confirmMessage);
             return;
           }
+
+          setButtonLoading(button, true, "Executando...");
         });
       });
     }

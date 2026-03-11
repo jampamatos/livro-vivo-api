@@ -172,7 +172,7 @@ class CoursePostAdmin(admin.ModelAdmin):
     @admin.display(description='Guardrails operacionais')
     def publication_guardrails(self, obj):
         return format_html(
-            '<ul style="margin: 0; padding-left: 1.2rem;">'
+            '<ul class="lv-guardrails lv-guardrails--caution">'
             '<li>Publicar envia notificações para usuários elegíveis.</li>'
             '<li>Use publicação em massa somente com confirmação explícita.</li>'
             '<li>Arquivar remove destaque sem apagar histórico.</li>'

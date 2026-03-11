@@ -184,10 +184,16 @@ class BookAdmin(admin.ModelAdmin):
         if not current:
             return '-'
         url = reverse('admin:library_bookversion_change', args=[current.id])
+        status_badges = {
+            BookVersion.Status.DRAFT: 'lv-status-badge lv-status-badge--draft',
+            BookVersion.Status.PUBLISHED: 'lv-status-badge lv-status-badge--published',
+            BookVersion.Status.ARCHIVED: 'lv-status-badge lv-status-badge--archived',
+        }
         return format_html(
-            '<a href="{}">{}</a> ({})',
+            '<a href="{}">{}</a> <span class="{}">{}</span>',
             url,
             current.version,
+            status_badges.get(current.status, 'lv-status-badge'),
             current.get_status_display(),
         )
 
@@ -202,7 +208,12 @@ class BookAdmin(admin.ModelAdmin):
         if not versions.exists():
             return format_html(
                 '<div class="lv-version-pipeline" data-create-url="{}">'
-                '<p>Este livro ainda nao possui versoes.</p>'
+                '<div class="lv-feedback-banner lv-version-pipeline__feedback" id="lv-version-feedback" '
+                'role="status" aria-live="polite" hidden></div>'
+                '<div class="lv-empty-state">'
+                '<p class="lv-empty-state__title">Este livro ainda nao possui versoes.</p>'
+                '<p class="lv-empty-state__text">Crie uma versao em rascunho para iniciar o controle editorial.</p>'
+                '</div>'
                 '<button type="button" class="button default lv-add-version-btn">Adicionar nova versao</button>'
                 '<div class="lv-version-modal" id="lv-add-version-modal" hidden>'
                 '<div class="lv-version-modal__card">'
@@ -211,6 +222,7 @@ class BookAdmin(admin.ModelAdmin):
                 '<input type="text" id="lv-new-version-name" placeholder="2026.03.11">'
                 '<label>Changelog</label>'
                 '<textarea id="lv-new-version-changelog" rows="4" placeholder="Resumo das mudancas"></textarea>'
+                '<p class="lv-version-modal__note">A nova versao sera criada como rascunho.</p>'
                 '<div class="lv-version-modal__actions">'
                 '<button type="button" class="button default" id="lv-confirm-add-version">Criar rascunho</button>'
                 '<button type="button" class="button" id="lv-cancel-add-version">Cancelar</button>'
@@ -255,9 +267,11 @@ class BookAdmin(admin.ModelAdmin):
                     Truncator((version.changelog or '').strip()).chars(120) or '-',
                     publish_cell,
                     format_html(
+                        '<div class="lv-inline-actions">'
                         '<a class="button" href="{}">Capitulos</a> '
                         '<a class="button" href="{}">Adicionar capitulo</a> '
-                        '<a class="button" href="{}">Editar versao</a>',
+                        '<a class="button" href="{}">Editar versao</a>'
+                        '</div>',
                         chapters_url,
                         add_chapter_url,
                         edit_version_url,
@@ -267,6 +281,8 @@ class BookAdmin(admin.ModelAdmin):
 
         return format_html(
             '<div class="lv-version-pipeline" data-create-url="{}">'
+            '<div class="lv-feedback-banner lv-version-pipeline__feedback" id="lv-version-feedback" '
+            'role="status" aria-live="polite" hidden></div>'
             '<div class="lv-version-pipeline__header">'
             '<button type="button" class="button default lv-add-version-btn">Adicionar nova versao</button>'
             '</div>'
@@ -283,6 +299,7 @@ class BookAdmin(admin.ModelAdmin):
             '<input type="text" id="lv-new-version-name" placeholder="2026.03.11">'
             '<label>Changelog</label>'
             '<textarea id="lv-new-version-changelog" rows="4" placeholder="Resumo das mudancas"></textarea>'
+            '<p class="lv-version-modal__note">A nova versao sera criada como rascunho.</p>'
             '<div class="lv-version-modal__actions">'
             '<button type="button" class="button default" id="lv-confirm-add-version">Criar rascunho</button>'
             '<button type="button" class="button" id="lv-cancel-add-version">Cancelar</button>'
@@ -293,7 +310,7 @@ class BookAdmin(admin.ModelAdmin):
             '<div class="lv-version-modal__card">'
             '<h3>Confirmar publicacao</h3>'
             '<p id="lv-publish-version-message"></p>'
-            '<p>Ao confirmar, esta versao vira publicada e as demais ficam arquivadas.</p>'
+            '<p class="lv-version-modal__note">Ao confirmar, esta versao vira publicada e as demais ficam arquivadas.</p>'
             '<div class="lv-version-modal__actions">'
             '<button type="button" class="button default" id="lv-confirm-publish-version">Sim, publicar</button>'
             '<button type="button" class="button" id="lv-cancel-publish-version">Cancelar</button>'
@@ -499,7 +516,7 @@ class BookVersionAdmin(admin.ModelAdmin):
     @admin.display(description='Guardrails de publicação')
     def publication_guardrails(self, obj):
         return format_html(
-            '<ul style="margin: 0; padding-left: 1.2rem;">'
+            '<ul class="lv-guardrails lv-guardrails--critical">'
             '<li>Somente 1 versão publicada por livro.</li>'
             '<li>Publicação exige changelog preenchido.</li>'
             '<li>Ao publicar, as demais versões ficam arquivadas.</li>'
