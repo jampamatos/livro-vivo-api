@@ -5,7 +5,6 @@
 {% block extrastyle %}
   {{ block.super }}
   <link rel="stylesheet" href="{% static "admin/css/changelists.css" %}">
-  <link rel="stylesheet" href="{% static "lv_admin/current_path.css" %}">
   {% if cl.formset %}
     <link rel="stylesheet" href="{% static "admin/css/forms.css" %}">
   {% endif %}

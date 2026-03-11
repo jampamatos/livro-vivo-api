@@ -751,6 +751,19 @@ class LibraryAdminTests(TestCase):
         self.assertContains(response, 'Tags permitidas: a, blockquote, br')
         self.assertContains(response, 'lv-rich-editor-preview')
 
+    def test_book_version_changelist_uses_bulk_action_buttons_instead_of_dropdown(self):
+        response = self.client.get(reverse('admin:library_bookversion_changelist'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-lv-action-buttons')
+        self.assertContains(response, 'Selecione itens para habilitar ações em massa.')
+        self.assertContains(response, 'Criar nova versão a partir da selecionada')
+        self.assertContains(response, 'Apagar selecionados')
+        self.assertContains(response, 'data-lv-confirm-message="Tem certeza que deseja publicar os itens selecionados?"')
+        self.assertContains(response, 'Confirmar ação sensível')
+        self.assertContains(response, 'lv-sensitive-action-modal__card')
+        self.assertNotContains(response, 'Confirmo ação sensível')
+
     def test_book_version_admin_action_creates_preloaded_version_with_chapters(self):
         BookChapter.objects.create(
             book_version=self.version,
@@ -778,7 +791,7 @@ class LibraryAdminTests(TestCase):
         self.assertEqual(cloned.status, BookVersion.Status.DRAFT)
         self.assertEqual(cloned.changelog, 'Clonada com ajustes')
         self.assertEqual(list(cloned.chapters.order_by('order').values_list('order', flat=True)), [1, 2])
-        self.assertContains(response, 'Preloaded version &quot;2024.02&quot; created')
+        self.assertContains(response, 'Versão pré-carregada &quot;2024.02&quot; criada')
 
     def test_book_version_admin_action_requires_single_selection(self):
         second = BookVersion.objects.create(
@@ -803,7 +816,7 @@ class LibraryAdminTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(BookVersion.objects.filter(book=self.book, version='2024.03').exists())
-        self.assertContains(response, 'Select exactly one source version to clone.')
+        self.assertContains(response, 'Selecione exatamente 1 versão de origem para clonar.')
 
     def test_book_version_admin_action_requires_changelog(self):
         response = self.client.post(
@@ -848,7 +861,7 @@ class LibraryAdminTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Changelog is required when publishing a version.')
+        self.assertContains(response, 'Changelog é obrigatório ao publicar uma versão.')
         draft.refresh_from_db()
         self.assertEqual(draft.status, BookVersion.Status.DRAFT)
 

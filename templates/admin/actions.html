@@ -1,0 +1,275 @@
+{% load i18n %}
+<div class="actions">
+  {% block actions %}
+    <div class="lv-bulk-actions">
+      {% block actions-form %}
+      {% for field in action_form %}
+        {% if field.name == "action" %}
+          <div class="lv-bulk-actions__action-select" hidden>{{ field }}</div>
+          <span class="lv-bulk-actions__hint" data-lv-action-hint>Selecione itens para habilitar ações em massa.</span>
+          <div class="lv-bulk-actions__buttons hidden" data-lv-action-buttons>
+            {% for value, label in field.field.choices %}
+              {% if value %}
+                {% with action_value=value|default_if_none:"" %}
+                  {% with action_label=label|cut:" (ação sensível)"|cut:" (acao sensivel)" %}
+                <button
+                  type="submit"
+                  class="button lv-bulk-action-btn{% if action_value == 'delete_selected' or 'delete' in action_value or 'remove' in action_value or 'ban' in action_value or 'cancel' in action_value %} lv-bulk-action-btn--delete{% elif action_value == 'mark_published' or 'publish' in action_value %} lv-bulk-action-btn--publish{% elif action_value == 'mark_archived' or 'archive' in action_value %} lv-bulk-action-btn--archive{% endif %}"
+                  title="{% if action_value == 'delete_selected' %}Apagar selecionados{% else %}{{ action_label }}{% endif %}"
+                  name="index"
+                  value="{{ action_index|default:0 }}"
+                  data-lv-action-value="{{ action_value }}"
+                  {% if action_value == 'delete_selected' or 'delete' in action_value or 'remove' in action_value or 'ban' in action_value or 'cancel' in action_value or action_value == 'mark_published' or 'publish' in action_value or action_value == 'mark_archived' or 'archive' in action_value %}
+                  data-lv-sensitive="1"
+                  {% endif %}
+                  {% if action_value == 'delete_selected' or 'delete' in action_value or 'remove' in action_value %}
+                  data-lv-confirm-message="Tem certeza que deseja apagar os itens selecionados?"
+                  {% elif 'ban' in action_value %}
+                  data-lv-confirm-message="Tem certeza que deseja banir os itens selecionados?"
+                  {% elif 'cancel' in action_value %}
+                  data-lv-confirm-message="Tem certeza que deseja cancelar os itens selecionados?"
+                  {% elif action_value == 'mark_published' or 'publish' in action_value %}
+                  data-lv-confirm-message="Tem certeza que deseja publicar os itens selecionados?"
+                  {% elif action_value == 'mark_archived' or 'archive' in action_value %}
+                  data-lv-confirm-message="Tem certeza que deseja arquivar os itens selecionados?"
+                  {% endif %}
+                >
+                  {% if action_value == "delete_selected" %}
+                    Apagar selecionados
+                  {% elif action_value == "create_preloaded_version" %}
+                    Criar nova versão a partir da selecionada
+                  {% else %}
+                    {{ action_label }}
+                  {% endif %}
+                </button>
+                  {% endwith %}
+                {% endwith %}
+              {% endif %}
+            {% endfor %}
+          </div>
+        {% elif field.name == "confirm_sensitive_action" %}
+          <input type="hidden" name="confirm_sensitive_action" value="" data-lv-sensitive-confirm-field>
+        {% elif field.is_hidden %}
+          {{ field }}
+        {% elif field.label %}
+          <label class="lv-bulk-actions__field">{{ field.label }} {{ field }}</label>
+        {% else %}
+          {{ field }}
+        {% endif %}
+      {% endfor %}
+      {% endblock %}
+
+      {% block actions-counter %}
+      {% if actions_selection_counter %}
+          <span class="action-counter" data-actions-icnt="{{ cl.result_list|length }}">0 selecionado(s)</span>
+          {% if cl.result_count != cl.result_list|length %}
+          <span class="all hidden">Todos os itens estão selecionados.</span>
+          <span class="question hidden">
+              <a role="button" href="#" title="Selecionar todos os itens da busca atual">Selecionar todos os itens da busca atual</a>
+          </span>
+          <span class="clear hidden"><a role="button" href="#">Limpar seleção</a></span>
+          {% endif %}
+      {% endif %}
+      {% endblock %}
+    </div>
+  {% endblock %}
+</div>
+
+<script>
+  (function() {
+    if (window.__lvBulkActionsButtonsInitialized) {
+      return;
+    }
+    window.__lvBulkActionsButtonsInitialized = true;
+    let sensitiveModal = null;
+    let sensitiveModalMessage = null;
+    let sensitiveModalConfirmBtn = null;
+    let sensitiveModalCancelBtn = null;
+    let pendingSensitiveButton = null;
+
+    function ensureSensitiveModal() {
+      if (sensitiveModal) {
+        return;
+      }
+
+      const modal = document.createElement("div");
+      modal.className = "lv-sensitive-action-modal";
+      modal.setAttribute("hidden", "");
+      modal.innerHTML =
+        '<div class="lv-sensitive-action-modal__card" role="dialog" aria-modal="true" aria-labelledby="lv-sensitive-action-modal-title">' +
+        '<h3 id="lv-sensitive-action-modal-title">Confirmar ação sensível</h3>' +
+        '<p class="lv-sensitive-action-modal__message"></p>' +
+        '<div class="lv-sensitive-action-modal__actions">' +
+        '<button type="button" class="button default lv-sensitive-action-modal__confirm">Confirmar</button>' +
+        '<button type="button" class="button lv-sensitive-action-modal__cancel">Cancelar</button>' +
+        '</div>' +
+        '</div>';
+
+      document.body.appendChild(modal);
+
+      sensitiveModal = modal;
+      sensitiveModalMessage = modal.querySelector(".lv-sensitive-action-modal__message");
+      sensitiveModalConfirmBtn = modal.querySelector(".lv-sensitive-action-modal__confirm");
+      sensitiveModalCancelBtn = modal.querySelector(".lv-sensitive-action-modal__cancel");
+
+      sensitiveModalCancelBtn.addEventListener("click", function() {
+        closeSensitiveModal();
+      });
+      sensitiveModal.addEventListener("click", function(event) {
+        if (event.target === sensitiveModal) {
+          closeSensitiveModal();
+        }
+      });
+      sensitiveModalConfirmBtn.addEventListener("click", function() {
+        if (!pendingSensitiveButton) {
+          closeSensitiveModal({ restoreFocus: false });
+          return;
+        }
+
+        const actionButton = pendingSensitiveButton;
+        const actionsContainer = actionButton.closest(".actions");
+        if (actionsContainer) {
+          let confirmField = actionsContainer.querySelector('input[name="confirm_sensitive_action"]');
+          if (!confirmField) {
+            confirmField = document.createElement("input");
+            confirmField.type = "hidden";
+            confirmField.name = "confirm_sensitive_action";
+            actionsContainer.appendChild(confirmField);
+          }
+          confirmField.value = "on";
+        }
+
+        closeSensitiveModal({ restoreFocus: false });
+        submitActionButton(actionButton);
+      });
+
+      document.addEventListener("keydown", function(event) {
+        if (event.key === "Escape" && sensitiveModal && !sensitiveModal.hasAttribute("hidden")) {
+          closeSensitiveModal();
+        }
+      });
+    }
+
+    function openSensitiveModal(button, message) {
+      ensureSensitiveModal();
+      pendingSensitiveButton = button;
+      sensitiveModalMessage.textContent =
+        message || "Tem certeza que deseja executar esta ação nos itens selecionados?";
+      sensitiveModal.removeAttribute("hidden");
+      document.body.classList.add("lv-modal-open");
+      window.setTimeout(function() {
+        if (sensitiveModalConfirmBtn) {
+          sensitiveModalConfirmBtn.focus();
+        }
+      }, 0);
+    }
+
+    function closeSensitiveModal(options) {
+      const restoreFocus = !options || options.restoreFocus !== false;
+      const buttonToFocus = pendingSensitiveButton;
+      pendingSensitiveButton = null;
+
+      if (!sensitiveModal) {
+        return;
+      }
+      sensitiveModal.setAttribute("hidden", "");
+      document.body.classList.remove("lv-modal-open");
+
+      if (restoreFocus && buttonToFocus) {
+        buttonToFocus.focus();
+      }
+    }
+
+    function submitActionButton(button) {
+      if (!button || !button.form) {
+        return;
+      }
+
+      const form = button.form;
+      if (typeof form.requestSubmit === "function") {
+        form.requestSubmit(button);
+        return;
+      }
+
+      const fallbackInput = document.createElement("input");
+      fallbackInput.type = "hidden";
+      fallbackInput.name = button.name || "index";
+      fallbackInput.value = button.value || "";
+      form.appendChild(fallbackInput);
+      form.submit();
+    }
+
+    function bindActionButtons() {
+      document.querySelectorAll(".lv-bulk-action-btn").forEach(function(button) {
+        if (button.dataset.lvBound === "1") {
+          return;
+        }
+        button.dataset.lvBound = "1";
+        button.addEventListener("click", function(event) {
+          const actionsContainer = button.closest(".actions");
+          if (!actionsContainer) {
+            return;
+          }
+          const actionSelect = actionsContainer.querySelector('select[name="action"]');
+          if (!actionSelect) {
+            return;
+          }
+          actionSelect.value = button.dataset.lvActionValue || "";
+
+          let confirmField = actionsContainer.querySelector('input[name="confirm_sensitive_action"]');
+          if (!confirmField) {
+            confirmField = document.createElement("input");
+            confirmField.type = "hidden";
+            confirmField.name = "confirm_sensitive_action";
+            actionsContainer.appendChild(confirmField);
+          }
+          confirmField.value = "";
+
+          if (button.dataset.lvSensitive === "1") {
+            event.preventDefault();
+            const confirmMessage =
+              button.dataset.lvConfirmMessage ||
+              "Tem certeza que deseja executar esta ação nos itens selecionados?";
+            openSensitiveModal(button, confirmMessage);
+            return;
+          }
+        });
+      });
+    }
+
+    function syncButtonsVisibility() {
+      const selectedCount = document.querySelectorAll('#result_list input.action-select:checked').length;
+      const hasSelection = selectedCount > 0;
+
+      document.querySelectorAll("[data-lv-action-buttons]").forEach(function(buttons) {
+        buttons.classList.toggle("hidden", !hasSelection);
+      });
+      document.querySelectorAll("[data-lv-action-hint]").forEach(function(hint) {
+        hint.classList.toggle("hidden", hasSelection);
+      });
+      document.querySelectorAll(".actions .action-counter").forEach(function(counter) {
+        counter.textContent = selectedCount + " selecionado(s)";
+      });
+    }
+
+    document.addEventListener("DOMContentLoaded", function() {
+      ensureSensitiveModal();
+      bindActionButtons();
+      syncButtonsVisibility();
+    });
+
+    document.addEventListener("change", function(event) {
+      if (
+        event.target &&
+        (event.target.matches('#result_list input.action-select') || event.target.matches("#action-toggle"))
+      ) {
+        window.setTimeout(syncButtonsVisibility, 0);
+      }
+    });
+
+    window.addEventListener("pageshow", function() {
+      bindActionButtons();
+      syncButtonsVisibility();
+    });
+  })();
+</script>

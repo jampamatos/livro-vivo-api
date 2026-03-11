@@ -1,0 +1,707 @@
+/*
+  Livro Vivo Admin visual foundation (A2-01)
+  - unified tokens
+  - consistent base components
+  - low-risk overrides on top of native Django Admin behavior
+*/
+
+html[data-theme="light"],
+:root {
+  --primary: #2b6f96;
+  --secondary: #184e6e;
+  --accent: #e6c45a;
+  --primary-fg: #ffffff;
+
+  --body-fg: #1d2b3d;
+  --body-bg: #f6f8fc;
+  --body-quiet-color: #5c6d84;
+  --body-medium-color: #405267;
+  --body-loud-color: #0f1a27;
+
+  --header-color: #ffffff;
+  --header-branding-color: #ffffff;
+  --header-bg: #1c5578;
+  --header-link-color: #ffffff;
+
+  --breadcrumbs-fg: #d5e7f3;
+  --breadcrumbs-link-fg: #ffffff;
+  --breadcrumbs-bg: #163f5a;
+
+  --link-fg: #1c618b;
+  --link-hover-color: #0f4869;
+  --link-selected-fg: #1a5c83;
+
+  --hairline-color: #dbe4f0;
+  --border-color: #c6d3e2;
+  --darkened-bg: #eef3f9;
+  --selected-bg: #edf2f8;
+  --selected-row: #dce9f4;
+
+  --message-success-bg: #e8f7ee;
+  --message-warning-bg: #fff5de;
+  --message-error-bg: #ffeaea;
+
+  --button-bg: #2b6f96;
+  --button-hover-bg: #1f5d82;
+  --default-button-bg: #1f5d82;
+  --default-button-hover-bg: #2b6f96;
+  --close-button-bg: #5f7088;
+  --close-button-hover-bg: #4a5a70;
+
+  --lv-focus-ring: rgba(43, 111, 150, 0.32);
+  --lv-current-bg: rgba(43, 111, 150, 0.1);
+  --lv-current-border: rgba(43, 111, 150, 0.22);
+
+  --lv-badge-draft-bg: #fff2ca;
+  --lv-badge-draft-fg: #735500;
+  --lv-badge-published-bg: #dff6ea;
+  --lv-badge-published-fg: #0f5d3a;
+  --lv-badge-archived-bg: #e7edf5;
+  --lv-badge-archived-fg: #415266;
+
+  --lv-action-publish-bg: #e2f7e9;
+  --lv-action-publish-border: #7bc39a;
+  --lv-action-publish-fg: #0f5d3a;
+  --lv-action-archive-bg: #fff3d4;
+  --lv-action-archive-border: #d3b46f;
+  --lv-action-archive-fg: #6d4f00;
+  --lv-action-delete-bg: #fde8e8;
+  --lv-action-delete-border: #de8f8f;
+  --lv-action-delete-fg: #8a1f1f;
+
+  --lv-radius-sm: 6px;
+  --lv-radius-md: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --primary: #4f90b7;
+    --secondary: #113e59;
+    --accent: #dfc66b;
+    --primary-fg: #f6fbff;
+
+    --body-fg: #ecf3fb;
+    --body-bg: #0f1723;
+    --body-quiet-color: #b4c6dc;
+    --body-medium-color: #d0deee;
+    --body-loud-color: #ffffff;
+
+    --header-color: #eff7ff;
+    --header-branding-color: #eff7ff;
+    --header-bg: #153f5b;
+    --header-link-color: #eff7ff;
+
+    --breadcrumbs-fg: #cddff0;
+    --breadcrumbs-link-fg: #eff7ff;
+    --breadcrumbs-bg: #0f2f45;
+
+    --link-fg: #83c9ee;
+    --link-hover-color: #b0def7;
+    --link-selected-fg: #a7d8f4;
+
+    --hairline-color: #243245;
+    --border-color: #34475f;
+    --darkened-bg: #1a2534;
+    --selected-bg: #162131;
+    --selected-row: #1f3148;
+
+    --message-success-bg: #113725;
+    --message-warning-bg: #4f3b12;
+    --message-error-bg: #4e1a1a;
+
+    --button-bg: #366f93;
+    --button-hover-bg: #4a86ab;
+    --default-button-bg: #366f93;
+    --default-button-hover-bg: #4a86ab;
+    --close-button-bg: #4d5f76;
+    --close-button-hover-bg: #617593;
+
+    --lv-focus-ring: rgba(131, 201, 238, 0.35);
+    --lv-current-bg: rgba(79, 144, 183, 0.18);
+    --lv-current-border: rgba(110, 171, 209, 0.35);
+
+    --lv-badge-draft-bg: #4f3e1d;
+    --lv-badge-draft-fg: #ffd78b;
+    --lv-badge-published-bg: #15412c;
+    --lv-badge-published-fg: #8ce9bd;
+    --lv-badge-archived-bg: #263344;
+    --lv-badge-archived-fg: #b8c9de;
+
+    --lv-action-publish-bg: #173f2c;
+    --lv-action-publish-border: #2d7d56;
+    --lv-action-publish-fg: #9ceac2;
+    --lv-action-archive-bg: #493916;
+    --lv-action-archive-border: #8b7040;
+    --lv-action-archive-fg: #ffd78b;
+    --lv-action-delete-bg: #4a1f1f;
+    --lv-action-delete-border: #8d4444;
+    --lv-action-delete-fg: #ffb1b1;
+  }
+}
+
+html[data-theme="dark"] {
+  --primary: #4f90b7;
+  --secondary: #113e59;
+  --accent: #dfc66b;
+  --primary-fg: #f6fbff;
+
+  --body-fg: #ecf3fb;
+  --body-bg: #0f1723;
+  --body-quiet-color: #b4c6dc;
+  --body-medium-color: #d0deee;
+  --body-loud-color: #ffffff;
+
+  --header-color: #eff7ff;
+  --header-branding-color: #eff7ff;
+  --header-bg: #153f5b;
+  --header-link-color: #eff7ff;
+
+  --breadcrumbs-fg: #cddff0;
+  --breadcrumbs-link-fg: #eff7ff;
+  --breadcrumbs-bg: #0f2f45;
+
+  --link-fg: #83c9ee;
+  --link-hover-color: #b0def7;
+  --link-selected-fg: #a7d8f4;
+
+  --hairline-color: #243245;
+  --border-color: #34475f;
+  --darkened-bg: #1a2534;
+  --selected-bg: #162131;
+  --selected-row: #1f3148;
+
+  --message-success-bg: #113725;
+  --message-warning-bg: #4f3b12;
+  --message-error-bg: #4e1a1a;
+
+  --button-bg: #366f93;
+  --button-hover-bg: #4a86ab;
+  --default-button-bg: #366f93;
+  --default-button-hover-bg: #4a86ab;
+  --close-button-bg: #4d5f76;
+  --close-button-hover-bg: #617593;
+
+  --lv-focus-ring: rgba(131, 201, 238, 0.35);
+  --lv-current-bg: rgba(79, 144, 183, 0.18);
+  --lv-current-border: rgba(110, 171, 209, 0.35);
+
+  --lv-badge-draft-bg: #4f3e1d;
+  --lv-badge-draft-fg: #ffd78b;
+  --lv-badge-published-bg: #15412c;
+  --lv-badge-published-fg: #8ce9bd;
+  --lv-badge-archived-bg: #263344;
+  --lv-badge-archived-fg: #b8c9de;
+
+  --lv-action-publish-bg: #173f2c;
+  --lv-action-publish-border: #2d7d56;
+  --lv-action-publish-fg: #9ceac2;
+  --lv-action-archive-bg: #493916;
+  --lv-action-archive-border: #8b7040;
+  --lv-action-archive-fg: #ffd78b;
+  --lv-action-delete-bg: #4a1f1f;
+  --lv-action-delete-border: #8d4444;
+  --lv-action-delete-fg: #ffb1b1;
+}
+
+body {
+  line-height: 1.45;
+}
+
+#header {
+  border-bottom: 1px solid var(--border-color);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+}
+
+#site-name a {
+  letter-spacing: 0.01em;
+  font-weight: 700;
+}
+
+#content {
+  padding-top: 16px;
+}
+
+#content > h1 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin-bottom: 14px;
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid var(--lv-focus-ring);
+  outline-offset: 1px;
+}
+
+.module,
+.inline-group,
+#changelist-filter {
+  border: 1px solid var(--border-color);
+  border-radius: var(--lv-radius-md);
+  overflow: hidden;
+  background: var(--body-bg);
+}
+
+.module h2,
+.module caption,
+.inline-group h2 {
+  background: var(--darkened-bg);
+  color: var(--body-medium-color);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 10px 14px;
+}
+
+.form-row {
+  border-bottom: 1px solid var(--hairline-color);
+}
+
+.aligned label {
+  font-weight: 600;
+  color: var(--body-medium-color);
+}
+
+input[type="text"],
+input[type="password"],
+input[type="email"],
+input[type="number"],
+input[type="url"],
+input[type="search"],
+input[type="tel"],
+textarea,
+select,
+.vTextField,
+.vURLField,
+.vIntegerField,
+.vDateField,
+.vTimeField,
+.vLargeTextField {
+  border-radius: var(--lv-radius-sm);
+  border: 1px solid var(--border-color);
+  background: var(--body-bg);
+  color: var(--body-fg);
+  min-height: 36px;
+  padding: 7px 10px;
+  box-sizing: border-box;
+}
+
+textarea,
+.vLargeTextField {
+  min-height: 120px;
+}
+
+select[multiple] {
+  min-height: 8rem;
+}
+
+.help,
+p.help,
+form .help {
+  color: var(--body-quiet-color);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.errorlist {
+  color: var(--error-fg);
+  margin: 6px 0 0;
+}
+
+ul.messagelist {
+  display: grid;
+  gap: 8px;
+}
+
+ul.messagelist li {
+  list-style: none;
+  border: 1px solid var(--border-color);
+  border-left: 4px solid var(--primary);
+  border-radius: var(--lv-radius-sm);
+  background: var(--darkened-bg);
+  color: var(--body-fg);
+  padding: 10px 12px;
+  font-weight: 600;
+}
+
+ul.messagelist li.success {
+  background: var(--message-success-bg);
+  border-left-color: #208354;
+}
+
+ul.messagelist li.warning {
+  background: var(--message-warning-bg);
+  border-left-color: #b07917;
+}
+
+ul.messagelist li.error {
+  background: var(--message-error-bg);
+  border-left-color: #b33131;
+}
+
+p.errornote {
+  border: 1px solid rgba(179, 49, 49, 0.34);
+  border-left: 4px solid #b33131;
+  border-radius: var(--lv-radius-sm);
+  background: var(--message-error-bg);
+  color: var(--body-fg);
+  padding: 10px 12px;
+}
+
+.button,
+input[type="submit"],
+input[type="button"],
+input[type="reset"],
+.submit-row input,
+a.button {
+  border-radius: var(--lv-radius-sm);
+  border: 1px solid transparent;
+  min-height: 34px;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 8px 12px;
+}
+
+.button.default,
+input.default,
+.submit-row input.default {
+  background: var(--default-button-bg);
+}
+
+.button.default:hover,
+input.default:hover,
+.submit-row input.default:hover {
+  background: var(--default-button-hover-bg);
+}
+
+.object-tools a {
+  border-radius: var(--lv-radius-sm);
+  font-weight: 700;
+  padding: 7px 12px;
+}
+
+#content-main table {
+  width: 100%;
+  border: 1px solid var(--border-color);
+  border-radius: var(--lv-radius-md);
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--body-bg);
+}
+
+#content-main table thead th {
+  background: var(--darkened-bg);
+  color: var(--body-medium-color);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+#content-main table th,
+#content-main table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--hairline-color);
+  vertical-align: top;
+}
+
+#content-main table tbody tr:last-child th,
+#content-main table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+#content-main table tbody tr:nth-child(even) {
+  background: var(--selected-bg);
+}
+
+#content-main table tbody tr:hover {
+  background: var(--selected-row);
+}
+
+#changelist-filter h2 {
+  margin: 0;
+}
+
+#changelist-filter h3 {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--hairline-color);
+}
+
+#changelist-filter ul {
+  margin: 0;
+  padding: 8px 12px 10px;
+}
+
+#changelist .actions .lv-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+#changelist .actions .lv-bulk-actions__action-select {
+  display: none;
+}
+
+#changelist .actions .lv-bulk-actions__field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+}
+
+#changelist .actions .lv-bulk-actions__hint {
+  color: var(--body-quiet-color);
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+#changelist .actions .lv-bulk-actions__buttons {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+#changelist .actions .lv-bulk-actions__buttons.hidden {
+  display: none;
+}
+
+#changelist .actions .lv-bulk-action-btn {
+  height: auto;
+  min-height: 30px;
+  line-height: 1.1;
+  padding: 6px 9px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  border: 1px solid var(--border-color);
+  border-radius: var(--lv-radius-sm);
+  background: var(--body-bg);
+  color: var(--body-fg);
+}
+
+#changelist .actions .lv-bulk-action-btn:hover,
+#changelist .actions .lv-bulk-action-btn:focus-visible {
+  border-color: var(--primary);
+  color: var(--body-loud-color);
+}
+
+#changelist .actions .lv-bulk-action-btn--publish {
+  background: var(--lv-action-publish-bg);
+  border-color: var(--lv-action-publish-border);
+  color: var(--lv-action-publish-fg);
+}
+
+#changelist .actions .lv-bulk-action-btn--publish:hover,
+#changelist .actions .lv-bulk-action-btn--publish:focus-visible {
+  border-color: var(--lv-action-publish-fg);
+  color: var(--lv-action-publish-fg);
+}
+
+#changelist .actions .lv-bulk-action-btn--archive {
+  background: var(--lv-action-archive-bg);
+  border-color: var(--lv-action-archive-border);
+  color: var(--lv-action-archive-fg);
+}
+
+#changelist .actions .lv-bulk-action-btn--archive:hover,
+#changelist .actions .lv-bulk-action-btn--archive:focus-visible {
+  border-color: var(--lv-action-archive-fg);
+  color: var(--lv-action-archive-fg);
+}
+
+#changelist .actions .lv-bulk-action-btn--delete {
+  background: var(--lv-action-delete-bg);
+  border-color: var(--lv-action-delete-border);
+  color: var(--lv-action-delete-fg);
+}
+
+#changelist .actions .lv-bulk-action-btn--delete:hover,
+#changelist .actions .lv-bulk-action-btn--delete:focus-visible {
+  border-color: var(--lv-action-delete-fg);
+  color: var(--lv-action-delete-fg);
+}
+
+body.lv-modal-open {
+  overflow: hidden;
+}
+
+.lv-sensitive-action-modal[hidden] {
+  display: none;
+}
+
+.lv-sensitive-action-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(12, 20, 31, 0.48);
+}
+
+.lv-sensitive-action-modal__card {
+  width: min(100%, 460px);
+  border: 1px solid var(--border-color);
+  border-radius: var(--lv-radius-md);
+  background: var(--body-bg);
+  color: var(--body-fg);
+  padding: 16px 18px;
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.22);
+}
+
+.lv-sensitive-action-modal__card h3 {
+  margin: 0 0 10px;
+  font-size: 1.02rem;
+  font-weight: 700;
+}
+
+.lv-sensitive-action-modal__message {
+  margin: 0 0 14px;
+  color: var(--body-medium-color);
+  line-height: 1.4;
+}
+
+.lv-sensitive-action-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.lv-status-badge,
+.lv-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.2rem 0.58rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.lv-status-badge--draft {
+  background: var(--lv-badge-draft-bg);
+  color: var(--lv-badge-draft-fg);
+}
+
+.lv-status-badge--published {
+  background: var(--lv-badge-published-bg);
+  color: var(--lv-badge-published-fg);
+}
+
+.lv-status-badge--archived {
+  background: var(--lv-badge-archived-bg);
+  color: var(--lv-badge-archived-fg);
+}
+
+.lv-current-path {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--lv-current-border);
+  border-left: 4px solid var(--primary);
+  border-radius: var(--lv-radius-sm);
+  background: var(--lv-current-bg);
+  color: var(--body-fg);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.lv-current-path__label {
+  font-weight: 700;
+  margin-right: 6px;
+}
+
+.lv-current-path__trail {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.lv-current-path__trail a {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.lv-current-path__sep {
+  color: var(--body-quiet-color);
+  font-weight: 700;
+  margin: 0 2px;
+}
+
+@media (max-width: 1100px) {
+  #content {
+    padding: 12px 12px 16px;
+  }
+
+  #content-main table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .object-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+}
+
+@media (max-width: 767px) {
+  #content > h1 {
+    font-size: 1.15rem;
+  }
+
+  #user-tools {
+    font-size: 0.75rem;
+    line-height: 1.4;
+  }
+
+  .aligned label {
+    float: none;
+    width: auto;
+    margin: 0 0 6px;
+    text-align: left;
+  }
+
+  .aligned .form-row > div {
+    margin-left: 0 !important;
+  }
+
+  input[type="text"],
+  input[type="password"],
+  input[type="email"],
+  input[type="number"],
+  input[type="url"],
+  input[type="search"],
+  input[type="tel"],
+  textarea,
+  select,
+  .vTextField,
+  .vURLField,
+  .vIntegerField,
+  .vDateField,
+  .vTimeField,
+  .vLargeTextField {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .submit-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .submit-row input,
+  .submit-row a.button {
+    margin: 0 !important;
+  }
+}
