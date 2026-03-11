@@ -1,0 +1,17 @@
+{% if lv_navigation_path %}
+  <div class="lv-current-path" role="note" aria-label="Navegacao atual">
+    <span class="lv-current-path__label">Voce esta em:</span>
+    <span class="lv-current-path__trail">
+      {% for crumb in lv_navigation_path %}
+        {% if not forloop.first %}
+          <span class="lv-current-path__sep">&gt;</span>
+        {% endif %}
+        {% if crumb.url %}
+          <a href="{{ crumb.url }}">{{ crumb.label }}</a>
+        {% else %}
+          <span>{{ crumb.label }}</span>
+        {% endif %}
+      {% endfor %}
+    </span>
+  </div>
+{% endif %}

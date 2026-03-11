@@ -1,0 +1,41 @@
+{% extends "admin/change_list.html" %}
+{% load i18n %}
+
+{% block result_list %}
+  {% if annotation_group_by_user %}
+    <div class="results">
+      <table id="result_list">
+        <thead>
+          <tr>
+            <th scope="col">{% translate "Usuario" %}</th>
+            <th scope="col">{% translate "Quantidade de anotacoes" %}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for group in annotation_user_groups %}
+            <tr>
+              <th scope="row">
+                <a href="?{{ annotation_user_filter_param }}={{ group.user_id }}">
+                  {{ group.label }}
+                </a>
+              </th>
+              <td>{{ group.total }}</td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="2">{% translate "Nenhuma anotacao cadastrada." %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    {{ block.super }}
+  {% endif %}
+{% endblock %}
+
+{% block pagination %}
+  {% if not annotation_group_by_user %}
+    {{ block.super }}
+  {% endif %}
+{% endblock %}

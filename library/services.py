@@ -11,7 +11,7 @@ from django.utils.text import Truncator
 
 from accounts.models import NotificationEvent
 from accounts.services import enqueue_notification_event, get_active_subscription_user_ids
-from .models import BookChapter, BookVersion
+from .models import Book, BookChapter, BookVersion
 
 logger = logging.getLogger('livro_vivo.notifications')
 _suppressed_book_chapter_notification_version_ids: ContextVar[frozenset[int]] = ContextVar(
@@ -157,12 +157,22 @@ def create_preloaded_book_version(
         raise ValueError('Changelog is required when publishing a version.')
 
     with transaction.atomic():
+        if status == BookVersion.Status.PUBLISHED:
+            (
+                BookVersion.objects
+                .filter(book=source_version.book)
+                .exclude(status=BookVersion.Status.ARCHIVED)
+                .update(status=BookVersion.Status.ARCHIVED)
+            )
+
         created_version = BookVersion.objects.create(
             book=source_version.book,
             version=normalized_version,
             changelog=normalized_changelog,
             status=status,
-            published_at=published_at if status == BookVersion.Status.PUBLISHED else None,
+            published_at=(
+                published_at if status == BookVersion.Status.PUBLISHED else None
+            ) or (date.today() if status == BookVersion.Status.PUBLISHED else None),
         )
 
         source_chapters = source_version.chapters.order_by('order', 'id')
@@ -178,6 +188,9 @@ def create_preloaded_book_version(
                 )
 
         if created_version.status == BookVersion.Status.PUBLISHED:
+            if created_version.book.status != Book.Status.PUBLISHED:
+                created_version.book.status = Book.Status.PUBLISHED
+                created_version.book.save(update_fields=['status'])
             enqueue_book_version_publication_notifications(book_version=created_version)
 
     return created_version
