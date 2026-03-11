@@ -2,8 +2,11 @@ from django import forms
 from django.contrib import admin
 from django.contrib import messages
 from django.contrib.admin.helpers import ActionForm
-from django.db import IntegrityError
-from django.utils.html import format_html, strip_tags
+from django.db import IntegrityError, transaction
+from django.http import HttpResponseNotAllowed
+from django.shortcuts import get_object_or_404, redirect
+from django.urls import path, reverse
+from django.utils.html import format_html, format_html_join, strip_tags
 from django.utils.safestring import mark_safe
 from django.utils.text import Truncator
 from django.utils import timezone
@@ -108,14 +111,315 @@ class BookVersionActionForm(ActionForm):
         max_length=400,
         widget=forms.TextInput(attrs={'placeholder': 'Resumo da nova publicação', 'size': 40}),
     )
-    publish_now = forms.BooleanField(label='Publish now', required=False)
 
 
 @admin.register(Book)
 class BookAdmin(admin.ModelAdmin):
-    list_display = ('id', 'title', 'status', 'created_at', 'updated_at')
+    list_display = ('title', 'status', 'current_version_label', 'updated_at')
     search_fields = ('title',)
     list_filter = ('status',)
+    readonly_fields = (
+        'current_version_label',
+        'versions_pipeline_panel',
+        'created_at',
+        'updated_at',
+    )
+    fieldsets = (
+        (
+            'Dados do livro',
+            {
+                'fields': (
+                    'title',
+                    'description',
+                    'status',
+                )
+            },
+        ),
+        (
+            'Pipeline de versoes',
+            {
+                'fields': (
+                    'current_version_label',
+                    'versions_pipeline_panel',
+                )
+            },
+        ),
+        (
+            'Auditoria',
+            {
+                'fields': (
+                    'created_at',
+                    'updated_at',
+                )
+            },
+        ),
+    )
+
+    class Media:
+        css = {
+            'all': ('library/admin/book_version_pipeline.css',),
+        }
+        js = ('library/admin/book_version_pipeline.js',)
+
+    def _get_current_version(self, obj: Book | None) -> BookVersion | None:
+        if not obj or not obj.pk:
+            return None
+        published = (
+            obj.versions.filter(status=BookVersion.Status.PUBLISHED)
+            .order_by('-published_at', '-created_at', '-id')
+            .first()
+        )
+        if published:
+            return published
+        return obj.versions.order_by('-created_at', '-id').first()
+
+    @admin.display(description='Versao atual')
+    def current_version_label(self, obj: Book):
+        current = self._get_current_version(obj)
+        if not current:
+            return '-'
+        url = reverse('admin:library_bookversion_change', args=[current.id])
+        return format_html(
+            '<a href="{}">{}</a> ({})',
+            url,
+            current.version,
+            current.get_status_display(),
+        )
+
+    @admin.display(description='Controle de versoes')
+    def versions_pipeline_panel(self, obj: Book):
+        if not obj or not obj.pk:
+            return 'Salve o livro para gerenciar versoes.'
+
+        versions = obj.versions.order_by('-created_at', '-id')
+        create_url = reverse('admin:library_book_create_version', args=[obj.id])
+
+        if not versions.exists():
+            return format_html(
+                '<div class="lv-version-pipeline" data-create-url="{}">'
+                '<p>Este livro ainda nao possui versoes.</p>'
+                '<button type="button" class="button default lv-add-version-btn">Adicionar nova versao</button>'
+                '<div class="lv-version-modal" id="lv-add-version-modal" hidden>'
+                '<div class="lv-version-modal__card">'
+                '<h3>Adicionar nova versao</h3>'
+                '<label>Nome da versao</label>'
+                '<input type="text" id="lv-new-version-name" placeholder="2026.03.11">'
+                '<label>Changelog</label>'
+                '<textarea id="lv-new-version-changelog" rows="4" placeholder="Resumo das mudancas"></textarea>'
+                '<div class="lv-version-modal__actions">'
+                '<button type="button" class="button default" id="lv-confirm-add-version">Criar rascunho</button>'
+                '<button type="button" class="button" id="lv-cancel-add-version">Cancelar</button>'
+                '</div>'
+                '</div>'
+                '</div>'
+                '</div>',
+                create_url,
+            )
+
+        status_badges = {
+            BookVersion.Status.DRAFT: 'lv-status-badge lv-status-badge--draft',
+            BookVersion.Status.PUBLISHED: 'lv-status-badge lv-status-badge--published',
+            BookVersion.Status.ARCHIVED: 'lv-status-badge lv-status-badge--archived',
+        }
+
+        rows = []
+        for version in versions:
+            publish_url = reverse('admin:library_book_publish_version', args=[obj.id, version.id])
+            chapters_url = f'{reverse("admin:library_bookchapter_changelist")}?book_version__id__exact={version.id}'
+            add_chapter_url = f'{reverse("admin:library_bookchapter_add")}?book_version={version.id}'
+            edit_version_url = reverse('admin:library_bookversion_change', args=[version.id])
+
+            if version.status == BookVersion.Status.DRAFT:
+                publish_cell = format_html(
+                    '<button type="button" class="button default lv-publish-version-btn" '
+                    'data-publish-url="{}" data-version-label="{}">Publicar</button>',
+                    publish_url,
+                    version.version,
+                )
+            else:
+                publish_cell = version.published_at.isoformat() if version.published_at else '-'
+
+            rows.append(
+                (
+                    version.version,
+                    format_html(
+                        '<span class="{}">{}</span>',
+                        status_badges.get(version.status, 'lv-status-badge'),
+                        version.get_status_display(),
+                    ),
+                    Truncator((version.changelog or '').strip()).chars(120) or '-',
+                    publish_cell,
+                    format_html(
+                        '<a class="button" href="{}">Capitulos</a> '
+                        '<a class="button" href="{}">Adicionar capitulo</a> '
+                        '<a class="button" href="{}">Editar versao</a>',
+                        chapters_url,
+                        add_chapter_url,
+                        edit_version_url,
+                    ),
+                )
+            )
+
+        return format_html(
+            '<div class="lv-version-pipeline" data-create-url="{}">'
+            '<div class="lv-version-pipeline__header">'
+            '<button type="button" class="button default lv-add-version-btn">Adicionar nova versao</button>'
+            '</div>'
+            '<table class="lv-version-pipeline__table">'
+            '<thead><tr>'
+            '<th>Versao</th><th>Status</th><th>Changelog</th><th>Publicacao</th><th>Acoes</th>'
+            '</tr></thead>'
+            '<tbody>{}</tbody>'
+            '</table>'
+            '<div class="lv-version-modal" id="lv-add-version-modal" hidden>'
+            '<div class="lv-version-modal__card">'
+            '<h3>Adicionar nova versao</h3>'
+            '<label>Nome da versao</label>'
+            '<input type="text" id="lv-new-version-name" placeholder="2026.03.11">'
+            '<label>Changelog</label>'
+            '<textarea id="lv-new-version-changelog" rows="4" placeholder="Resumo das mudancas"></textarea>'
+            '<div class="lv-version-modal__actions">'
+            '<button type="button" class="button default" id="lv-confirm-add-version">Criar rascunho</button>'
+            '<button type="button" class="button" id="lv-cancel-add-version">Cancelar</button>'
+            '</div>'
+            '</div>'
+            '</div>'
+            '<div class="lv-version-modal" id="lv-publish-version-modal" hidden>'
+            '<div class="lv-version-modal__card">'
+            '<h3>Confirmar publicacao</h3>'
+            '<p id="lv-publish-version-message"></p>'
+            '<p>Ao confirmar, esta versao vira publicada e as demais ficam arquivadas.</p>'
+            '<div class="lv-version-modal__actions">'
+            '<button type="button" class="button default" id="lv-confirm-publish-version">Sim, publicar</button>'
+            '<button type="button" class="button" id="lv-cancel-publish-version">Cancelar</button>'
+            '</div>'
+            '</div>'
+            '</div>'
+            '</div>',
+            create_url,
+            format_html_join(
+                '',
+                '<tr><td><strong>{}</strong></td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>',
+                rows,
+            ),
+        )
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                '<path:book_id>/versions/create/',
+                self.admin_site.admin_view(self.create_version_view),
+                name='library_book_create_version',
+            ),
+            path(
+                '<path:book_id>/versions/<path:version_id>/publish/',
+                self.admin_site.admin_view(self.publish_version_view),
+                name='library_book_publish_version',
+            ),
+        ]
+        return custom_urls + urls
+
+    def _book_change_redirect(self, book_id):
+        return redirect('admin:library_book_change', object_id=book_id)
+
+    def create_version_view(self, request, book_id, *args, **kwargs):
+        if request.method != 'POST':
+            return HttpResponseNotAllowed(['POST'])
+
+        book = get_object_or_404(Book, pk=book_id)
+        if not self.has_change_permission(request, obj=book):
+            return self._book_change_redirect(book.id)
+
+        version_name = (request.POST.get('version') or '').strip()
+        changelog = (request.POST.get('changelog') or '').strip()
+        if not version_name:
+            self.message_user(request, 'Informe o nome da nova versao.', level=messages.ERROR)
+            return self._book_change_redirect(book.id)
+        if not changelog:
+            self.message_user(request, 'Informe o changelog da nova versao.', level=messages.ERROR)
+            return self._book_change_redirect(book.id)
+
+        source_version = self._get_current_version(book)
+        try:
+            if source_version:
+                created = create_preloaded_book_version(
+                    source_version=source_version,
+                    new_version=version_name,
+                    changelog=changelog,
+                    status=BookVersion.Status.DRAFT,
+                    published_at=None,
+                )
+            else:
+                created = BookVersion.objects.create(
+                    book=book,
+                    version=version_name,
+                    changelog=changelog,
+                    status=BookVersion.Status.DRAFT,
+                )
+        except ValueError as exc:
+            self.message_user(request, str(exc), level=messages.ERROR)
+            return self._book_change_redirect(book.id)
+        except IntegrityError:
+            self.message_user(
+                request,
+                'Ja existe uma versao com esse identificador para este livro.',
+                level=messages.ERROR,
+            )
+            return self._book_change_redirect(book.id)
+
+        self.message_user(
+            request,
+            f'Versao "{created.version}" criada em rascunho.',
+            level=messages.SUCCESS,
+        )
+        return self._book_change_redirect(book.id)
+
+    def publish_version_view(self, request, book_id, version_id, *args, **kwargs):
+        if request.method != 'POST':
+            return HttpResponseNotAllowed(['POST'])
+
+        book = get_object_or_404(Book, pk=book_id)
+        version = get_object_or_404(BookVersion, pk=version_id, book=book)
+        if not self.has_change_permission(request, obj=book):
+            return self._book_change_redirect(book.id)
+
+        if not (version.changelog or '').strip():
+            self.message_user(
+                request,
+                'Nao e possivel publicar sem changelog. Atualize a versao antes de publicar.',
+                level=messages.ERROR,
+            )
+            return self._book_change_redirect(book.id)
+
+        with transaction.atomic():
+            archived_count = (
+                BookVersion.objects
+                .filter(book=book)
+                .exclude(pk=version.pk)
+                .exclude(status=BookVersion.Status.ARCHIVED)
+                .update(status=BookVersion.Status.ARCHIVED)
+            )
+
+            became_published = version.status != BookVersion.Status.PUBLISHED
+            version.status = BookVersion.Status.PUBLISHED
+            if version.published_at is None:
+                version.published_at = timezone.localdate()
+            version.save(update_fields=['status', 'published_at'])
+
+            if book.status != Book.Status.PUBLISHED:
+                book.status = Book.Status.PUBLISHED
+                book.save(update_fields=['status'])
+
+        if became_published:
+            enqueue_book_version_publication_notifications(book_version=version)
+
+        self.message_user(
+            request,
+            f'Versao "{version.version}" publicada com sucesso. {archived_count} versao(oes) arquivada(s).',
+            level=messages.SUCCESS,
+        )
+        return self._book_change_redirect(book.id)
 
 
 class BookChapterInline(admin.StackedInline):
@@ -143,20 +447,39 @@ class BookChapterInline(admin.StackedInline):
 class BookVersionAdmin(admin.ModelAdmin):
     form = BookVersionAdminForm
     action_form = BookVersionActionForm
-    list_display = ('id', 'book', 'version', 'status', 'published_at', 'created_at')
+    list_display = ('book', 'version', 'status', 'published_at', 'created_at')
     search_fields = ('book__title', 'version')
     list_filter = ('status', 'book')
     inlines = [BookChapterInline]
     actions = ('create_preloaded_version',)
 
     def save_model(self, request, obj, form, change):
+        if not change:
+            obj.status = BookVersion.Status.DRAFT
+            obj.published_at = None
+
         previous_status = None
         if change and obj.pk:
             previous_status = (
                 BookVersion.objects.filter(pk=obj.pk).values_list('status', flat=True).first()
             )
 
+        if obj.status == BookVersion.Status.PUBLISHED:
+            (
+                BookVersion.objects
+                .filter(book=obj.book)
+                .exclude(pk=obj.pk)
+                .exclude(status=BookVersion.Status.ARCHIVED)
+                .update(status=BookVersion.Status.ARCHIVED)
+            )
+            if obj.published_at is None:
+                obj.published_at = timezone.localdate()
+
         super().save_model(request, obj, form, change)
+
+        if obj.status == BookVersion.Status.PUBLISHED and obj.book.status != Book.Status.PUBLISHED:
+            Book.objects.filter(pk=obj.book_id).update(status=Book.Status.PUBLISHED)
+            obj.book.status = Book.Status.PUBLISHED
 
         became_published = obj.status == BookVersion.Status.PUBLISHED and previous_status != BookVersion.Status.PUBLISHED
         request._suppress_chapter_notifications_for_version_ids = getattr(
@@ -193,9 +516,8 @@ class BookVersionAdmin(admin.ModelAdmin):
         source_version = queryset.first()
         new_version = (request.POST.get('new_version') or '').strip()
         new_changelog = (request.POST.get('new_changelog') or '').strip()
-        publish_now = request.POST.get('publish_now') == 'on'
-        status = BookVersion.Status.PUBLISHED if publish_now else BookVersion.Status.DRAFT
-        published_at = timezone.localdate() if publish_now else None
+        status = BookVersion.Status.DRAFT
+        published_at = None
 
         try:
             cloned_version = create_preloaded_book_version(
@@ -229,12 +551,12 @@ class BookVersionAdmin(admin.ModelAdmin):
 @admin.register(BookChapter)
 class BookChapterAdmin(admin.ModelAdmin):
     form = BookChapterAdminForm
-    list_display = ('id', 'book_version', 'order', 'title', 'slug', 'content_preview_compact', 'updated_at')
+    list_display = ('book_version', 'order', 'title', 'slug', 'content_preview_compact', 'updated_at')
     list_editable = ('order',)
-    list_display_links = ('id', 'book_version', 'title')
+    list_display_links = ('book_version', 'title')
     search_fields = ('book_version__book__title', 'book_version__version', 'title', 'slug', 'content_rich', 'content_plain')
-    list_filter = ('book_version__book',)
-    ordering = ('book_version', 'order', 'id')
+    list_filter = ('book_version__book', 'book_version')
+    ordering = ('book_version', 'order', 'title')
     prepopulated_fields = {'slug': ('title',)}
     readonly_fields = ('content_preview', 'content_plain', 'created_at', 'updated_at')
     fields = (
@@ -248,6 +570,10 @@ class BookChapterAdmin(admin.ModelAdmin):
         'created_at',
         'updated_at',
     )
+
+    def has_module_permission(self, request):
+        # A gestao de capitulos acontece pelo fluxo de Livro.
+        return False
 
     @admin.display(description='Preview')
     def content_preview(self, obj):

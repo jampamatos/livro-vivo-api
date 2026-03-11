@@ -78,6 +78,14 @@ class LibraryModelTests(LibraryBaseTestCase):
             with transaction.atomic():
                 BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
 
+    def test_book_version_allows_only_one_published_per_book(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                BookVersion.objects.create(book=book, version='2024.02', status=BookVersion.Status.PUBLISHED)
+
     def test_book_chapter_unique_constraints_per_version(self):
         book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
         version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
@@ -562,6 +570,138 @@ class LibraryAdminTests(TestCase):
             content_rich='<p>Conteúdo inicial</p>',
         )
 
+    def test_book_admin_changelist_uses_title_as_link_without_id_column(self):
+        response = self.client.get(reverse('admin:library_book_changelist'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            f'<a href="{reverse("admin:library_book_change", args=[self.book.id])}">{self.book.title}</a>',
+            html=True,
+        )
+        self.assertNotContains(response, 'field-id')
+
+    def test_book_admin_change_form_shows_current_chapters_and_old_versions(self):
+        old_version = BookVersion.objects.create(
+            book=self.book,
+            version='2023.12',
+            changelog='Versao antiga',
+            status=BookVersion.Status.ARCHIVED,
+        )
+        BookChapter.objects.create(
+            book_version=old_version,
+            order=1,
+            title='Capítulo antigo',
+            slug='capitulo-antigo',
+            content_rich='<p>Capitulo antigo</p>',
+        )
+        draft_version = BookVersion.objects.create(
+            book=self.book,
+            version='2024.02',
+            changelog='Nova versao em rascunho',
+            status=BookVersion.Status.DRAFT,
+        )
+
+        response = self.client.get(reverse('admin:library_book_change', args=[self.book.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Pipeline de versoes')
+        self.assertContains(response, 'Adicionar nova versao')
+        self.assertContains(response, f'data-create-url="{reverse("admin:library_book_create_version", args=[self.book.id])}"')
+        self.assertContains(response, f'data-version-label="{draft_version.version}"')
+        self.assertContains(response, reverse('admin:library_book_publish_version', args=[self.book.id, draft_version.id]))
+        self.assertContains(response, f'?book_version__id__exact={self.version.id}')
+        self.assertContains(response, f'?book_version={self.version.id}')
+        self.assertContains(response, reverse('admin:library_bookversion_change', args=[self.version.id]))
+        self.assertContains(response, f'?book_version__id__exact={old_version.id}')
+        self.assertContains(response, old_version.version)
+
+    def test_book_admin_create_version_endpoint_creates_draft_and_clones_chapters(self):
+        response = self.client.post(
+            reverse('admin:library_book_create_version', args=[self.book.id]),
+            data={
+                'version': '2024.02',
+                'changelog': 'Nova iteracao',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        created = BookVersion.objects.get(book=self.book, version='2024.02')
+        self.assertEqual(created.status, BookVersion.Status.DRAFT)
+        self.assertIsNone(created.published_at)
+        self.assertEqual(created.changelog, 'Nova iteracao')
+        self.assertEqual(created.chapters.count(), self.version.chapters.count())
+        self.assertContains(response, 'Versao &quot;2024.02&quot; criada em rascunho.')
+
+    def test_book_admin_publish_version_endpoint_publishes_target_and_archives_others(self):
+        target_user = User.objects.create_user(
+            username='notify-pipeline@example.com',
+            email='notify-pipeline@example.com',
+            password='StrongPass123',
+        )
+        Subscription.objects.create(
+            user=target_user,
+            tier=Subscription.Tier.ESSENTIAL,
+            status=Subscription.Status.ACTIVE,
+        )
+
+        self.version.status = BookVersion.Status.ARCHIVED
+        self.version.save(update_fields=['status'])
+
+        other_published = BookVersion.objects.create(
+            book=self.book,
+            version='2024.00',
+            changelog='Publicada antiga',
+            status=BookVersion.Status.PUBLISHED,
+            published_at=timezone.localdate() - timedelta(days=1),
+        )
+        target = BookVersion.objects.create(
+            book=self.book,
+            version='2024.02',
+            changelog='Pronta para publicar',
+            status=BookVersion.Status.DRAFT,
+        )
+
+        response = self.client.post(
+            reverse('admin:library_book_publish_version', args=[self.book.id, target.id]),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        target.refresh_from_db()
+        self.version.refresh_from_db()
+        other_published.refresh_from_db()
+        self.book.refresh_from_db()
+
+        self.assertEqual(target.status, BookVersion.Status.PUBLISHED)
+        self.assertIsNotNone(target.published_at)
+        self.assertEqual(self.version.status, BookVersion.Status.ARCHIVED)
+        self.assertEqual(other_published.status, BookVersion.Status.ARCHIVED)
+        self.assertEqual(self.book.status, Book.Status.PUBLISHED)
+        self.assertTrue(
+            NotificationEvent.objects.filter(dedup_key=f'book-version-published:{target.id}').exists()
+        )
+        self.assertContains(response, f'Versao &quot;{target.version}&quot; publicada com sucesso.')
+
+    def test_book_admin_publish_version_endpoint_requires_changelog(self):
+        target = BookVersion.objects.create(
+            book=self.book,
+            version='2024.03',
+            changelog='',
+            status=BookVersion.Status.DRAFT,
+        )
+
+        response = self.client.post(
+            reverse('admin:library_book_publish_version', args=[self.book.id, target.id]),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        target.refresh_from_db()
+        self.assertEqual(target.status, BookVersion.Status.DRAFT)
+        self.assertContains(response, 'Nao e possivel publicar sem changelog.')
+
     def test_book_chapter_admin_changelist_renders_preview_and_order(self):
         response = self.client.get(reverse('admin:library_bookchapter_changelist'))
 
@@ -569,6 +709,13 @@ class LibraryAdminTests(TestCase):
         self.assertContains(response, 'introducao')
         self.assertContains(response, 'Conteúdo inicial')
         self.assertContains(response, 'id="id_form-0-order"')
+        self.assertNotContains(response, 'field-id')
+
+    def test_book_chapter_model_is_hidden_from_admin_index_menu(self):
+        response = self.client.get(reverse('admin:index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'Capitulos do livro')
 
     def test_book_chapter_admin_change_form_updates_and_sanitizes_content(self):
         response = self.client.post(
@@ -717,6 +864,9 @@ class LibraryAdminTests(TestCase):
             status=Subscription.Status.ACTIVE,
         )
 
+        self.version.status = BookVersion.Status.ARCHIVED
+        self.version.save(update_fields=['status'])
+
         draft = BookVersion.objects.create(
             book=self.book,
             version='2024.91',
@@ -759,6 +909,9 @@ class LibraryAdminTests(TestCase):
             tier=Subscription.Tier.ESSENTIAL,
             status=Subscription.Status.ACTIVE,
         )
+
+        self.version.status = BookVersion.Status.ARCHIVED
+        self.version.save(update_fields=['status'])
 
         draft = BookVersion.objects.create(
             book=self.book,
@@ -946,19 +1099,20 @@ class LibraryAPITests(LibraryBaseTestCase):
         self.assertEqual(len(versions), 1)
         self.assertEqual(versions[0]['id'], published.id)
 
-    def test_book_version_list_all_versions_for_staff(self):
+    def test_book_version_list_filters_versions_for_staff(self):
         user = self._create_user(is_staff=True)
         self._auth_client(user)
 
         book = Book.objects.create(title='Published', status=Book.Status.PUBLISHED)
-        draft = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.DRAFT)
+        BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.DRAFT)
         published = BookVersion.objects.create(book=book, version='2024.02', status=BookVersion.Status.PUBLISHED)
 
         response = self.client.get(reverse('book-versions', kwargs={'book_id': book.id}))
 
         self.assertEqual(response.status_code, 200)
-        ids = {item['id'] for item in response.data['versions']}
-        self.assertEqual(ids, {draft.id, published.id})
+        versions = response.data['versions']
+        self.assertEqual(len(versions), 1)
+        self.assertEqual(versions[0]['id'], published.id)
 
     def test_book_version_list_allows_subscription_without_book_entitlement(self):
         user = self._create_user()
@@ -982,41 +1136,41 @@ class LibraryAPITests(LibraryBaseTestCase):
         self._grant_entitlement(user, book=book)
         self._auth_client(user)
 
-        published_old = BookVersion.objects.create(
+        archived_old = BookVersion.objects.create(
             book=book,
             version='2024.01',
+            status=BookVersion.Status.ARCHIVED,
+        )
+        published_current = BookVersion.objects.create(
+            book=book,
+            version='2024.02',
             status=BookVersion.Status.PUBLISHED,
         )
         BookVersion.objects.create(
             book=book,
-            version='2024.02',
-            status=BookVersion.Status.DRAFT,
-        )
-        published_latest = BookVersion.objects.create(
-            book=book,
             version='2024.03',
-            status=BookVersion.Status.PUBLISHED,
+            status=BookVersion.Status.DRAFT,
         )
 
         response = self.client.get(reverse('book-current-version', kwargs={'book_id': book.id}))
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['book']['id'], book.id)
-        self.assertEqual(response.data['version']['id'], published_latest.id)
-        self.assertNotEqual(response.data['version']['id'], published_old.id)
+        self.assertEqual(response.data['version']['id'], published_current.id)
+        self.assertNotEqual(response.data['version']['id'], archived_old.id)
 
-    def test_current_version_returns_latest_any_for_staff(self):
+    def test_current_version_returns_only_published_for_staff(self):
         user = self._create_user(is_staff=True)
         self._auth_client(user)
-        book = Book.objects.create(title='Draft Book', status=Book.Status.DRAFT)
-        BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
-        draft_latest = BookVersion.objects.create(book=book, version='2024.02', status=BookVersion.Status.DRAFT)
+        book = Book.objects.create(title='Published Book', status=Book.Status.PUBLISHED)
+        published = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        BookVersion.objects.create(book=book, version='2024.02', status=BookVersion.Status.DRAFT)
 
         response = self.client.get(reverse('book-current-version', kwargs={'book_id': book.id}))
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data['version']['id'], draft_latest.id)
-        self.assertEqual(response.data['version']['status'], BookVersion.Status.DRAFT)
+        self.assertEqual(response.data['version']['id'], published.id)
+        self.assertEqual(response.data['version']['status'], BookVersion.Status.PUBLISHED)
 
     def test_current_version_returns_404_when_non_staff_has_no_published_version(self):
         user = self._create_user()

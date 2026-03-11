@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 from django.contrib.postgres.search import SearchVector
 from django.db import models
+from django.db.models import Q
 
 
 ALLOWED_CHAPTER_TAGS = {
@@ -225,6 +226,11 @@ class BookVersion(models.Model):
             models.UniqueConstraint(
                 fields=['book', 'version'],
                 name='uniq_book_version_per_book'
+            ),
+            models.UniqueConstraint(
+                fields=['book'],
+                condition=Q(status='published'),
+                name='uniq_published_book_version_per_book',
             )
         ]
 

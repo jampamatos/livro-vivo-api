@@ -1,0 +1,102 @@
+.lv-version-pipeline {
+  border: 1px solid #d7dee7;
+  border-radius: 8px;
+  padding: 0.85rem;
+  background: #ffffff;
+}
+
+.lv-version-pipeline__header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+.lv-version-pipeline__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.lv-version-pipeline__table th,
+.lv-version-pipeline__table td {
+  padding: 0.55rem 0.6rem;
+  border-bottom: 1px solid #eef2f7;
+  vertical-align: top;
+}
+
+.lv-version-pipeline__table th {
+  text-align: left;
+  font-size: 0.84rem;
+  color: #495465;
+}
+
+.lv-status-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.18rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.lv-status-badge--draft {
+  background: #fff3d0;
+  color: #7c5d00;
+}
+
+.lv-status-badge--published {
+  background: #d6f7e4;
+  color: #0f5c3a;
+}
+
+.lv-status-badge--archived {
+  background: #edf1f7;
+  color: #495465;
+}
+
+.lv-version-modal[hidden] {
+  display: none;
+}
+
+.lv-version-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(25, 35, 50, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+
+.lv-version-modal__card {
+  width: min(560px, 92vw);
+  background: #fff;
+  border-radius: 10px;
+  padding: 1rem;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.2);
+}
+
+.lv-version-modal__card h3 {
+  margin-top: 0;
+  margin-bottom: 0.75rem;
+}
+
+.lv-version-modal__card label {
+  display: block;
+  margin-top: 0.6rem;
+  margin-bottom: 0.3rem;
+  font-weight: 600;
+}
+
+.lv-version-modal__card input,
+.lv-version-modal__card textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.lv-version-modal__actions {
+  margin-top: 0.9rem;
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}

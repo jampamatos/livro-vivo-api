@@ -1,5 +1,9 @@
+from io import StringIO
+
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.core.management import call_command
+from django.test import Client, TestCase
+from django.urls import reverse
 
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -342,3 +346,228 @@ class AnnotationApiTests(TestCase):
         }
         resp = self.client.post('/annotations/', payload, format='json')
         self.assertEqual(resp.status_code, 201)
+
+
+class AnnotationAdminTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        User = get_user_model()
+        self.admin_user = User.objects.create_superuser(
+            username='admin-annotations@example.com',
+            email='admin-annotations@example.com',
+            password='StrongPass123',
+        )
+        self.client.force_login(self.admin_user)
+
+        self.user_1 = User.objects.create_user(
+            username='annotator-1@example.com',
+            email='annotator-1@example.com',
+            password='StrongPass123',
+        )
+        self.user_2 = User.objects.create_user(
+            username='annotator-2@example.com',
+            email='annotator-2@example.com',
+            password='StrongPass123',
+        )
+
+        self.book = Book.objects.create(title='Livro anotacoes')
+        self.book_version = BookVersion.objects.create(book=self.book, version='1')
+        self.chapter_1 = BookChapter.objects.create(
+            book_version=self.book_version,
+            title='Capítulo A',
+            slug='capitulo-a',
+            order=1,
+            content_rich='<p>Texto A</p>',
+        )
+        self.chapter_2 = BookChapter.objects.create(
+            book_version=self.book_version,
+            title='Capítulo B',
+            slug='capitulo-b',
+            order=2,
+            content_rich='<p>Texto B</p>',
+        )
+
+        self.annotation_1 = Annotation.objects.create(
+            user=self.user_1,
+            book_version=self.book_version,
+            chapter=self.chapter_1,
+            selector={'kind': 'text-quote'},
+            start_offset=0,
+            end_offset=4,
+            note='Nota A',
+            color='yellow',
+        )
+        self.annotation_2 = Annotation.objects.create(
+            user=self.user_2,
+            book_version=self.book_version,
+            chapter=self.chapter_2,
+            selector={'kind': 'text-quote'},
+            start_offset=0,
+            end_offset=4,
+            note='Nota B',
+            color='green',
+        )
+
+    def test_admin_annotations_changelist_groups_by_user(self):
+        response = self.client.get(reverse('admin:annotations_annotation_changelist'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Quantidade de anotacoes')
+        self.assertContains(response, self.user_1.email)
+        self.assertContains(response, self.user_2.email)
+        self.assertContains(response, f'user__id__exact={self.user_1.id}')
+        self.assertContains(response, f'user__id__exact={self.user_2.id}')
+        self.assertTrue(response.context['annotation_group_by_user'])
+
+    def test_admin_annotations_user_filter_opens_annotations_from_selected_user(self):
+        response = self.client.get(
+            f'{reverse("admin:annotations_annotation_changelist")}?user__id__exact={self.user_1.id}'
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('annotation_group_by_user', response.context)
+        self.assertEqual(response.context['cl'].result_count, 1)
+        result_ids = [annotation.id for annotation in response.context['cl'].result_list]
+        self.assertEqual(result_ids, [self.annotation_1.id])
+
+    def test_admin_annotation_change_view_works_with_changelist_filters(self):
+        change_url = reverse('admin:annotations_annotation_change', args=[self.annotation_1.id])
+        response = self.client.get(
+            change_url,
+            {'_changelist_filters': f'user__id__exact={self.user_1.id}'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Nota A')
+
+
+class AnnotationMigrationCommandTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username='migrate-annotations@example.com',
+            email='migrate-annotations@example.com',
+            password='StrongPass123',
+        )
+
+        self.book = Book.objects.create(title='Livro migracao')
+        self.from_version = BookVersion.objects.create(book=self.book, version='2024.01')
+        self.to_version = BookVersion.objects.create(book=self.book, version='2024.02')
+
+        self.from_chapter_main = BookChapter.objects.create(
+            book_version=self.from_version,
+            title='Capitulo principal',
+            slug='cap-principal',
+            order=1,
+            content_rich='<p>Texto legado com trecho importante.</p>',
+        )
+        self.from_chapter_missing = BookChapter.objects.create(
+            book_version=self.from_version,
+            title='Capitulo sem destino',
+            slug='cap-sem-destino',
+            order=2,
+            content_rich='<p>Conteudo sem capitulo correspondente.</p>',
+        )
+        self.to_chapter_main = BookChapter.objects.create(
+            book_version=self.to_version,
+            title='Capitulo principal v2',
+            slug='cap-principal',
+            order=1,
+            content_rich='<p>Novo texto com trecho importante e ajustes.</p>',
+        )
+
+        excerpt = 'trecho importante'
+        source_text = self.from_chapter_main.content_plain
+        start = source_text.find(excerpt)
+        end = start + len(excerpt)
+
+        self.annotation_main = Annotation.objects.create(
+            user=self.user,
+            book_version=self.from_version,
+            chapter=self.from_chapter_main,
+            selector={'kind': 'text-quote'},
+            start_offset=start,
+            end_offset=end,
+            excerpt=excerpt,
+            note='nota principal',
+            color='yellow',
+        )
+        self.annotation_missing = Annotation.objects.create(
+            user=self.user,
+            book_version=self.from_version,
+            chapter=self.from_chapter_missing,
+            selector={'kind': 'text-quote'},
+            start_offset=0,
+            end_offset=8,
+            excerpt='Conteudo',
+            note='nota sem destino',
+            color='green',
+        )
+
+    def test_command_dry_run_then_copy_creates_target_annotations(self):
+        dry_stdout = StringIO()
+        call_command(
+            'migrate_annotations_between_versions',
+            from_version_id=self.from_version.id,
+            to_version_id=self.to_version.id,
+            dry_run=True,
+            stdout=dry_stdout,
+        )
+        self.assertIn('DRY-RUN', dry_stdout.getvalue())
+        self.assertEqual(Annotation.objects.filter(book_version=self.to_version).count(), 0)
+
+        run_stdout = StringIO()
+        call_command(
+            'migrate_annotations_between_versions',
+            from_version_id=self.from_version.id,
+            to_version_id=self.to_version.id,
+            stdout=run_stdout,
+        )
+        output = run_stdout.getvalue()
+        self.assertIn('created=1', output)
+        self.assertIn('skipped_missing_chapter=1', output)
+
+        migrated = Annotation.objects.get(book_version=self.to_version, note='nota principal')
+        self.assertEqual(migrated.user_id, self.user.id)
+        self.assertEqual(migrated.chapter_id, self.to_chapter_main.id)
+        self.assertEqual(migrated.excerpt, 'trecho importante')
+        self.assertEqual(migrated.color, 'yellow')
+        self.assertTrue(Annotation.objects.filter(id=self.annotation_main.id).exists())
+
+    def test_command_move_removes_source_after_copy(self):
+        run_stdout = StringIO()
+        call_command(
+            'migrate_annotations_between_versions',
+            from_version_id=self.from_version.id,
+            to_version_id=self.to_version.id,
+            move=True,
+            stdout=run_stdout,
+        )
+        output = run_stdout.getvalue()
+        self.assertIn('created=1', output)
+        self.assertIn('moved=1', output)
+
+        self.assertFalse(Annotation.objects.filter(id=self.annotation_main.id).exists())
+        self.assertTrue(Annotation.objects.filter(id=self.annotation_missing.id).exists())
+        self.assertEqual(Annotation.objects.filter(book_version=self.to_version).count(), 1)
+
+    def test_command_is_idempotent_for_duplicates(self):
+        call_command(
+            'migrate_annotations_between_versions',
+            from_version_id=self.from_version.id,
+            to_version_id=self.to_version.id,
+            stdout=StringIO(),
+        )
+
+        second_stdout = StringIO()
+        call_command(
+            'migrate_annotations_between_versions',
+            from_version_id=self.from_version.id,
+            to_version_id=self.to_version.id,
+            stdout=second_stdout,
+        )
+        output = second_stdout.getvalue()
+
+        self.assertIn('created=0', output)
+        self.assertIn('duplicates=1', output)
+        self.assertEqual(Annotation.objects.filter(book_version=self.to_version).count(), 1)

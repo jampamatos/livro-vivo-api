@@ -1,0 +1,36 @@
+.lv-current-path {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-left: 4px solid #2f7ea7;
+  background: linear-gradient(90deg, rgba(47, 126, 167, 0.15), rgba(47, 126, 167, 0.02));
+  color: #d5e7f0;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.lv-current-path__label {
+  font-weight: 700;
+  margin-right: 6px;
+}
+
+.lv-current-path__trail {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.lv-current-path__trail a {
+  color: #8fd0f3;
+  text-decoration: underline;
+}
+
+.lv-current-path__trail a:hover {
+  color: #b9e7ff;
+}
+
+.lv-current-path__sep {
+  color: rgba(213, 231, 240, 0.65);
+  font-weight: 600;
+  margin: 0 2px;
+}

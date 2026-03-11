@@ -4,8 +4,9 @@ from unittest import mock
 from django.contrib.admin.sites import site
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import Client, TestCase
 from django.test.client import RequestFactory
+from django.urls import reverse
 from rest_framework.test import APITestCase
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -717,3 +718,112 @@ class CommunityAdminModerationTests(TestCase):
         self.assertEqual(action.from_status, Report.Status.OPEN)
         self.assertEqual(action.to_status, Report.Status.RESOLVED)
         self.assertEqual(self.post.moderation_state, Post.ModerationState.REMOVED)
+
+
+class CommunityAdminUxTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.superuser = User.objects.create_superuser(
+            username="admin_ux@test.com",
+            email="admin_ux@test.com",
+            password="pass1234",
+        )
+        self.author = User.objects.create_user(
+            username="author_ux@test.com",
+            email="author_ux@test.com",
+            password="pass1234",
+        )
+        self.reporter = User.objects.create_user(
+            username="reporter_ux@test.com",
+            email="reporter_ux@test.com",
+            password="pass1234",
+        )
+        self.category = Category.objects.create(name="Direito Constitucional", slug="constitucional")
+        self.post = Post.objects.create(
+            author=self.author,
+            category=self.category,
+            title="Controle de constitucionalidade",
+            body="Resumo do tema.",
+        )
+        self.comment = Comment.objects.create(
+            post=self.post,
+            author=self.reporter,
+            body="Comentario detalhado sobre o entendimento mais recente.",
+        )
+        Report.objects.create(reporter=self.superuser, comment=self.comment, reason="revisar")
+        self.client.force_login(self.superuser)
+
+    def test_category_changelist_links_category_name_to_filtered_posts(self):
+        response = self.client.get(reverse("admin:community_category_changelist"))
+        self.assertEqual(response.status_code, 200)
+
+        expected_posts_url = f"{reverse('admin:community_post_changelist')}?category__id__exact={self.category.id}"
+        self.assertContains(response, "Voce esta em:")
+        self.assertContains(response, "Comunidade")
+        self.assertContains(response, expected_posts_url)
+        self.assertContains(response, self.category.name)
+
+    def test_post_changelist_shows_context_path_for_filtered_category(self):
+        response = self.client.get(
+            f"{reverse('admin:community_post_changelist')}?category__id__exact={self.category.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Voce esta em:")
+        self.assertContains(response, "Comunidade")
+        self.assertContains(response, self.category.name)
+
+    def test_post_change_page_shows_comments_panel_and_moderation_fields(self):
+        response = self.client.get(reverse("admin:community_post_change", args=[self.post.id]))
+        self.assertEqual(response.status_code, 200)
+
+        self.assertContains(response, "Voce esta em:")
+        self.assertContains(response, "Comunidade")
+        self.assertContains(response, self.category.name)
+        self.assertContains(response, self.post.title)
+        self.assertContains(response, "Comentarios do post")
+        self.assertContains(response, reverse("admin:community_comment_change", args=[self.comment.id]))
+        self.assertContains(response, "Status de moderacao")
+        self.assertContains(response, 'name="moderation_state"', html=False)
+        self.assertContains(response, 'name="moderated_by"', html=False)
+        self.assertContains(response, 'name="moderated_at_0"', html=False)
+        self.assertContains(response, 'name="moderated_at_1"', html=False)
+        self.assertContains(response, 'name="moderation_note"', html=False)
+
+    def test_comment_change_page_shows_moderation_section(self):
+        response = self.client.get(reverse("admin:community_comment_change", args=[self.comment.id]))
+        self.assertEqual(response.status_code, 200)
+
+        self.assertContains(response, "Voce esta em:")
+        self.assertContains(response, "Comunidade")
+        self.assertContains(response, self.category.name)
+        self.assertContains(response, self.post.title)
+        self.assertContains(response, f"Comentario #{self.comment.id}")
+        self.assertContains(response, "Moderacao")
+        self.assertContains(response, 'name="moderation_state"', html=False)
+        self.assertContains(response, 'name="moderated_by"', html=False)
+        self.assertContains(response, 'name="moderated_at_0"', html=False)
+        self.assertContains(response, 'name="moderated_at_1"', html=False)
+        self.assertContains(response, 'name="moderation_note"', html=False)
+
+    def test_post_changelist_shows_comments_counter_column(self):
+        Comment.objects.create(
+            post=self.post,
+            author=self.author,
+            body="Segundo comentario para validar contador.",
+        )
+
+        response = self.client.get(reverse("admin:community_post_changelist"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Comentarios")
+        self.assertContains(response, 'field-comments_count">2<', html=False)
+
+    def test_comment_changelist_shows_context_path_for_filtered_post(self):
+        response = self.client.get(
+            f"{reverse('admin:community_comment_changelist')}?post__id__exact={self.post.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Voce esta em:")
+        self.assertContains(response, "Comunidade")
+        self.assertContains(response, self.category.name)
+        self.assertContains(response, self.post.title)
+        self.assertContains(response, "Comentarios")

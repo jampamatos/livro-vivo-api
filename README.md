@@ -255,6 +255,7 @@ Norteador UX do Admin para operacao juridica (nao-tech):
 
 - principios: `docs/ADMIN_PRINCIPIOS_UX_OPERACAO_JURIDICA_2026-03-09.md`
 - proposta inicial A1-02: `docs/ADMIN_PROPOSTA_ARQUITETURA_A1-02_2026-03-09.md`
+- implementacao A1-02: menu do admin agrupado por jornada operacional + atalhos de fila critica (`config/admin_navigation.py`)
 
 ## Limites conhecidos
 

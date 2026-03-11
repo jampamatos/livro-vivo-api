@@ -149,13 +149,14 @@ class BookVersionListView(APIView):
     def get(self, request, book_id: int):
         book = get_object_or_404(Book, pk=book_id)
 
-        if not request.user.is_staff and book.status != Book.Status.PUBLISHED:
+        if book.status != Book.Status.PUBLISHED:
             raise NotFound()
 
-        qs = BookVersion.objects.filter(book=book).order_by('-created_at')
-
-        if not request.user.is_staff:
-            qs = qs.filter(status=BookVersion.Status.PUBLISHED)
+        qs = (
+            BookVersion.objects
+            .filter(book=book, status=BookVersion.Status.PUBLISHED)
+            .order_by('-published_at', '-created_at', '-id')
+        )
 
         data = BookVersionSerializer(qs, many=True).data
         return Response({'book': BookSerializer(book).data, 'versions': data})
@@ -163,16 +164,14 @@ class BookVersionListView(APIView):
 
 def _get_visible_book_for_user(*, user, book_id: int) -> Book:
     book = get_object_or_404(Book, pk=book_id)
-    if not user.is_staff and book.status != Book.Status.PUBLISHED:
+    if book.status != Book.Status.PUBLISHED:
         raise NotFound()
     return book
 
 
 def _get_current_visible_version_for_user(*, user, book: Book) -> BookVersion:
-    qs = BookVersion.objects.filter(book=book)
-    if not user.is_staff:
-        qs = qs.filter(status=BookVersion.Status.PUBLISHED)
-    current = qs.order_by('-created_at').first()
+    qs = BookVersion.objects.filter(book=book, status=BookVersion.Status.PUBLISHED)
+    current = qs.order_by('-published_at', '-created_at', '-id').first()
     if not current:
         raise NotFound()
     return current

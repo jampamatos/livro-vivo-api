@@ -7,6 +7,8 @@ from django.http import JsonResponse
 from django.urls import include, path
 from django.views.decorators.http import require_GET
 
+from . import admin_navigation  # noqa: F401
+
 
 @require_GET
 def health(_request):
