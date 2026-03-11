@@ -34,6 +34,19 @@ class CaseLawModelTests(TestCase):
         self.assertEqual(cl.tags, ['consumidor', 'bagagem'])
         self.assertIn('STJ', str(cl))
 
+    def test_create_caselaw_sanitizes_ementa_rich_html(self):
+        cl = CaseLaw.objects.create(
+            court='TRF1',
+            case_number='AC 987/GO',
+            decision_date=date(2025, 2, 10),
+            ementa_rich='<p>Trecho seguro</p><script>alert(1)</script><img src=x onerror=alert(2)>',
+            url='https://example.com/case-safe',
+        )
+
+        self.assertNotIn('<script', cl.ementa_rich.lower())
+        self.assertNotIn('<img', cl.ementa_rich.lower())
+        self.assertIn('Trecho seguro', cl.ementa_plain)
+
     def test_unique_constraint_court_case_number(self):
         CaseLaw.objects.create(
             court='STF',

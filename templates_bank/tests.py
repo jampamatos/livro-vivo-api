@@ -537,3 +537,27 @@ class TemplatesBankFileMetadataTests(TestCase):
                 file_url='https://files.example.com/modelo-conflito.docx',
                 status=PublicationStatus.DRAFT,
             )
+
+    def test_rejects_remote_url_with_unsupported_scheme(self):
+        with self.assertRaises(ValidationError):
+            TemplatePiece.objects.create(
+                title='URL invalida',
+                slug='url-invalida',
+                template_code='url-invalida',
+                version='1.0.0',
+                category=TemplatePiece.Category.OTHER,
+                file_url='ftp://files.example.com/modelo.docx',
+                status=PublicationStatus.DRAFT,
+            )
+
+    def test_rejects_remote_url_pointing_to_local_network(self):
+        with self.assertRaises(ValidationError):
+            TemplatePiece.objects.create(
+                title='URL local',
+                slug='url-local',
+                template_code='url-local',
+                version='1.0.0',
+                category=TemplatePiece.Category.OTHER,
+                file_url='http://127.0.0.1/modelo.docx',
+                status=PublicationStatus.DRAFT,
+            )

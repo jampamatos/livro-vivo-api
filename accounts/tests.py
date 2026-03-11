@@ -85,6 +85,16 @@ class AccountsAPITests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('email', response.data)
 
+    def test_register_rejects_weak_password(self):
+        response = self.client.post(
+            reverse('auth-register'),
+            {'email': 'fraco@example.com', 'password': '12345678'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('password', response.data)
+
     def test_owner_or_moderator_profile_promotes_user_to_staff(self):
         user = User.objects.create_user(
             username='owner@example.com',
@@ -98,6 +108,21 @@ class AccountsAPITests(TestCase):
 
         user.refresh_from_db()
         self.assertTrue(user.is_staff)
+
+    def test_member_profile_revokes_staff_from_non_superuser(self):
+        user = User.objects.create_user(
+            username='member@example.com',
+            email='member@example.com',
+            password='StrongPass123',
+            is_staff=True,
+            is_superuser=False,
+        )
+        profile, _ = Profile.objects.get_or_create(user=user)
+        profile.role = Profile.Role.MEMBER
+        profile.save()
+
+        user.refresh_from_db()
+        self.assertFalse(user.is_staff)
 
     def test_cleanup_legacy_user_token_rows_deletes_authtoken_entries(self):
         connection = connections['default']
@@ -194,6 +219,29 @@ class AccountsAPITests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data['code'], 'account_banned')
         self.assertIn('Reincidência em abuso', response.data['detail'])
+
+    def test_login_for_banned_user_with_wrong_password_stays_generic(self):
+        user = User.objects.create_user(
+            username='banned-wrong@example.com',
+            email='banned-wrong@example.com',
+            password='StrongPass123',
+            is_active=False,
+        )
+        UserModerationStatus.objects.create(
+            user=user,
+            is_banned=True,
+            ban_scope=UserModerationStatus.BanScope.APP_WIDE,
+            ban_reason='Motivo interno',
+        )
+
+        response = self.client.post(
+            reverse('auth-login'),
+            {'email': 'banned-wrong@example.com', 'password': 'senha-incorreta'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.data['detail'], 'Credenciais inválidas.')
 
     def test_login_allows_community_only_ban_and_returns_notice(self):
         ModerationConfig.objects.update_or_create(
@@ -809,6 +857,42 @@ class AccountsAPITests(TestCase):
         device = PushDevice.objects.get(expo_push_token='ExponentPushToken[test-device-token]')
         self.assertFalse(device.is_active)
         self.assertEqual(device.disabled_reason, 'unregistered_by_user')
+
+    def test_me_push_devices_rejects_token_linked_to_another_account(self):
+        owner = User.objects.create_user(
+            username='push-owner@example.com',
+            email='push-owner@example.com',
+            password='StrongPass123',
+        )
+        other_user = User.objects.create_user(
+            username='push-other@example.com',
+            email='push-other@example.com',
+            password='StrongPass123',
+        )
+        PushDevice.objects.create(
+            user=owner,
+            platform=PushDevice.Platform.ANDROID,
+            expo_push_token='ExponentPushToken[shared-device]',
+            is_active=True,
+        )
+
+        access = str(RefreshToken.for_user(other_user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.post(
+            reverse('me-push-devices'),
+            {
+                'platform': PushDevice.Platform.IOS,
+                'expo_push_token': 'ExponentPushToken[shared-device]',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('expo_push_token', response.data)
+
+        device = PushDevice.objects.get(expo_push_token='ExponentPushToken[shared-device]')
+        self.assertEqual(device.user_id, owner.id)
 
     def test_notifications_sensitive_endpoints_are_throttled(self):
         cache.clear()
