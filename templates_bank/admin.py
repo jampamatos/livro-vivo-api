@@ -3,6 +3,7 @@ from django.contrib import admin
 from django.contrib import messages
 from django.contrib.admin.helpers import ActionForm
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils.html import format_html
 from django.utils import timezone
 
 from .models import PublicationStatus, TemplatePiece
@@ -141,9 +142,12 @@ class TemplatePieceAdmin(admin.ModelAdmin):
 
     @admin.display(description='Guardrails de publicação')
     def publication_guardrails(self, obj):
-        return (
-            'Publicação em massa exige confirmação. '
-            'A versão só pode ser publicada com changelog preenchido.'
+        return format_html(
+            '<ul class="lv-guardrails lv-guardrails--caution">'
+            '<li>Publicação em massa exige confirmação explícita.</li>'
+            '<li>Publicação só ocorre com changelog preenchido.</li>'
+            '<li>Arquivamento preserva histórico para rastreabilidade.</li>'
+            '</ul>'
         )
 
     def _is_sensitive_action_confirmed(self, request):
