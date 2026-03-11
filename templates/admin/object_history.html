@@ -1,11 +1,6 @@
 {% extends "admin/base_site.html" %}
 {% load i18n admin_urls static %}
 
-{% block extrastyle %}
-{{ block.super }}
-<link rel="stylesheet" href="{% static "lv_admin/current_path.css" %}">
-{% endblock %}
-
 {% block breadcrumbs %}
 <div class="breadcrumbs">
 <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>

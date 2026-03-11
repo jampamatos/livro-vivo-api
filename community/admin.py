@@ -242,7 +242,7 @@ class ReportAdmin(admin.ModelAdmin):
         if obj.post_id:
             return f"Post #{obj.post_id} — {obj.post.title}"
         return f"Comment #{obj.comment_id} — Post #{obj.comment.post_id}"
-    target.short_description = "Target"
+    target.short_description = "Alvo"
 
     def _apply_bulk_action(self, request, queryset, *, action_type, next_status, decision, label):
         moderation_note = (request.POST.get("moderation_note") or "").strip()
@@ -264,14 +264,14 @@ class ReportAdmin(admin.ModelAdmin):
             except ValueError:
                 skipped += 1
         if processed:
-            self.message_user(request, f"{processed} report(s) atualizado(s) para {label}.", level=messages.SUCCESS)
+            self.message_user(request, f"{processed} denúncia(s) atualizada(s) para {label}.", level=messages.SUCCESS)
         if skipped:
-            self.message_user(request, f"{skipped} report(s) ignorado(s) por transição inválida.", level=messages.WARNING)
+            self.message_user(request, f"{skipped} denúncia(s) ignorada(s) por transição inválida.", level=messages.WARNING)
 
     def _is_sensitive_action_confirmed(self, request):
         return str(request.POST.get("confirm_sensitive_action", "")).lower() in {"1", "true", "on", "yes"}
 
-    @admin.action(description="Mover para In review")
+    @admin.action(description="Mover para em revisão")
     def mark_in_review(self, request, queryset):
         self._apply_bulk_action(
             request,
@@ -279,7 +279,7 @@ class ReportAdmin(admin.ModelAdmin):
             action_type=ReportModerationAction.ActionType.STATUS_CHANGED,
             next_status=Report.Status.IN_REVIEW,
             decision="",
-            label="in_review",
+            label="em revisão",
         )
 
     @admin.action(description="Aprovar conteúdo reportado")
@@ -290,10 +290,10 @@ class ReportAdmin(admin.ModelAdmin):
             action_type=ReportModerationAction.ActionType.APPROVED,
             next_status=Report.Status.RESOLVED,
             decision=Report.Decision.APPROVE,
-            label="resolved/approve",
+            label="resolvido/aprovado",
         )
 
-    @admin.action(description="Remover conteúdo reportado (ação sensível)")
+    @admin.action(description="Remover conteúdo reportado")
     def remove_reports(self, request, queryset):
         if not self._is_sensitive_action_confirmed(request):
             self.message_user(
@@ -318,7 +318,7 @@ class ReportAdmin(admin.ModelAdmin):
             label="resolved/remove",
         )
 
-    @admin.action(description="Escalar report")
+    @admin.action(description="Escalar denúncia")
     def escalate_reports(self, request, queryset):
         self._apply_bulk_action(
             request,
@@ -326,10 +326,10 @@ class ReportAdmin(admin.ModelAdmin):
             action_type=ReportModerationAction.ActionType.ESCALATED,
             next_status=Report.Status.ESCALATED,
             decision=Report.Decision.ESCALATE,
-            label="escalated",
+            label="escalado",
         )
 
-    @admin.action(description="Rejeitar report")
+    @admin.action(description="Rejeitar denúncia")
     def reject_reports(self, request, queryset):
         self._apply_bulk_action(
             request,
@@ -337,10 +337,10 @@ class ReportAdmin(admin.ModelAdmin):
             action_type=ReportModerationAction.ActionType.REJECTED,
             next_status=Report.Status.REJECTED,
             decision=Report.Decision.REJECT,
-            label="rejected",
+            label="rejeitado",
         )
 
-    @admin.action(description="Banir autor do conteúdo reportado (ação sensível)")
+    @admin.action(description="Banir autor do conteúdo reportado")
     def ban_report_authors(self, request, queryset):
         if not self._is_sensitive_action_confirmed(request):
             self.message_user(
@@ -371,7 +371,7 @@ class ReportAdmin(admin.ModelAdmin):
         if processed:
             self.message_user(request, f"{processed} usuário(s) banido(s).", level=messages.SUCCESS)
         if skipped:
-            self.message_user(request, f"{skipped} report(s) sem autor alvo.", level=messages.WARNING)
+            self.message_user(request, f"{skipped} denúncia(s) sem autor alvo.", level=messages.WARNING)
 
 @admin.register(Post)
 class PostAdmin(admin.ModelAdmin):

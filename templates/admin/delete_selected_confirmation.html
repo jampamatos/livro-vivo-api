@@ -7,11 +7,6 @@
     <script src="{% static 'admin/js/cancel.js' %}" async></script>
 {% endblock %}
 
-{% block extrastyle %}
-{{ block.super }}
-<link rel="stylesheet" href="{% static "lv_admin/current_path.css" %}">
-{% endblock %}
-
 {% block bodyclass %}{{ block.super }} app-{{ opts.app_label }} model-{{ opts.model_name }} delete-confirmation delete-selected-confirmation{% endblock %}
 
 {% block breadcrumbs %}

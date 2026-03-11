@@ -149,7 +149,7 @@ class TemplatePieceAdmin(admin.ModelAdmin):
     def _is_sensitive_action_confirmed(self, request):
         return str(request.POST.get('confirm_sensitive_action', '')).lower() in {'1', 'true', 'on', 'yes'}
 
-    @admin.action(description='Publicar selecionadas (ação sensível)')
+    @admin.action(description='Publicar selecionadas')
     def mark_published(self, request, queryset):
         if not self._is_sensitive_action_confirmed(request):
             self.message_user(
@@ -196,7 +196,7 @@ class TemplatePieceAdmin(admin.ModelAdmin):
                 level=messages.INFO,
             )
 
-    @admin.action(description='Arquivar selecionadas (ação sensível)')
+    @admin.action(description='Arquivar selecionadas')
     def mark_archived(self, request, queryset):
         if not self._is_sensitive_action_confirmed(request):
             self.message_user(

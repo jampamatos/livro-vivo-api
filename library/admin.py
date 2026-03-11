@@ -95,13 +95,13 @@ class BookVersionAdminForm(forms.ModelForm):
         status = cleaned_data.get('status')
         changelog = (cleaned_data.get('changelog') or '').strip()
         if status == BookVersion.Status.PUBLISHED and not changelog:
-            self.add_error('changelog', 'Changelog is required when publishing a version.')
+            self.add_error('changelog', 'Changelog é obrigatório ao publicar uma versão.')
         return cleaned_data
 
 
 class BookVersionActionForm(ActionForm):
     new_version = forms.CharField(
-        label='New version',
+        label='Nova versão',
         required=False,
         max_length=50,
         widget=forms.TextInput(attrs={'placeholder': '2026.02.24', 'size': 16}),
@@ -558,13 +558,13 @@ class BookVersionAdmin(admin.ModelAdmin):
         with suppress_book_chapter_notifications_for_versions(*version_ids):
             return super().save_related(request, form, formsets, change)
 
-    @admin.action(description='Create preloaded version from selected source')
+    @admin.action(description='Criar nova versão a partir da selecionada')
     def create_preloaded_version(self, request, queryset):
         selected_count = queryset.count()
         if selected_count != 1:
             self.message_user(
                 request,
-                'Select exactly one source version to clone.',
+                'Selecione exatamente 1 versão de origem para clonar.',
                 level=messages.ERROR,
             )
             return
@@ -589,7 +589,7 @@ class BookVersionAdmin(admin.ModelAdmin):
         except IntegrityError:
             self.message_user(
                 request,
-                'Version identifier already exists for this book.',
+                'Já existe uma versão com esse identificador para este livro.',
                 level=messages.ERROR,
             )
             return
@@ -597,13 +597,13 @@ class BookVersionAdmin(admin.ModelAdmin):
         self.message_user(
             request,
             (
-                f'Preloaded version "{cloned_version.version}" created from '
-                f'"{source_version.version}" with {cloned_version.chapters.count()} chapter(s).'
+                f'Versão pré-carregada "{cloned_version.version}" criada a partir de '
+                f'"{source_version.version}" com {cloned_version.chapters.count()} capítulo(s).'
             ),
             level=messages.SUCCESS,
         )
 
-    @admin.action(description='Publicar versão selecionada (ação sensível)')
+    @admin.action(description='Publicar versão selecionada')
     def publish_selected_versions(self, request, queryset):
         if not self._is_sensitive_action_confirmed(request):
             self.message_user(
@@ -662,7 +662,7 @@ class BookVersionAdmin(admin.ModelAdmin):
             level=messages.SUCCESS,
         )
 
-    @admin.action(description='Arquivar versões selecionadas (ação sensível)')
+    @admin.action(description='Arquivar versões selecionadas')
     def archive_selected_versions(self, request, queryset):
         if not self._is_sensitive_action_confirmed(request):
             self.message_user(

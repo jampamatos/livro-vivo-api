@@ -182,7 +182,7 @@ class CoursePostAdmin(admin.ModelAdmin):
     def _is_sensitive_action_confirmed(self, request):
         return str(request.POST.get('confirm_sensitive_action', '')).lower() in {'1', 'true', 'on', 'yes'}
 
-    @admin.action(description='Publicar posts selecionados (ação sensível)')
+    @admin.action(description='Publicar posts selecionados')
     def publish_selected_posts(self, request, queryset):
         if not self._is_sensitive_action_confirmed(request):
             self.message_user(
@@ -210,7 +210,7 @@ class CoursePostAdmin(admin.ModelAdmin):
         if skipped:
             self.message_user(request, f'{skipped} post(s) já estavam publicados.', level=messages.INFO)
 
-    @admin.action(description='Arquivar posts selecionados (ação sensível)')
+    @admin.action(description='Arquivar posts selecionados')
     def archive_selected_posts(self, request, queryset):
         if not self._is_sensitive_action_confirmed(request):
             self.message_user(
@@ -300,7 +300,7 @@ class CourseAssetAdmin(admin.ModelAdmin):
     def _is_sensitive_action_confirmed(self, request):
         return str(request.POST.get('confirm_sensitive_action', '')).lower() in {'1', 'true', 'on', 'yes'}
 
-    @admin.action(description='Publicar materiais selecionados (ação sensível)')
+    @admin.action(description='Publicar materiais selecionados')
     def publish_selected_assets(self, request, queryset):
         if not self._is_sensitive_action_confirmed(request):
             self.message_user(
@@ -328,7 +328,7 @@ class CourseAssetAdmin(admin.ModelAdmin):
         if skipped:
             self.message_user(request, f'{skipped} material(is) já publicados.', level=messages.INFO)
 
-    @admin.action(description='Arquivar materiais selecionados (ação sensível)')
+    @admin.action(description='Arquivar materiais selecionados')
     def archive_selected_assets(self, request, queryset):
         if not self._is_sensitive_action_confirmed(request):
             self.message_user(
@@ -410,7 +410,7 @@ class LiveEventAdmin(admin.ModelAdmin):
     def _is_sensitive_action_confirmed(self, request):
         return str(request.POST.get('confirm_sensitive_action', '')).lower() in {'1', 'true', 'on', 'yes'}
 
-    @admin.action(description='Cancelar lives selecionadas (ação sensível)')
+    @admin.action(description='Cancelar lives selecionadas')
     def cancel_selected_events(self, request, queryset):
         if not self._is_sensitive_action_confirmed(request):
             self.message_user(
