@@ -954,6 +954,84 @@ class LibraryAdminTests(TestCase):
             NotificationEvent.objects.filter(dedup_key=f'book-chapter-published:{chapter.id}').exists()
         )
 
+    def test_book_version_admin_bulk_publish_requires_sensitive_confirmation(self):
+        draft = BookVersion.objects.create(
+            book=self.book,
+            version='2024.93',
+            changelog='Publicação em lote',
+            status=BookVersion.Status.DRAFT,
+        )
+
+        response = self.client.post(
+            reverse('admin:library_bookversion_changelist'),
+            data={
+                'action': 'publish_selected_versions',
+                '_selected_action': [str(draft.id)],
+                'select_across': '0',
+                'index': '0',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, BookVersion.Status.DRAFT)
+        self.assertContains(response, 'Confirme a ação sensível para publicar versões em massa.')
+
+    def test_book_version_admin_bulk_publish_archives_old_published_version(self):
+        draft = BookVersion.objects.create(
+            book=self.book,
+            version='2024.94',
+            changelog='Publicação em lote com confirmação',
+            status=BookVersion.Status.DRAFT,
+        )
+
+        response = self.client.post(
+            reverse('admin:library_bookversion_changelist'),
+            data={
+                'action': 'publish_selected_versions',
+                '_selected_action': [str(draft.id)],
+                'select_across': '0',
+                'index': '0',
+                'confirm_sensitive_action': 'on',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        draft.refresh_from_db()
+        self.version.refresh_from_db()
+        self.assertEqual(draft.status, BookVersion.Status.PUBLISHED)
+        self.assertEqual(self.version.status, BookVersion.Status.ARCHIVED)
+        self.assertContains(response, f'Versão &quot;{draft.version}&quot; publicada com sucesso.')
+
+    def test_book_version_admin_bulk_archive_skips_published_versions(self):
+        draft = BookVersion.objects.create(
+            book=self.book,
+            version='2024.95',
+            changelog='Rascunho para arquivar',
+            status=BookVersion.Status.DRAFT,
+        )
+
+        response = self.client.post(
+            reverse('admin:library_bookversion_changelist'),
+            data={
+                'action': 'archive_selected_versions',
+                '_selected_action': [str(self.version.id), str(draft.id)],
+                'select_across': '0',
+                'index': '0',
+                'confirm_sensitive_action': 'on',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.version.refresh_from_db()
+        draft.refresh_from_db()
+        self.assertEqual(self.version.status, BookVersion.Status.PUBLISHED)
+        self.assertEqual(draft.status, BookVersion.Status.ARCHIVED)
+        self.assertContains(response, 'não foram arquivadas')
+
 
 class LibraryPermissionTests(LibraryBaseTestCase):
     def test_permission_denies_anonymous(self):

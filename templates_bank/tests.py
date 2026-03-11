@@ -365,6 +365,81 @@ class TemplatesBankAdminTests(TestCase):
         self.assertContains(response, 'file_name')
         self.assertContains(response, 'file_upload')
 
+    def _create_draft_piece(self, *, slug: str, changelog: str):
+        return TemplatePiece.objects.create(
+            title=f'Modelo {slug}',
+            slug=slug,
+            template_code=slug,
+            version='0.1.0',
+            category=TemplatePiece.Category.OTHER,
+            file_url=f'https://example.com/files/{slug}.docx',
+            file_name=f'{slug}.docx',
+            file_mime_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            file_size_bytes=2048,
+            file_sha256='f' * 64,
+            changelog=changelog,
+            status=PublicationStatus.DRAFT,
+        )
+
+    def test_bulk_publish_requires_sensitive_confirmation(self):
+        draft_piece = self._create_draft_piece(slug='modelo-sem-confirmacao', changelog='Ajustes iniciais')
+
+        response = self.client.post(
+            reverse('admin:templates_bank_templatepiece_changelist'),
+            data={
+                'action': 'mark_published',
+                '_selected_action': [str(draft_piece.id)],
+                'select_across': '0',
+                'index': '0',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        draft_piece.refresh_from_db()
+        self.assertEqual(draft_piece.status, PublicationStatus.DRAFT)
+        self.assertContains(response, 'Confirme a ação sensível para publicar peças em massa.')
+
+    def test_bulk_publish_requires_changelog(self):
+        draft_piece = self._create_draft_piece(slug='modelo-sem-changelog', changelog='')
+
+        response = self.client.post(
+            reverse('admin:templates_bank_templatepiece_changelist'),
+            data={
+                'action': 'mark_published',
+                '_selected_action': [str(draft_piece.id)],
+                'select_across': '0',
+                'index': '0',
+                'confirm_sensitive_action': 'on',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        draft_piece.refresh_from_db()
+        self.assertEqual(draft_piece.status, PublicationStatus.DRAFT)
+        self.assertContains(response, 'changelog vazio')
+
+    def test_bulk_publish_updates_status_when_confirmed(self):
+        draft_piece = self._create_draft_piece(slug='modelo-com-confirmacao', changelog='Versão para publicar')
+
+        response = self.client.post(
+            reverse('admin:templates_bank_templatepiece_changelist'),
+            data={
+                'action': 'mark_published',
+                '_selected_action': [str(draft_piece.id)],
+                'select_across': '0',
+                'index': '0',
+                'confirm_sensitive_action': 'on',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        draft_piece.refresh_from_db()
+        self.assertEqual(draft_piece.status, PublicationStatus.PUBLISHED)
+        self.assertIsNotNone(draft_piece.published_at)
+
 
 class TemplatesBankFileMetadataTests(TestCase):
     def setUp(self):

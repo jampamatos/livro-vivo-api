@@ -398,3 +398,84 @@ class CoursesAdminTests(TestCase):
         self.assertIn('href="https://example.com/live"', self.live_event.description)
         self.assertNotIn('<script', self.live_event.description)
         self.assertNotIn('onclick', self.live_event.description)
+
+    def test_course_post_bulk_publish_requires_sensitive_confirmation(self):
+        draft_post = CoursePost.objects.create(
+            title='Post rascunho',
+            slug='post-rascunho',
+            author_name='Equipe',
+            excerpt='Rascunho para teste',
+            content_rich='<p>Conteudo</p>',
+            post_type=CoursePost.PostType.LESSON,
+            status=PublicationStatus.DRAFT,
+        )
+
+        response = self.client.post(
+            reverse('admin:courses_coursepost_changelist'),
+            data={
+                'action': 'publish_selected_posts',
+                '_selected_action': [str(draft_post.id)],
+                'select_across': '0',
+                'index': '0',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        draft_post.refresh_from_db()
+        self.assertEqual(draft_post.status, PublicationStatus.DRAFT)
+        self.assertContains(response, 'Confirme a ação sensível para publicar posts em massa.')
+
+    def test_course_post_bulk_publish_updates_status_when_confirmed(self):
+        draft_post = CoursePost.objects.create(
+            title='Post rascunho confirmado',
+            slug='post-rascunho-confirmado',
+            author_name='Equipe',
+            excerpt='Rascunho com confirmação',
+            content_rich='<p>Conteudo</p>',
+            post_type=CoursePost.PostType.ANNOUNCEMENT,
+            status=PublicationStatus.DRAFT,
+        )
+
+        response = self.client.post(
+            reverse('admin:courses_coursepost_changelist'),
+            data={
+                'action': 'publish_selected_posts',
+                '_selected_action': [str(draft_post.id)],
+                'select_across': '0',
+                'index': '0',
+                'confirm_sensitive_action': 'on',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        draft_post.refresh_from_db()
+        self.assertEqual(draft_post.status, PublicationStatus.PUBLISHED)
+        self.assertIsNotNone(draft_post.published_at)
+
+    def test_course_asset_bulk_archive_requires_sensitive_confirmation(self):
+        asset = CourseAsset.objects.create(
+            post=self.post,
+            title='Checklist operacional',
+            description='Checklist para revisão',
+            asset_type=CourseAsset.AssetType.CHECKLIST,
+            status=PublicationStatus.PUBLISHED,
+            published_at=timezone.now(),
+        )
+
+        response = self.client.post(
+            reverse('admin:courses_courseasset_changelist'),
+            data={
+                'action': 'archive_selected_assets',
+                '_selected_action': [str(asset.id)],
+                'select_across': '0',
+                'index': '0',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        asset.refresh_from_db()
+        self.assertEqual(asset.status, PublicationStatus.PUBLISHED)
+        self.assertContains(response, 'Confirme a ação sensível para arquivar materiais em massa.')
