@@ -3,6 +3,7 @@ from django.contrib import admin
 from django.contrib import messages
 from django.contrib.admin.helpers import ActionForm
 from django.db import IntegrityError, transaction
+from django.db.models import Count
 from django.http import HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import path, reverse
@@ -110,6 +111,10 @@ class BookVersionActionForm(ActionForm):
         required=False,
         max_length=400,
         widget=forms.TextInput(attrs={'placeholder': 'Resumo da nova publicação', 'size': 40}),
+    )
+    confirm_sensitive_action = forms.BooleanField(
+        label='Confirmo ação sensível (publicar/arquivar)',
+        required=False,
     )
 
 
@@ -447,11 +452,62 @@ class BookChapterInline(admin.StackedInline):
 class BookVersionAdmin(admin.ModelAdmin):
     form = BookVersionAdminForm
     action_form = BookVersionActionForm
-    list_display = ('book', 'version', 'status', 'published_at', 'created_at')
+    list_display = ('book', 'version', 'status', 'chapters_count', 'published_at', 'created_at')
     search_fields = ('book__title', 'version')
-    list_filter = ('status', 'book')
+    list_filter = ('status', 'book', 'published_at', 'created_at')
     inlines = [BookChapterInline]
-    actions = ('create_preloaded_version',)
+    actions = ('create_preloaded_version', 'publish_selected_versions', 'archive_selected_versions')
+    readonly_fields = ('created_at', 'publication_guardrails')
+    fieldsets = (
+        (
+            'Dados da versão',
+            {
+                'fields': (
+                    'book',
+                    'version',
+                    'changelog',
+                )
+            },
+        ),
+        (
+            'Publicação',
+            {
+                'fields': (
+                    'status',
+                    'published_at',
+                    'publication_guardrails',
+                )
+            },
+        ),
+        (
+            'Auditoria',
+            {
+                'fields': (
+                    'created_at',
+                )
+            },
+        ),
+    )
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).annotate(_chapters_count=Count('chapters', distinct=True))
+
+    @admin.display(description='Capítulos')
+    def chapters_count(self, obj):
+        return getattr(obj, '_chapters_count', 0)
+
+    @admin.display(description='Guardrails de publicação')
+    def publication_guardrails(self, obj):
+        return format_html(
+            '<ul style="margin: 0; padding-left: 1.2rem;">'
+            '<li>Somente 1 versão publicada por livro.</li>'
+            '<li>Publicação exige changelog preenchido.</li>'
+            '<li>Ao publicar, as demais versões ficam arquivadas.</li>'
+            '</ul>'
+        )
+
+    def _is_sensitive_action_confirmed(self, request):
+        return str(request.POST.get('confirm_sensitive_action', '')).lower() in {'1', 'true', 'on', 'yes'}
 
     def save_model(self, request, obj, form, change):
         if not change:
@@ -546,6 +602,107 @@ class BookVersionAdmin(admin.ModelAdmin):
             ),
             level=messages.SUCCESS,
         )
+
+    @admin.action(description='Publicar versão selecionada (ação sensível)')
+    def publish_selected_versions(self, request, queryset):
+        if not self._is_sensitive_action_confirmed(request):
+            self.message_user(
+                request,
+                'Confirme a ação sensível para publicar versões em massa.',
+                level=messages.ERROR,
+            )
+            return
+
+        selected_count = queryset.count()
+        if selected_count != 1:
+            self.message_user(
+                request,
+                'Selecione exatamente 1 versão para publicar.',
+                level=messages.ERROR,
+            )
+            return
+
+        version = queryset.select_related('book').first()
+        if not (version.changelog or '').strip():
+            self.message_user(
+                request,
+                'Não é possível publicar sem changelog preenchido.',
+                level=messages.ERROR,
+            )
+            return
+
+        with transaction.atomic():
+            archived_count = (
+                BookVersion.objects
+                .filter(book=version.book)
+                .exclude(pk=version.pk)
+                .exclude(status=BookVersion.Status.ARCHIVED)
+                .update(status=BookVersion.Status.ARCHIVED)
+            )
+
+            became_published = version.status != BookVersion.Status.PUBLISHED
+            version.status = BookVersion.Status.PUBLISHED
+            if version.published_at is None:
+                version.published_at = timezone.localdate()
+            version.save(update_fields=['status', 'published_at'])
+
+            if version.book.status != Book.Status.PUBLISHED:
+                version.book.status = Book.Status.PUBLISHED
+                version.book.save(update_fields=['status'])
+
+        if became_published:
+            enqueue_book_version_publication_notifications(book_version=version)
+
+        self.message_user(
+            request,
+            (
+                f'Versão "{version.version}" publicada com sucesso. '
+                f'{archived_count} versão(ões) arquivada(s).'
+            ),
+            level=messages.SUCCESS,
+        )
+
+    @admin.action(description='Arquivar versões selecionadas (ação sensível)')
+    def archive_selected_versions(self, request, queryset):
+        if not self._is_sensitive_action_confirmed(request):
+            self.message_user(
+                request,
+                'Confirme a ação sensível para arquivar versões em massa.',
+                level=messages.ERROR,
+            )
+            return
+
+        archived = 0
+        skipped_published = 0
+        skipped_already_archived = 0
+        for version in queryset.select_related('book'):
+            if version.status == BookVersion.Status.ARCHIVED:
+                skipped_already_archived += 1
+                continue
+            if version.status == BookVersion.Status.PUBLISHED:
+                skipped_published += 1
+                continue
+            version.status = BookVersion.Status.ARCHIVED
+            version.save(update_fields=['status'])
+            archived += 1
+
+        if archived:
+            self.message_user(request, f'{archived} versão(ões) arquivada(s).', level=messages.SUCCESS)
+        if skipped_published:
+            self.message_user(
+                request,
+                (
+                    f'{skipped_published} versão(ões) publicada(s) não foram arquivadas. '
+                    'Publique outra versão primeiro.'
+                ),
+                level=messages.WARNING,
+            )
+        if skipped_already_archived:
+            self.message_user(
+                request,
+                f'{skipped_already_archived} versão(ões) já estavam arquivadas.',
+                level=messages.INFO,
+            )
 
 
 @admin.register(BookChapter)

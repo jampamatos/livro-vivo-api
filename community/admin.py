@@ -1,6 +1,7 @@
 from django import forms
 from django.contrib import admin
 from django.contrib import messages
+from django.contrib.admin.helpers import ActionForm
 from django.core.exceptions import ValidationError
 from django.db.models import Count, Q
 from django.urls import reverse
@@ -82,11 +83,47 @@ class ReportAdminForm(forms.ModelForm):
             if not probe.can_transition_to(next_status):
                 raise ValidationError({"status": f"Transição inválida de status: {prev_status} -> {next_status}."})
 
+        decision = cleaned_data.get("decision") or ""
+        moderation_note = (cleaned_data.get("moderation_note") or "").strip()
+        if decision in {
+            Report.Decision.REMOVE,
+            Report.Decision.ESCALATE,
+            Report.Decision.REJECT,
+        } and not moderation_note:
+            self.add_error("moderation_note", "Preencha a justificativa da moderação para esta decisão.")
+
         return cleaned_data
+
+
+class ReportActionForm(ActionForm):
+    confirm_sensitive_action = forms.BooleanField(
+        label="Confirmo ação sensível (remover/banir)",
+        required=False,
+    )
+    moderation_note = forms.CharField(
+        label="Justificativa da ação",
+        required=False,
+        max_length=500,
+        widget=forms.TextInput(attrs={"placeholder": "Motivo da decisão de moderação", "size": 48}),
+    )
+
+
+class UserModerationActionForm(ActionForm):
+    confirm_sensitive_action = forms.BooleanField(
+        label="Confirmo ação sensível (banimento)",
+        required=False,
+    )
+    ban_reason = forms.CharField(
+        label="Motivo do banimento",
+        required=False,
+        max_length=500,
+        widget=forms.TextInput(attrs={"placeholder": "Informe o motivo do banimento", "size": 48}),
+    )
 
 @admin.register(Report)
 class ReportAdmin(admin.ModelAdmin):
     form = ReportAdminForm
+    action_form = ReportActionForm
     list_display = (
         "id",
         "status",
@@ -208,6 +245,7 @@ class ReportAdmin(admin.ModelAdmin):
     target.short_description = "Target"
 
     def _apply_bulk_action(self, request, queryset, *, action_type, next_status, decision, label):
+        moderation_note = (request.POST.get("moderation_note") or "").strip()
         processed = 0
         skipped = 0
         for report in queryset:
@@ -217,6 +255,7 @@ class ReportAdmin(admin.ModelAdmin):
                     action_type=action_type,
                     next_status=next_status,
                     decision=decision,
+                    note=moderation_note,
                 )
                 if changed:
                     processed += 1
@@ -228,6 +267,9 @@ class ReportAdmin(admin.ModelAdmin):
             self.message_user(request, f"{processed} report(s) atualizado(s) para {label}.", level=messages.SUCCESS)
         if skipped:
             self.message_user(request, f"{skipped} report(s) ignorado(s) por transição inválida.", level=messages.WARNING)
+
+    def _is_sensitive_action_confirmed(self, request):
+        return str(request.POST.get("confirm_sensitive_action", "")).lower() in {"1", "true", "on", "yes"}
 
     @admin.action(description="Mover para In review")
     def mark_in_review(self, request, queryset):
@@ -251,8 +293,22 @@ class ReportAdmin(admin.ModelAdmin):
             label="resolved/approve",
         )
 
-    @admin.action(description="Remover conteúdo reportado")
+    @admin.action(description="Remover conteúdo reportado (ação sensível)")
     def remove_reports(self, request, queryset):
+        if not self._is_sensitive_action_confirmed(request):
+            self.message_user(
+                request,
+                "Confirme a ação sensível para remover conteúdos reportados em massa.",
+                level=messages.ERROR,
+            )
+            return
+        if not (request.POST.get("moderation_note") or "").strip():
+            self.message_user(
+                request,
+                "Informe uma justificativa de moderação para remover conteúdos.",
+                level=messages.ERROR,
+            )
+            return
         self._apply_bulk_action(
             request,
             queryset,
@@ -284,8 +340,24 @@ class ReportAdmin(admin.ModelAdmin):
             label="rejected",
         )
 
-    @admin.action(description="Banir autor do conteúdo reportado")
+    @admin.action(description="Banir autor do conteúdo reportado (ação sensível)")
     def ban_report_authors(self, request, queryset):
+        if not self._is_sensitive_action_confirmed(request):
+            self.message_user(
+                request,
+                "Confirme a ação sensível para banir autores em massa.",
+                level=messages.ERROR,
+            )
+            return
+        moderation_note = (request.POST.get("moderation_note") or "").strip()
+        if not moderation_note:
+            self.message_user(
+                request,
+                "Informe uma justificativa de moderação para banimento.",
+                level=messages.ERROR,
+            )
+            return
+
         processed = 0
         skipped = 0
         for report in queryset:
@@ -293,7 +365,7 @@ class ReportAdmin(admin.ModelAdmin):
             if target is None:
                 skipped += 1
                 continue
-            reason = f'Banimento aplicado a partir do report #{report.id}.'
+            reason = f'{moderation_note} (report #{report.id})'
             ban_user_from_app(user=target, actor=request.user, reason=reason, report=report)
             processed += 1
         if processed:
@@ -795,6 +867,7 @@ class ModerationConfigAdmin(admin.ModelAdmin):
 
 @admin.register(UserModerationStatus)
 class UserModerationStatusAdmin(admin.ModelAdmin):
+    action_form = UserModerationActionForm
     list_display = (
         'user',
         'warnings_issued',
@@ -820,12 +893,29 @@ class UserModerationStatusAdmin(admin.ModelAdmin):
 
     @admin.action(description='Banir usuário(s) selecionado(s)')
     def ban_selected_users(self, request, queryset):
+        if str(request.POST.get("confirm_sensitive_action", "")).lower() not in {"1", "true", "on", "yes"}:
+            self.message_user(
+                request,
+                'Confirme a ação sensível para banir usuários em massa.',
+                level=messages.ERROR,
+            )
+            return
+
+        ban_reason = (request.POST.get("ban_reason") or "").strip()
+        if not ban_reason:
+            self.message_user(
+                request,
+                'Informe o motivo do banimento.',
+                level=messages.ERROR,
+            )
+            return
+
         processed = 0
         for status_obj in queryset.select_related('user'):
             ban_user_from_app(
                 user=status_obj.user,
                 actor=request.user,
-                reason='Banimento manual pela fila de moderação.',
+                reason=ban_reason,
             )
             processed += 1
         if processed:

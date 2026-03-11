@@ -680,6 +680,7 @@ class CommunityApiTests(APITestCase):
 class CommunityAdminModerationTests(TestCase):
     def setUp(self):
         self.factory = RequestFactory()
+        self.client = Client()
         self.staff = User.objects.create_user(
             username="admin_mod@test.com",
             email="admin_mod@test.com",
@@ -695,6 +696,7 @@ class CommunityAdminModerationTests(TestCase):
         self.category = Category.objects.create(name="Geral Admin", slug="geral-admin")
         self.post = Post.objects.create(author=self.user, category=self.category, title="Post alvo", body="B")
         self.report = Report.objects.create(reporter=self.user, post=self.post, reason="spam")
+        self.client.force_login(self.staff)
 
     def test_admin_save_creates_moderation_action_and_applies_remove(self):
         report_admin = site._registry[Report]
@@ -718,6 +720,88 @@ class CommunityAdminModerationTests(TestCase):
         self.assertEqual(action.from_status, Report.Status.OPEN)
         self.assertEqual(action.to_status, Report.Status.RESOLVED)
         self.assertEqual(self.post.moderation_state, Post.ModerationState.REMOVED)
+
+    def test_bulk_remove_reports_requires_confirmation_and_note(self):
+        response = self.client.post(
+            reverse("admin:community_report_changelist"),
+            data={
+                "action": "remove_reports",
+                "_selected_action": [str(self.report.id)],
+                "select_across": "0",
+                "index": "0",
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.report.refresh_from_db()
+        self.post.refresh_from_db()
+        self.assertEqual(self.report.status, Report.Status.OPEN)
+        self.assertEqual(self.post.moderation_state, Post.ModerationState.ACTIVE)
+        self.assertContains(response, "Confirme a ação sensível para remover conteúdos reportados em massa.")
+
+    def test_bulk_remove_reports_updates_state_when_confirmed(self):
+        response = self.client.post(
+            reverse("admin:community_report_changelist"),
+            data={
+                "action": "remove_reports",
+                "_selected_action": [str(self.report.id)],
+                "select_across": "0",
+                "index": "0",
+                "confirm_sensitive_action": "on",
+                "moderation_note": "Conteudo removido por violacao clara.",
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.report.refresh_from_db()
+        self.post.refresh_from_db()
+        self.assertEqual(self.report.status, Report.Status.RESOLVED)
+        self.assertEqual(self.report.decision, Report.Decision.REMOVE)
+        self.assertEqual(self.report.moderation_note, "Conteudo removido por violacao clara.")
+        self.assertEqual(self.post.moderation_state, Post.ModerationState.REMOVED)
+
+    def test_bulk_ban_users_requires_confirmation_and_reason(self):
+        moderation_status = UserModerationStatus.load_for_user(self.user)
+
+        response = self.client.post(
+            reverse("admin:community_usermoderationstatus_changelist"),
+            data={
+                "action": "ban_selected_users",
+                "_selected_action": [str(moderation_status.id)],
+                "select_across": "0",
+                "index": "0",
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        moderation_status.refresh_from_db()
+        self.assertFalse(moderation_status.is_banned)
+        self.assertContains(response, "Confirme a ação sensível para banir usuários em massa.")
+
+    def test_bulk_ban_users_applies_ban_when_confirmed(self):
+        moderation_status = UserModerationStatus.load_for_user(self.user)
+
+        response = self.client.post(
+            reverse("admin:community_usermoderationstatus_changelist"),
+            data={
+                "action": "ban_selected_users",
+                "_selected_action": [str(moderation_status.id)],
+                "select_across": "0",
+                "index": "0",
+                "confirm_sensitive_action": "on",
+                "ban_reason": "Reincidencia em abuso da comunidade.",
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        moderation_status.refresh_from_db()
+        self.user.refresh_from_db()
+        self.assertTrue(moderation_status.is_banned)
+        self.assertEqual(moderation_status.ban_reason, "Reincidencia em abuso da comunidade.")
 
 
 class CommunityAdminUxTests(TestCase):

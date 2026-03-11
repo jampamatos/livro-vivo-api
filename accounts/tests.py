@@ -1658,6 +1658,48 @@ class AccountsAdminTests(TestCase):
         self.assertContains(push_device_response, 'pref-admin@example.com')
         self.assertContains(privacy_response, 'Retenção de comunidade e reports para moderação.')
 
+    def test_notification_event_admin_is_read_only(self):
+        event = NotificationEvent.objects.create(
+            event_type=NotificationEvent.EventType.CONTENT_PUBLISHED,
+            dedup_key='admin-read-only-event',
+            title='Evento somente leitura',
+            payload={'source': 'test'},
+        )
+
+        add_response = self.client.get(reverse('admin:accounts_notificationevent_add'))
+        change_response = self.client.get(reverse('admin:accounts_notificationevent_change', args=[event.id]))
+
+        self.assertEqual(add_response.status_code, 403)
+        self.assertEqual(change_response.status_code, 200)
+        self.assertContains(change_response, 'Rastreabilidade')
+        self.assertNotContains(change_response, 'name="_save"', html=False)
+
+    def test_notification_dispatch_admin_is_read_only(self):
+        target_user = User.objects.create_user(
+            username='dispatch-admin@example.com',
+            email='dispatch-admin@example.com',
+            password='StrongPass123',
+        )
+        event = NotificationEvent.objects.create(
+            event_type=NotificationEvent.EventType.CONTENT_PUBLISHED,
+            dedup_key='admin-read-only-dispatch',
+            title='Evento dispatch leitura',
+            payload={'source': 'test'},
+        )
+        dispatch = NotificationDispatch.objects.create(
+            event=event,
+            user=target_user,
+            status=NotificationDispatch.Status.PENDING,
+        )
+
+        add_response = self.client.get(reverse('admin:accounts_notificationdispatch_add'))
+        change_response = self.client.get(reverse('admin:accounts_notificationdispatch_change', args=[dispatch.id]))
+
+        self.assertEqual(add_response.status_code, 403)
+        self.assertEqual(change_response.status_code, 200)
+        self.assertContains(change_response, 'Envio')
+        self.assertNotContains(change_response, 'name="_save"', html=False)
+
 
 class HealthAndReadinessTests(TestCase):
     def setUp(self):
