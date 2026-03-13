@@ -92,6 +92,34 @@ class PostFollow(models.Model):
         return f'PostFollow(post_id={self.post_id}, user_id={self.user_id}, active={self.is_active})'
 
 
+class PostLike(models.Model):
+    post = models.ForeignKey(
+        Post,
+        on_delete=models.CASCADE,
+        related_name='likes',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='community_post_likes',
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at', '-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['post', 'user'],
+                name='community_post_like_unique',
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f'PostLike(post_id={self.post_id}, user_id={self.user_id}, active={self.is_active})'
+
+
 class Comment(models.Model):
     class ModerationState(models.TextChoices):
         ACTIVE = 'active', 'Active'
@@ -132,6 +160,35 @@ class Comment(models.Model):
     
     def __str__(self) -> str:
         return f"Comment #{self.pk} on Post #{self.post_id}"
+
+
+class CommentLike(models.Model):
+    comment = models.ForeignKey(
+        Comment,
+        on_delete=models.CASCADE,
+        related_name='likes',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='community_comment_likes',
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at', '-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['comment', 'user'],
+                name='community_comment_like_unique',
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f'CommentLike(comment_id={self.comment_id}, user_id={self.user_id}, active={self.is_active})'
+
 
 class Report(models.Model):
     class Status(models.TextChoices):

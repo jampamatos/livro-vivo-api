@@ -217,7 +217,13 @@ Observacao:
 - `GET/POST/PATCH/DELETE /community/posts/`
 - `POST /community/posts/<id>/follow/`
 - `POST /community/posts/<id>/unfollow/`
+- `POST /community/posts/<id>/like/`
+- `POST /community/posts/<id>/unlike/`
+- `GET /community/posts/<id>/mention-candidates/` (sugestoes para `@mencoes`)
 - `GET/POST/PATCH/DELETE /community/comments/`
+- `POST /community/comments/<id>/like/`
+- `POST /community/comments/<id>/unlike/`
+- `POST /community/comments/` aceita `mention_user_ids: number[]` opcional para notificar mencionados
 - `POST /community/reports/`
 - `GET/PATCH /community/reports/<id>/` (staff)
 - `POST /community/reports/<id>/approve/` (staff)

@@ -1,4 +1,5 @@
-from django.db.models import Exists, F, Max, OuterRef
+from django.contrib.auth import get_user_model
+from django.db.models import Count, Exists, F, Max, OuterRef, Q
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -10,17 +11,35 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.viewsets import ModelViewSet
 
-from .models import Category, Post, PostFollow, Comment, Report, ReportModerationAction
+from .models import Category, Comment, CommentLike, Post, PostFollow, PostLike, Report, ReportModerationAction
 from .permissions import (
     IsModeratorOrAbove,
     IsNotCommunityBanned,
     IsOwnerOrStaff,
     IsStaffOrReadOnlyAuthed,
 )
-from .services import ban_user_from_app, deactivate_post_follow, enqueue_new_comment_notifications, ensure_post_follow
-from .serializers import CategorySerializer, PostSerializer, CommentSerializer, ReportSerializer
+from .services import (
+    ban_user_from_app,
+    deactivate_comment_like,
+    deactivate_post_follow,
+    deactivate_post_like,
+    enqueue_comment_mention_notifications,
+    enqueue_new_comment_notifications,
+    ensure_comment_like,
+    ensure_post_follow,
+    ensure_post_like,
+)
+from .serializers import (
+    CategorySerializer,
+    MentionCandidateSerializer,
+    PostSerializer,
+    CommentSerializer,
+    ReportSerializer,
+)
 
 from accounts.roles import user_is_moderator_or_above
+
+User = get_user_model()
 
 class CategoryViewSet(ModelViewSet):
     queryset = Category.objects.all()
@@ -44,9 +63,18 @@ class PostViewSet(ModelViewSet):
     ordering = ['-last_activity', '-created_at']
 
     def get_queryset(self):
+        comments_filter = Q()
+        if not user_is_moderator_or_above(self.request.user):
+            comments_filter = Q(comments__moderation_state=Comment.ModerationState.ACTIVE)
+
         qs = (
-            Post.objects.select_related('author', 'category')
-            .annotate(last_activity=Coalesce(Max('comments__created_at'), F('created_at')))
+            Post.objects.select_related('author', 'author__profile', 'category')
+            .annotate(
+                last_comment_at=Max('comments__created_at', filter=comments_filter),
+                last_activity=Coalesce(Max('comments__created_at', filter=comments_filter), F('created_at')),
+                comments_count=Count('comments', filter=comments_filter, distinct=True),
+                likes_count=Count('likes', filter=Q(likes__is_active=True), distinct=True),
+            )
             .all()
         )
         if self.request.user and self.request.user.is_authenticated:
@@ -57,7 +85,14 @@ class PostViewSet(ModelViewSet):
                         user_id=self.request.user.id,
                         is_active=True,
                     )
-                )
+                ),
+                liked_by_me=Exists(
+                    PostLike.objects.filter(
+                        post_id=OuterRef('pk'),
+                        user_id=self.request.user.id,
+                        is_active=True,
+                    )
+                ),
             )
 
         if not user_is_moderator_or_above(self.request.user):
@@ -96,7 +131,69 @@ class PostViewSet(ModelViewSet):
         post.is_following = False
         serializer = self.get_serializer(post)
         return Response(serializer.data)
-    
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='like',
+        permission_classes=[IsAuthenticated, IsNotCommunityBanned],
+    )
+    def like(self, request, pk=None):
+        post = self.get_object()
+        ensure_post_like(post=post, user=request.user)
+        annotated_post = self.get_queryset().get(pk=post.pk)
+        serializer = self.get_serializer(annotated_post)
+        return Response(serializer.data)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='unlike',
+        permission_classes=[IsAuthenticated, IsNotCommunityBanned],
+    )
+    def unlike(self, request, pk=None):
+        post = self.get_object()
+        deactivate_post_like(post=post, user=request.user)
+        annotated_post = self.get_queryset().get(pk=post.pk)
+        serializer = self.get_serializer(annotated_post)
+        return Response(serializer.data)
+
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path='mention-candidates',
+        permission_classes=[IsAuthenticated, IsNotCommunityBanned],
+    )
+    def mention_candidates(self, request, pk=None):
+        post = self.get_object()
+        query = (request.query_params.get('q') or '').strip().lower()
+
+        participant_user_ids = set(
+            Comment.objects.filter(post_id=post.id).values_list('author_id', flat=True).distinct()
+        )
+        participant_user_ids.add(post.author_id)
+
+        users = User.objects.filter(id__in=participant_user_ids).select_related('profile').all()
+        payload = []
+        for user in users:
+            display_name = PostSerializer._resolve_author_display(user)
+            if query and query not in display_name.lower():
+                continue
+            avatar_url = PostSerializer._resolve_author_avatar_url(user)
+            if avatar_url and avatar_url.startswith('/'):
+                avatar_url = request.build_absolute_uri(avatar_url)
+            payload.append(
+                {
+                    'id': user.id,
+                    'display_name': display_name,
+                    'avatar_url': avatar_url,
+                }
+            )
+
+        payload.sort(key=lambda item: item['display_name'].lower())
+        serializer = MentionCandidateSerializer(payload[:20], many=True)
+        return Response(serializer.data)
+
 class CommentViewSet(ModelViewSet):
     serializer_class = CommentSerializer
     permission_classes = [IsAuthenticated, IsNotCommunityBanned, IsOwnerOrStaff]
@@ -107,7 +204,19 @@ class CommentViewSet(ModelViewSet):
     ordering = ['created_at']
 
     def get_queryset(self):
-        qs = Comment.objects.select_related('author', 'post').all()
+        qs = Comment.objects.select_related('author', 'author__profile', 'post').annotate(
+            likes_count=Count('likes', filter=Q(likes__is_active=True), distinct=True),
+        ).all()
+        if self.request.user and self.request.user.is_authenticated:
+            qs = qs.annotate(
+                liked_by_me=Exists(
+                    CommentLike.objects.filter(
+                        comment_id=OuterRef('pk'),
+                        user_id=self.request.user.id,
+                        is_active=True,
+                    )
+                )
+            )
         if not user_is_moderator_or_above(self.request.user):
             qs = qs.filter(moderation_state=Comment.ModerationState.ACTIVE)
         post_id = self.request.query_params.get('post')
@@ -115,9 +224,56 @@ class CommentViewSet(ModelViewSet):
             qs = qs.filter(post_id=post_id)
         return qs
     
+    def _parse_mention_user_ids(self):
+        raw_value = self.request.data.get('mention_user_ids')
+        if raw_value in (None, ''):
+            return []
+        if not isinstance(raw_value, list):
+            raise ValidationError({'mention_user_ids': 'Envie uma lista de IDs de usuários.'})
+
+        normalized_ids = []
+        for value in raw_value:
+            try:
+                user_id = int(value)
+            except (TypeError, ValueError):
+                raise ValidationError({'mention_user_ids': 'Todos os itens devem ser IDs numéricos.'})
+            if user_id <= 0:
+                raise ValidationError({'mention_user_ids': 'Todos os IDs devem ser maiores que zero.'})
+            normalized_ids.append(user_id)
+        return sorted(set(normalized_ids))
+
     def perform_create(self, serializer):
+        mention_user_ids = self._parse_mention_user_ids()
         comment = serializer.save(author=self.request.user)
         enqueue_new_comment_notifications(comment=comment)
+        if mention_user_ids:
+            enqueue_comment_mention_notifications(comment=comment, mentioned_user_ids=mention_user_ids)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='like',
+        permission_classes=[IsAuthenticated, IsNotCommunityBanned],
+    )
+    def like(self, request, pk=None):
+        comment = self.get_object()
+        ensure_comment_like(comment=comment, user=request.user)
+        annotated_comment = self.get_queryset().get(pk=comment.pk)
+        serializer = self.get_serializer(annotated_comment)
+        return Response(serializer.data)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='unlike',
+        permission_classes=[IsAuthenticated, IsNotCommunityBanned],
+    )
+    def unlike(self, request, pk=None):
+        comment = self.get_object()
+        deactivate_comment_like(comment=comment, user=request.user)
+        annotated_comment = self.get_queryset().get(pk=comment.pk)
+        serializer = self.get_serializer(annotated_comment)
+        return Response(serializer.data)
 
 class ReportViewSet(ModelViewSet):
     serializer_class = ReportSerializer
