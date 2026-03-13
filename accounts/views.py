@@ -41,12 +41,29 @@ def issue_tokens_for_user(user):
     }
 
 
+def _resolve_profile_avatar_url(profile: Profile):
+    for attr_name in ('avatar_url', 'photo_url', 'image_url', 'avatar'):
+        raw_value = getattr(profile, attr_name, None)
+        if not raw_value:
+            continue
+        if hasattr(raw_value, 'url'):
+            try:
+                return raw_value.url
+            except Exception:  # pragma: no cover
+                continue
+        value = str(raw_value).strip()
+        if value:
+            return value
+    return None
+
+
 def _serialize_user_payload(user, profile: Profile):
     return {
         'id': user.id,
         'email': user.email,
         'name': profile.full_name,
         'profession': profile.profession,
+        'avatar_url': _resolve_profile_avatar_url(profile),
         'role': get_user_role(user),
     }
 

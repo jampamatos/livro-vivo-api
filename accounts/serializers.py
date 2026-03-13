@@ -64,6 +64,7 @@ class MeSerializer(serializers.Serializer):
     email = serializers.EmailField()
     name = serializers.CharField(allow_blank=True)
     profession = serializers.CharField(allow_blank=True)
+    avatar_url = serializers.CharField(allow_blank=True, allow_null=True, required=False)
     role = serializers.CharField(allow_blank=True, allow_null=True, required=False)
 
 

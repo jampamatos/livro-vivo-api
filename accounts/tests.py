@@ -353,6 +353,7 @@ class AccountsAPITests(TestCase):
         self.assertEqual(response.data['email'], 'user@example.com')
         self.assertEqual(response.data['name'], '')
         self.assertEqual(response.data['profession'], '')
+        self.assertIsNone(response.data['avatar_url'])
 
     def test_me_accepts_jwt_bearer_token(self):
         user = User.objects.create_user(

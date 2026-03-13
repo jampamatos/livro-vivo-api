@@ -14,7 +14,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from accounts.models import Profile
 from entitlements.models import Entitlement, Subscription
 
-from .models import Category, Post, PostFollow, Comment, Report, ReportModerationAction
+from .models import Category, Comment, CommentLike, Post, PostFollow, PostLike, Report, ReportModerationAction
 from .models import ModerationConfig, UserModerationStatus
 
 
@@ -128,6 +128,80 @@ class CommunityApiTests(APITestCase):
         follow.refresh_from_db()
         self.assertFalse(follow.is_active)
 
+    def test_post_serializer_exposes_like_state_and_user_can_like_unlike(self):
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+
+        self.auth(self.other_access)
+        list_response = self.client.get("/community/posts/")
+        self.assertEqual(list_response.status_code, 200)
+        listed_post = next(item for item in list_response.data if item["id"] == post.id)
+        self.assertEqual(listed_post["likes_count"], 0)
+        self.assertFalse(listed_post["liked_by_me"])
+        self.assertEqual(listed_post["comments_count"], 0)
+        self.assertIsNone(listed_post["last_comment_at"])
+
+        like_response = self.client.post(f"/community/posts/{post.id}/like/")
+        self.assertEqual(like_response.status_code, 200)
+        self.assertEqual(like_response.data["likes_count"], 1)
+        self.assertTrue(like_response.data["liked_by_me"])
+
+        like = PostLike.objects.get(post=post, user=self.other)
+        self.assertTrue(like.is_active)
+
+        unlike_response = self.client.post(f"/community/posts/{post.id}/unlike/")
+        self.assertEqual(unlike_response.status_code, 200)
+        self.assertEqual(unlike_response.data["likes_count"], 0)
+        self.assertFalse(unlike_response.data["liked_by_me"])
+
+        like.refresh_from_db()
+        self.assertFalse(like.is_active)
+
+    def test_post_serializer_exposes_comment_counters(self):
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+        Comment.objects.create(post=post, author=self.other, body="C1")
+        Comment.objects.create(post=post, author=self.user, body="C2")
+
+        self.auth(self.user_access)
+        list_response = self.client.get("/community/posts/")
+        self.assertEqual(list_response.status_code, 200)
+        listed_post = next(item for item in list_response.data if item["id"] == post.id)
+        self.assertEqual(listed_post["comments_count"], 2)
+        self.assertIsNotNone(listed_post["last_comment_at"])
+
+        detail_response = self.client.get(f"/community/posts/{post.id}/")
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(detail_response.data["comments_count"], 2)
+        self.assertIsNotNone(detail_response.data["last_comment_at"])
+
+    def test_post_and_comment_author_display_uses_profile_full_name(self):
+        profile, _ = Profile.objects.get_or_create(user=self.user)
+        profile.full_name = "Jampa Matos"
+        profile.save(update_fields=["full_name"])
+
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+        comment = Comment.objects.create(post=post, author=self.user, body="C1")
+
+        self.auth(self.other_access)
+        detail_response = self.client.get(f"/community/posts/{post.id}/")
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(detail_response.data["author_display"], "Jampa Matos")
+        self.assertIn("author_avatar_url", detail_response.data)
+        self.assertIsNone(detail_response.data["author_avatar_url"])
+
+        comments_response = self.client.get(f"/community/comments/?post={post.id}")
+        self.assertEqual(comments_response.status_code, 200)
+        listed_comment = next(item for item in comments_response.data if item["id"] == comment.id)
+        self.assertEqual(listed_comment["author_display"], "Jampa Matos")
+        self.assertIn("author_avatar_url", listed_comment)
+
+    def test_post_author_display_never_exposes_email(self):
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+
+        self.auth(self.other_access)
+        detail_response = self.client.get(f"/community/posts/{post.id}/")
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertNotIn("@", detail_response.data["author_display"])
+
     def test_posts_require_auth(self):
         res = self.client.get("/community/posts/")
         self.assertEqual(res.status_code, 401)
@@ -149,6 +223,109 @@ class CommunityApiTests(APITestCase):
         res = self.client.get(f"/community/comments/?post={post.id}")
         self.assertEqual(res.status_code, 200)
         self.assertTrue(len(res.data) >= 1)
+
+    def test_post_mentions_candidates_list_participants(self):
+        profile_user, _ = Profile.objects.get_or_create(user=self.user)
+        profile_user.full_name = "Joao Paulo"
+        profile_user.save(update_fields=["full_name"])
+
+        profile_other, _ = Profile.objects.get_or_create(user=self.other)
+        profile_other.full_name = "Maria Clara"
+        profile_other.save(update_fields=["full_name"])
+
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+        Comment.objects.create(post=post, author=self.other, body="C1")
+
+        self.auth(self.user_access)
+        res = self.client.get(f"/community/posts/{post.id}/mention-candidates/")
+        self.assertEqual(res.status_code, 200)
+
+        names = {item["display_name"] for item in res.data}
+        self.assertIn("Joao Paulo", names)
+        self.assertIn("Maria Clara", names)
+        self.assertTrue(all("@" not in item["display_name"] for item in res.data))
+
+        res_filtered = self.client.get(f"/community/posts/{post.id}/mention-candidates/?q=maria")
+        self.assertEqual(res_filtered.status_code, 200)
+        self.assertEqual(len(res_filtered.data), 1)
+        self.assertEqual(res_filtered.data[0]["display_name"], "Maria Clara")
+
+    def test_comment_create_accepts_mention_user_ids(self):
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+
+        self.auth(self.other_access)
+        with mock.patch("community.views.enqueue_new_comment_notifications") as new_comment_mock:
+            with mock.patch("community.views.enqueue_comment_mention_notifications") as mention_mock:
+                res = self.client.post(
+                    "/community/comments/",
+                    {"post_id": post.id, "body": "Oi @Joao", "mention_user_ids": [self.user.id]},
+                    format="json",
+                )
+
+        self.assertEqual(res.status_code, 201)
+        new_comment_mock.assert_called_once()
+        mention_mock.assert_called_once()
+        mention_kwargs = mention_mock.call_args.kwargs
+        self.assertEqual(mention_kwargs["mentioned_user_ids"], [self.user.id])
+        self.assertEqual(mention_kwargs["comment"].post_id, post.id)
+
+    def test_comment_create_rejects_invalid_mention_user_ids_payload(self):
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+        self.auth(self.other_access)
+
+        res = self.client.post(
+            "/community/comments/",
+            {"post_id": post.id, "body": "Oi", "mention_user_ids": "invalido"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("mention_user_ids", res.data)
+
+    def test_enqueue_comment_mentions_notifies_only_valid_participants(self):
+        from .services import enqueue_comment_mention_notifications
+
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+        Comment.objects.create(post=post, author=self.staff, body="C0")
+        comment = Comment.objects.create(post=post, author=self.other, body="Oi @Joao")
+
+        with mock.patch("community.services.get_active_subscription_user_ids", return_value=[self.user.id, self.staff.id]):
+            with mock.patch("community.services.enqueue_notification_event") as enqueue_mock:
+                enqueue_comment_mention_notifications(
+                    comment=comment,
+                    mentioned_user_ids=[self.user.id, self.other.id, self.moderator.id],
+                )
+
+        enqueue_mock.assert_called_once()
+        kwargs = enqueue_mock.call_args.kwargs
+        self.assertEqual(kwargs["recipient_user_ids"], [self.user.id])
+        self.assertEqual(kwargs["payload"]["comment_id"], comment.id)
+
+    def test_comment_serializer_exposes_like_state_and_user_can_like_unlike(self):
+        post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
+        comment = Comment.objects.create(post=post, author=self.user, body="C1")
+
+        self.auth(self.other_access)
+        list_response = self.client.get(f"/community/comments/?post={post.id}")
+        self.assertEqual(list_response.status_code, 200)
+        listed_comment = next(item for item in list_response.data if item["id"] == comment.id)
+        self.assertEqual(listed_comment["likes_count"], 0)
+        self.assertFalse(listed_comment["liked_by_me"])
+
+        like_response = self.client.post(f"/community/comments/{comment.id}/like/")
+        self.assertEqual(like_response.status_code, 200)
+        self.assertEqual(like_response.data["likes_count"], 1)
+        self.assertTrue(like_response.data["liked_by_me"])
+
+        like = CommentLike.objects.get(comment=comment, user=self.other)
+        self.assertTrue(like.is_active)
+
+        unlike_response = self.client.post(f"/community/comments/{comment.id}/unlike/")
+        self.assertEqual(unlike_response.status_code, 200)
+        self.assertEqual(unlike_response.data["likes_count"], 0)
+        self.assertFalse(unlike_response.data["liked_by_me"])
+
+        like.refresh_from_db()
+        self.assertFalse(like.is_active)
 
     def test_comments_require_auth(self):
         post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")

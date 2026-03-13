@@ -5,7 +5,17 @@ from accounts.services import enqueue_notification_event, get_active_subscriptio
 from django.db.models import Q
 from django.utils import timezone
 
-from .models import ModerationConfig, Post, PostFollow, Report, UserModerationEvent, UserModerationStatus
+from .models import (
+    Comment,
+    CommentLike,
+    ModerationConfig,
+    Post,
+    PostFollow,
+    PostLike,
+    Report,
+    UserModerationEvent,
+    UserModerationStatus,
+)
 
 
 def _count_removed_reports_for_user(user) -> int:
@@ -280,6 +290,44 @@ def deactivate_post_follow(*, post: Post, user) -> None:
     )
 
 
+def ensure_post_like(*, post: Post, user) -> PostLike:
+    like, created = PostLike.objects.get_or_create(
+        post=post,
+        user=user,
+        defaults={'is_active': True},
+    )
+    if not created and not like.is_active:
+        like.is_active = True
+        like.save(update_fields=['is_active', 'updated_at'])
+    return like
+
+
+def deactivate_post_like(*, post: Post, user) -> None:
+    PostLike.objects.filter(post=post, user=user, is_active=True).update(
+        is_active=False,
+        updated_at=timezone.now(),
+    )
+
+
+def ensure_comment_like(*, comment: Comment, user) -> CommentLike:
+    like, created = CommentLike.objects.get_or_create(
+        comment=comment,
+        user=user,
+        defaults={'is_active': True},
+    )
+    if not created and not like.is_active:
+        like.is_active = True
+        like.save(update_fields=['is_active', 'updated_at'])
+    return like
+
+
+def deactivate_comment_like(*, comment: Comment, user) -> None:
+    CommentLike.objects.filter(comment=comment, user=user, is_active=True).update(
+        is_active=False,
+        updated_at=timezone.now(),
+    )
+
+
 def enqueue_new_comment_notifications(*, comment):
     if not comment or not comment.pk or not comment.post_id or not comment.author_id:
         return None
@@ -320,6 +368,84 @@ def enqueue_new_comment_notifications(*, comment):
             'comment_id': comment.pk,
             'author_id': comment.author_id,
             'author_display': str(comment.author),
+        },
+        recipient_user_ids=recipient_user_ids,
+        preference_field='community_interaction_updates_enabled',
+        preference_disabled_reason='community_interactions_disabled',
+    )
+
+
+def _resolve_user_display(user) -> str:
+    profile = getattr(user, 'profile', None)
+    full_name = (getattr(profile, 'full_name', '') or '').strip()
+    if full_name:
+        return full_name
+
+    first_last = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip()
+    if first_last:
+        return first_last
+
+    username = (user.username or '').strip()
+    if username:
+        if '@' in username:
+            username = username.split('@', 1)[0].strip()
+        if username:
+            return username
+
+    email = (user.email or '').strip()
+    if email:
+        return email.split('@', 1)[0].strip() or f'usuario-{user.pk}'
+    return f'usuario-{user.pk}'
+
+
+def enqueue_comment_mention_notifications(*, comment, mentioned_user_ids):
+    if not comment or not comment.pk or not comment.post_id or not comment.author_id:
+        return None
+
+    normalized_ids = sorted({int(user_id) for user_id in (mentioned_user_ids or []) if user_id})
+    if not normalized_ids:
+        return None
+
+    participant_user_ids = set(
+        Comment.objects.filter(post_id=comment.post_id).values_list('author_id', flat=True).distinct()
+    )
+    participant_user_ids.add(comment.post.author_id)
+
+    candidate_user_ids = [
+        user_id for user_id in normalized_ids if user_id in participant_user_ids and user_id != comment.author_id
+    ]
+    if not candidate_user_ids:
+        return None
+
+    active_user_ids = set(get_active_subscription_user_ids())
+    if not active_user_ids:
+        return None
+
+    banned_user_ids = set(
+        UserModerationStatus.objects.filter(user_id__in=candidate_user_ids, is_banned=True)
+        .values_list('user_id', flat=True)
+    )
+    recipient_user_ids = [
+        user_id
+        for user_id in candidate_user_ids
+        if user_id in active_user_ids and user_id not in banned_user_ids
+    ]
+    if not recipient_user_ids:
+        return None
+
+    author_display = _resolve_user_display(comment.author)
+    return enqueue_notification_event(
+        event_type=NotificationEvent.EventType.COMMUNITY_INTERACTION,
+        dedup_key=f'community-comment-mention:{comment.pk}',
+        title=f'Você foi mencionado: {comment.post.title}',
+        body=f'{author_display} mencionou você em um comentário.',
+        payload={
+            'post_id': comment.post_id,
+            'post_title': comment.post.title,
+            'comment_id': comment.pk,
+            'author_id': comment.author_id,
+            'author_display': author_display,
+            'mention_user_ids': recipient_user_ids,
         },
         recipient_user_ids=recipient_user_ids,
         preference_field='community_interaction_updates_enabled',
