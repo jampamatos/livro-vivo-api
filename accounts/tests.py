@@ -1,9 +1,12 @@
 from datetime import timedelta
+import io
 import json
+import tempfile
 from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connections
 from django.test import Client, TestCase
 from django.urls import reverse
@@ -12,6 +15,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
+from PIL import Image
 
 from annotations.models import Annotation
 from caselaw.models import CaseLaw
@@ -368,6 +372,144 @@ class AccountsAPITests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['email'], 'user@example.com')
+
+    def test_me_patch_updates_profile_fields_and_avatar_url(self):
+        user = User.objects.create_user(
+            username='patch@example.com',
+            email='patch@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.patch(
+            reverse('me'),
+            {
+                'name': 'Jampa Matos',
+                'profession': 'Advogado',
+                'avatar_url': 'https://example.com/avatar.jpg',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        user.refresh_from_db()
+        self.assertEqual(user.profile.full_name, 'Jampa Matos')
+        self.assertEqual(user.profile.profession, 'Advogado')
+        self.assertEqual(user.profile.avatar_url, 'https://example.com/avatar.jpg')
+        self.assertEqual(response.data['name'], 'Jampa Matos')
+        self.assertEqual(response.data['profession'], 'Advogado')
+        self.assertEqual(response.data['avatar_url'], 'https://example.com/avatar.jpg')
+
+    def test_me_patch_accepts_avatar_upload_and_returns_absolute_url(self):
+        user = User.objects.create_user(
+            username='patch-upload@example.com',
+            email='patch-upload@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        image_buffer = io.BytesIO()
+        Image.new('RGB', (8, 8), color='#1D4ED8').save(image_buffer, format='PNG')
+        image_bytes = image_buffer.getvalue()
+
+        with tempfile.TemporaryDirectory(prefix='accounts-avatar-upload-') as media_root:
+            with self.settings(MEDIA_ROOT=media_root):
+                response = self.client.patch(
+                    reverse('me'),
+                    {
+                        'name': 'Jampa Matos',
+                        'profession': 'Advogado',
+                        'avatar': SimpleUploadedFile(
+                            'avatar.png',
+                            image_bytes,
+                            content_type='image/png',
+                        ),
+                    },
+                    format='multipart',
+                )
+
+                self.assertEqual(response.status_code, 200)
+                user.refresh_from_db()
+                self.assertEqual(user.profile.full_name, 'Jampa Matos')
+                self.assertEqual(user.profile.profession, 'Advogado')
+                self.assertEqual(user.profile.avatar_url, '')
+                self.assertTrue(bool(user.profile.avatar))
+                self.assertIn('/media/avatars/', response.data['avatar_url'])
+                self.assertTrue(response.data['avatar_url'].startswith('http://testserver/media/avatars/'))
+
+    def test_me_patch_avatar_clear_removes_existing_avatar_reference(self):
+        user = User.objects.create_user(
+            username='patch-clear@example.com',
+            email='patch-clear@example.com',
+            password='StrongPass123',
+        )
+        profile, _ = Profile.objects.get_or_create(user=user)
+        profile.avatar_url = 'https://example.com/avatar-antigo.jpg'
+        profile.save(update_fields=['avatar_url'])
+
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.patch(
+            reverse('me'),
+            {
+                'avatar_clear': True,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        user.refresh_from_db()
+        self.assertEqual(user.profile.avatar_url, '')
+        self.assertIsNone(response.data['avatar_url'])
+
+    def test_me_change_password_updates_credentials(self):
+        user = User.objects.create_user(
+            username='password@example.com',
+            email='password@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.post(
+            reverse('me-change-password'),
+            {
+                'current_password': 'StrongPass123',
+                'new_password': 'SenhaNovaForte456',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['detail'], 'Senha atualizada com sucesso.')
+        user.refresh_from_db()
+        self.assertTrue(user.check_password('SenhaNovaForte456'))
+
+    def test_me_change_password_rejects_invalid_current_password(self):
+        user = User.objects.create_user(
+            username='wrong-password@example.com',
+            email='wrong-password@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.post(
+            reverse('me-change-password'),
+            {
+                'current_password': 'senha-incorreta',
+                'new_password': 'SenhaNovaForte456',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('current_password', response.data)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password('StrongPass123'))
 
     def test_me_data_export_returns_profile_subscription_annotations_and_activity(self):
         user = User.objects.create_user(

@@ -68,6 +68,50 @@ class MeSerializer(serializers.Serializer):
     role = serializers.CharField(allow_blank=True, allow_null=True, required=False)
 
 
+class MeUpdateSerializer(serializers.Serializer):
+    name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    profession = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    avatar_url = serializers.URLField(required=False, allow_blank=True, allow_null=True, max_length=500)
+    avatar = serializers.ImageField(required=False, allow_null=True)
+    avatar_clear = serializers.BooleanField(required=False, default=False)
+
+    def validate_name(self, value: str) -> str:
+        return value.strip()
+
+    def validate_profession(self, value: str) -> str:
+        return value.strip()
+
+    def validate_avatar_url(self, value: str | None) -> str:
+        if value is None:
+            return ''
+        return value.strip()
+
+
+class MePasswordChangeSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True, trim_whitespace=False)
+    new_password = serializers.CharField(write_only=True, min_length=8, trim_whitespace=False)
+
+    def validate_current_password(self, value: str) -> str:
+        user = self.context['user']
+        if not user.check_password(value):
+            raise serializers.ValidationError('Senha atual incorreta.')
+        return value
+
+    def validate_new_password(self, value: str) -> str:
+        user = self.context['user']
+        try:
+            validate_password(value, user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages))
+        return value
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if attrs['current_password'] == attrs['new_password']:
+            raise serializers.ValidationError({'new_password': ['A nova senha deve ser diferente da senha atual.']})
+        return attrs
+
+
 class EntitlementSerializer(serializers.Serializer):
     """Serializer de entitlements do usuário."""
 

@@ -14,7 +14,7 @@ from .models import (
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
     list_display = ('user_email', 'full_name', 'role', 'profession')
-    search_fields = ('user__email', 'full_name', 'profession')
+    search_fields = ('user__email', 'full_name', 'profession', 'avatar_url')
     list_filter = ('role',)
     fieldsets = (
         (
@@ -24,6 +24,8 @@ class ProfileAdmin(admin.ModelAdmin):
                     'user',
                     'full_name',
                     'profession',
+                    'avatar',
+                    'avatar_url',
                 )
             },
         ),

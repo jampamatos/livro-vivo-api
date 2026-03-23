@@ -17,6 +17,8 @@ class Profile(models.Model):
     )
     full_name = models.CharField(max_length=150, blank=True)
     profession = models.CharField(max_length=120, blank=True)
+    avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
+    avatar_url = models.URLField(max_length=500, blank=True, default='')
     role = models.CharField(
         max_length=16,
         choices=Role.choices,

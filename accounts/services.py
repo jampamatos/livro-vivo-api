@@ -44,6 +44,11 @@ def _serialize_profile_for_export(*, user, profile: Profile) -> dict:
         'is_active': user.is_active,
         'full_name': profile.full_name,
         'profession': profile.profession,
+        'avatar_url': (
+            profile.avatar.url
+            if getattr(profile, 'avatar', None)
+            else getattr(profile, 'avatar_url', '') or ''
+        ),
         'role': profile.role,
     }
 

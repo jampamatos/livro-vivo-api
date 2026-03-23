@@ -3,6 +3,7 @@ from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -15,6 +16,8 @@ from entitlements.services import get_effective_tier, get_subscription_snapshot
 
 from .models import NotificationDispatch, NotificationPreference, Profile, PushDevice
 from .serializers import (
+    MePasswordChangeSerializer,
+    MeUpdateSerializer,
     NotificationDispatchSerializer,
     NotificationPreferenceSerializer,
     PushDeviceRegisterSerializer,
@@ -41,29 +44,34 @@ def issue_tokens_for_user(user):
     }
 
 
-def _resolve_profile_avatar_url(profile: Profile):
-    for attr_name in ('avatar_url', 'photo_url', 'image_url', 'avatar'):
+def _resolve_profile_avatar_url(profile: Profile, request=None):
+    for attr_name in ('avatar', 'avatar_url', 'photo_url', 'image_url'):
         raw_value = getattr(profile, attr_name, None)
         if not raw_value:
             continue
         if hasattr(raw_value, 'url'):
             try:
-                return raw_value.url
+                value = raw_value.url
+                if request and value.startswith('/'):
+                    return request.build_absolute_uri(value)
+                return value
             except Exception:  # pragma: no cover
                 continue
         value = str(raw_value).strip()
         if value:
+            if request and value.startswith('/'):
+                return request.build_absolute_uri(value)
             return value
     return None
 
 
-def _serialize_user_payload(user, profile: Profile):
+def _serialize_user_payload(user, profile: Profile, request=None):
     return {
         'id': user.id,
         'email': user.email,
         'name': profile.full_name,
         'profession': profile.profession,
-        'avatar_url': _resolve_profile_avatar_url(profile),
+        'avatar_url': _resolve_profile_avatar_url(profile, request=request),
         'role': get_user_role(user),
     }
 
@@ -86,7 +94,7 @@ class RegisterView(APIView):
         return Response(
             {
                 **tokens,
-                'user': _serialize_user_payload(user, profile),
+                'user': _serialize_user_payload(user, profile, request=request),
             },
             status=status.HTTP_201_CREATED,
         )
@@ -171,11 +179,66 @@ class LogoutView(APIView):
 class MeView(APIView):
     """Retorna dados básicos do usuário autenticado."""
 
+    parser_classes = [JSONParser, FormParser, MultiPartParser]
+
     def get(self, request):
         user = request.user
         profile, _ = Profile.objects.get_or_create(user=user)
 
-        return Response(_serialize_user_payload(user, profile))
+        return Response(_serialize_user_payload(user, profile, request=request))
+
+    def patch(self, request):
+        user = request.user
+        profile, _ = Profile.objects.get_or_create(user=user)
+        serializer = MeUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+
+        update_fields = []
+
+        if 'name' in serializer.validated_data:
+            profile.full_name = serializer.validated_data['name']
+            update_fields.append('full_name')
+
+        if 'profession' in serializer.validated_data:
+            profile.profession = serializer.validated_data['profession']
+            update_fields.append('profession')
+
+        if 'avatar_url' in serializer.validated_data:
+            profile.avatar_url = serializer.validated_data['avatar_url']
+            update_fields.append('avatar_url')
+
+        if serializer.validated_data.get('avatar_clear'):
+            if profile.avatar:
+                profile.avatar.delete(save=False)
+            profile.avatar = None
+            profile.avatar_url = ''
+            update_fields.extend(['avatar', 'avatar_url'])
+
+        if 'avatar' in serializer.validated_data and serializer.validated_data['avatar'] is not None:
+            if profile.avatar:
+                profile.avatar.delete(save=False)
+            profile.avatar = serializer.validated_data['avatar']
+            profile.avatar_url = ''
+            update_fields.extend(['avatar', 'avatar_url'])
+
+        if update_fields:
+            profile.save(update_fields=list(dict.fromkeys(update_fields)))
+
+        return Response(_serialize_user_payload(user, profile, request=request), status=status.HTTP_200_OK)
+
+
+class MePasswordChangeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = MePasswordChangeSerializer(data=request.data, context={'user': request.user})
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        user.set_password(serializer.validated_data['new_password'])
+        user.save(update_fields=['password'])
+
+        return Response({'detail': 'Senha atualizada com sucesso.'}, status=status.HTTP_200_OK)
 
 
 class MeDataExportView(APIView):

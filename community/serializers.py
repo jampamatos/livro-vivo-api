@@ -115,7 +115,7 @@ class PostSerializer(serializers.ModelSerializer):
         if not profile:
             return None
 
-        for attr_name in ('avatar_url', 'photo_url', 'image_url'):
+        for attr_name in ('avatar', 'avatar_url', 'photo_url', 'image_url'):
             raw_value = getattr(profile, attr_name, None)
             if not raw_value:
                 continue
