@@ -3,6 +3,8 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
+from config.storage import build_media_reference, get_template_uploads_storage
+
 from .file_metadata import FileMetadata, extract_uploaded_file_metadata, fetch_remote_file_metadata
 
 
@@ -37,7 +39,12 @@ class TemplatePiece(models.Model):
     tags = models.JSONField(default=list, blank=True)
 
     file_url = models.URLField(blank=True, default='')
-    file_upload = models.FileField(upload_to='templates_bank/uploads/%Y/%m/%d', blank=True, null=True)
+    file_upload = models.FileField(
+        storage=get_template_uploads_storage,
+        upload_to='templates_bank/uploads/%Y/%m/%d',
+        blank=True,
+        null=True,
+    )
     file_name = models.CharField(max_length=255, blank=True, default='')
     file_mime_type = models.CharField(max_length=120, blank=True, default='')
     file_size_bytes = models.PositiveBigIntegerField(default=0)
@@ -141,16 +148,15 @@ class TemplatePiece(models.Model):
         )
 
     def resolved_file_url(self, request=None) -> str:
-        file_url = (self.file_url or '').strip()
-        if self.file_upload:
-            try:
-                file_url = self.file_upload.url
-            except Exception:
-                file_url = ''
+        return self.resolve_file_reference(request=request)['url'] or ''
 
-        if file_url and request is not None:
-            return request.build_absolute_uri(file_url)
-        return file_url
+    def resolve_file_reference(self, request=None) -> dict[str, str | None]:
+        return build_media_reference(
+            upload_field=self.file_upload,
+            remote_url=self.file_url,
+            request=request,
+            storage_alias='template_uploads',
+        )
 
     def clean(self):
         super().clean()

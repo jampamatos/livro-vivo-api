@@ -154,6 +154,11 @@ class MeSerializer(serializers.Serializer):
     name = serializers.CharField(allow_blank=True)
     profession = serializers.CharField(allow_blank=True)
     avatar_url = serializers.CharField(allow_blank=True, allow_null=True, required=False)
+    avatar_source = serializers.CharField(allow_blank=True, allow_null=True, required=False)
+    avatar_storage_alias = serializers.CharField(allow_blank=True, allow_null=True, required=False)
+    avatar_storage_backend = serializers.CharField(allow_blank=True, allow_null=True, required=False)
+    avatar_storage_key = serializers.CharField(allow_blank=True, allow_null=True, required=False)
+    avatar_cache_control = serializers.CharField(allow_blank=True, allow_null=True, required=False)
     role = serializers.CharField(allow_blank=True, allow_null=True, required=False)
 
 

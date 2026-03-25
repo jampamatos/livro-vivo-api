@@ -20,6 +20,14 @@ import os
 import sys
 
 from .logging import build_logging_config
+from .storage import (
+    DEFAULT_MEDIA_PRIVATE_CACHE_CONTROL,
+    DEFAULT_MEDIA_PUBLIC_CACHE_CONTROL,
+    build_storage_policies,
+    build_storage_settings,
+    normalize_media_url,
+    resolve_media_root,
+)
 
 
 def env_bool(key: str, default: bool = False) -> bool:
@@ -264,8 +272,33 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
-MEDIA_URL = 'media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_STORAGE_PROVIDER = (os.getenv('DJANGO_STORAGE_PROVIDER') or 'filesystem').strip().lower()
+MEDIA_URL = normalize_media_url(os.getenv('DJANGO_MEDIA_URL', '/media/'))
+MEDIA_ROOT = resolve_media_root(base_dir=BASE_DIR, raw_value=os.getenv('DJANGO_MEDIA_ROOT'))
+MEDIA_PUBLIC_CACHE_CONTROL = (
+    os.getenv('DJANGO_MEDIA_PUBLIC_CACHE_CONTROL') or DEFAULT_MEDIA_PUBLIC_CACHE_CONTROL
+).strip()
+MEDIA_PRIVATE_CACHE_CONTROL = (
+    os.getenv('DJANGO_MEDIA_PRIVATE_CACHE_CONTROL') or DEFAULT_MEDIA_PRIVATE_CACHE_CONTROL
+).strip()
+STORAGES = build_storage_settings(
+    provider=MEDIA_STORAGE_PROVIDER,
+    staticfiles_backend='django.contrib.staticfiles.storage.StaticFilesStorage',
+    media_public_cache_control=MEDIA_PUBLIC_CACHE_CONTROL,
+    media_private_cache_control=MEDIA_PRIVATE_CACHE_CONTROL,
+    s3_bucket_name=(os.getenv('DJANGO_STORAGE_S3_BUCKET_NAME') or '').strip(),
+    s3_endpoint_url=(os.getenv('DJANGO_STORAGE_S3_ENDPOINT_URL') or '').strip(),
+    s3_region_name=(os.getenv('DJANGO_STORAGE_S3_REGION_NAME') or '').strip(),
+    s3_access_key_id=(os.getenv('DJANGO_STORAGE_S3_ACCESS_KEY_ID') or '').strip(),
+    s3_secret_access_key=(os.getenv('DJANGO_STORAGE_S3_SECRET_ACCESS_KEY') or '').strip(),
+    s3_custom_domain=(os.getenv('DJANGO_STORAGE_S3_CUSTOM_DOMAIN') or '').strip(),
+    s3_querystring_expire=int(os.getenv('DJANGO_STORAGE_S3_QUERYSTRING_EXPIRE', '300')),
+)
+MEDIA_STORAGE_POLICIES = build_storage_policies(
+    provider=MEDIA_STORAGE_PROVIDER,
+    media_public_cache_control=MEDIA_PUBLIC_CACHE_CONTROL,
+    media_private_cache_control=MEDIA_PRIVATE_CACHE_CONTROL,
+)
 AVATAR_MAX_UPLOAD_BYTES = int(os.getenv('DJANGO_AVATAR_MAX_UPLOAD_BYTES', str(5 * 1024 * 1024)))
 AVATAR_MAX_DIMENSION = int(os.getenv('DJANGO_AVATAR_MAX_DIMENSION', '1024'))
 AVATAR_ALLOWED_MIME_TYPES = tuple(

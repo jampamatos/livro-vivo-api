@@ -15,6 +15,7 @@ from rest_framework.views import APIView
 
 from entitlements.models import Entitlement
 from entitlements.services import get_effective_tier, get_subscription_snapshot
+from config.storage import build_media_reference
 
 from .models import NotificationDispatch, NotificationPreference, Profile, PushDevice
 from .serializers import (
@@ -47,25 +48,13 @@ def issue_tokens_for_user(user):
     }
 
 
-def _resolve_profile_avatar_url(profile: Profile, request=None):
-    for attr_name in ('avatar', 'avatar_url', 'photo_url', 'image_url'):
-        raw_value = getattr(profile, attr_name, None)
-        if not raw_value:
-            continue
-        if hasattr(raw_value, 'url'):
-            try:
-                value = raw_value.url
-                if request and value.startswith('/'):
-                    return request.build_absolute_uri(value)
-                return value
-            except Exception:  # pragma: no cover
-                continue
-        value = str(raw_value).strip()
-        if value:
-            if request and value.startswith('/'):
-                return request.build_absolute_uri(value)
-            return value
-    return None
+def _resolve_profile_avatar_reference(profile: Profile, request=None):
+    return build_media_reference(
+        upload_field=getattr(profile, 'avatar', None),
+        remote_url=getattr(profile, 'avatar_url', ''),
+        request=request,
+        storage_alias='avatars',
+    )
 
 
 def _delete_stored_file(storage, name: str):
@@ -78,12 +67,18 @@ def _delete_stored_file(storage, name: str):
 
 
 def _serialize_user_payload(user, profile: Profile, request=None):
+    avatar_reference = _resolve_profile_avatar_reference(profile, request=request)
     return {
         'id': user.id,
         'email': user.email,
         'name': profile.full_name,
         'profession': profile.profession,
-        'avatar_url': _resolve_profile_avatar_url(profile, request=request),
+        'avatar_url': avatar_reference['url'],
+        'avatar_source': avatar_reference['source'],
+        'avatar_storage_alias': avatar_reference['storage_alias'],
+        'avatar_storage_backend': avatar_reference['storage_backend'],
+        'avatar_storage_key': avatar_reference['storage_key'],
+        'avatar_cache_control': avatar_reference['cache_control'],
         'role': get_user_role(user),
     }
 

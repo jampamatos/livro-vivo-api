@@ -9,7 +9,13 @@ class TemplatePieceSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         data = super().to_representation(instance)
         request = self.context.get('request')
-        data['file_url'] = instance.resolved_file_url(request=request)
+        file_reference = instance.resolve_file_reference(request=request)
+        data['file_url'] = file_reference['url']
+        data['file_source'] = file_reference['source']
+        data['file_storage_alias'] = file_reference['storage_alias']
+        data['file_storage_backend'] = file_reference['storage_backend']
+        data['file_storage_key'] = file_reference['storage_key']
+        data['file_cache_control'] = file_reference['cache_control']
         return data
 
     def validate_tags(self, value):
