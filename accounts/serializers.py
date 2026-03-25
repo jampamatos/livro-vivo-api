@@ -1,5 +1,7 @@
 import io
 from pathlib import Path
+from urllib.parse import urlparse
+import warnings
 
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
@@ -34,6 +36,11 @@ def _avatar_allowed_mime_types() -> set[str]:
     return {str(item).strip().lower() for item in configured if str(item).strip()}
 
 
+def _avatar_max_source_pixels() -> int:
+    max_dimension = max(_avatar_max_dimension(), 1)
+    return max(max_dimension * max_dimension * 16, 16_000_000)
+
+
 def _format_avatar_max_size(bytes_value: int) -> str:
     megabytes = bytes_value / (1024 * 1024)
     return f"{megabytes:.0f} MB" if megabytes.is_integer() else f"{megabytes:.1f} MB"
@@ -46,14 +53,22 @@ def _normalize_avatar_upload(uploaded_file, crop: dict[str, int] | None = None):
         pass
 
     try:
-        with Image.open(uploaded_file) as image:
-            image.load()
-            source_format = (image.format or '').upper()
-            if source_format not in ALLOWED_AVATAR_FORMATS:
-                raise serializers.ValidationError("Avatar deve ser uma imagem JPG, PNG ou WEBP.")
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(uploaded_file) as image:
+                width, height = image.size
+                if width <= 0 or height <= 0:
+                    raise serializers.ValidationError("Avatar deve ser uma imagem válida em JPG, PNG ou WEBP.")
+                if width * height > _avatar_max_source_pixels():
+                    raise serializers.ValidationError("Avatar possui dimensões maiores que o permitido.")
 
-            normalized = image.copy()
-    except (UnidentifiedImageError, OSError, ValueError):
+                image.load()
+                source_format = (image.format or '').upper()
+                if source_format not in ALLOWED_AVATAR_FORMATS:
+                    raise serializers.ValidationError("Avatar deve ser uma imagem JPG, PNG ou WEBP.")
+
+                normalized = image.copy()
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning):
         raise serializers.ValidationError("Avatar deve ser uma imagem válida em JPG, PNG ou WEBP.")
 
     if crop:
@@ -139,29 +154,6 @@ class RegisterSerializer(serializers.Serializer):
         return user
 
 
-class LoginSerializer(serializers.Serializer):
-    """Valida login por email e senha."""
-
-    email = serializers.EmailField()
-    password = serializers.CharField(write_only=True)
-
-
-class MeSerializer(serializers.Serializer):
-    """Serializer de leitura para o endpoint /me/."""
-
-    id = serializers.IntegerField()
-    email = serializers.EmailField()
-    name = serializers.CharField(allow_blank=True)
-    profession = serializers.CharField(allow_blank=True)
-    avatar_url = serializers.CharField(allow_blank=True, allow_null=True, required=False)
-    avatar_source = serializers.CharField(allow_blank=True, allow_null=True, required=False)
-    avatar_storage_alias = serializers.CharField(allow_blank=True, allow_null=True, required=False)
-    avatar_storage_backend = serializers.CharField(allow_blank=True, allow_null=True, required=False)
-    avatar_storage_key = serializers.CharField(allow_blank=True, allow_null=True, required=False)
-    avatar_cache_control = serializers.CharField(allow_blank=True, allow_null=True, required=False)
-    role = serializers.CharField(allow_blank=True, allow_null=True, required=False)
-
-
 class MeUpdateSerializer(serializers.Serializer):
     name = serializers.CharField(required=False, allow_blank=True, max_length=150)
     profession = serializers.CharField(required=False, allow_blank=True, max_length=120)
@@ -181,7 +173,14 @@ class MeUpdateSerializer(serializers.Serializer):
     def validate_avatar_url(self, value: str | None) -> str:
         if value is None:
             return ''
-        return value.strip()
+        normalized = value.strip()
+        if not normalized:
+            return ''
+
+        scheme = (urlparse(normalized).scheme or '').lower()
+        if scheme not in {'http', 'https'}:
+            raise serializers.ValidationError("avatar_url deve usar HTTP ou HTTPS.")
+        return normalized
 
     def validate_avatar(self, value):
         max_bytes = _avatar_max_upload_bytes()
@@ -263,21 +262,6 @@ class MePasswordChangeSerializer(serializers.Serializer):
         if attrs['current_password'] == attrs['new_password']:
             raise serializers.ValidationError({'new_password': ['A nova senha deve ser diferente da senha atual.']})
         return attrs
-
-
-class EntitlementSerializer(serializers.Serializer):
-    """Serializer de entitlements do usuário."""
-
-    id = serializers.IntegerField()
-    product = serializers.CharField()
-    book_id = serializers.IntegerField(allow_null=True)
-    subscription_id = serializers.IntegerField(allow_null=True)
-    tier = serializers.CharField(allow_null=True)
-    is_founder = serializers.BooleanField()
-    status = serializers.CharField()
-    expires_at = serializers.DateTimeField(allow_null=True)
-    is_active = serializers.BooleanField()
-    source = serializers.CharField()
 
 
 class NotificationPreferenceSerializer(serializers.ModelSerializer):

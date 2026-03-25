@@ -8,16 +8,19 @@ Implementado e ativo em `main`:
 
 - Auth JWT (`register`, `login`, `refresh`, `logout`).
 - Perfil/roles e resumo de moderacao na resposta de entitlements.
+- Acoes LGPD self-service com exportacao de dados e solicitacao de anonimização/exclusao logica da conta.
 - Entitlements por assinatura (`essential` / `professional`) com suporte a founder.
 - Biblioteca chapter-first (`Book`, `BookVersion`, `BookChapter`) com publicacao de versoes e changelog.
 - Busca de capitulos com FTS no Postgres e fallback para SQLite.
+- Busca global cross-modulo para biblioteca, jurisprudencia e comunidade.
 - Anotacoes por capitulo com `selector + offsets`.
 - Jurisprudencia com ementa rich/plain, anchors, tags, busca e consumo no app.
 - Curso com `CoursePost`, `CourseAsset` e `LiveEvent`, gating Profissional, admin e notificacoes de publicacao.
 - Banco de Pecas versionado com metadados de arquivo, upload/URL remota, token temporario de download e gating Profissional.
 - Comunidade com categorias, posts, comentarios, reports, follow/unfollow de posts, fila de moderacao, trilha de acoes e banimento por escopo.
 - Notificacoes com preferencias por usuario, `NotificationEvent`, `NotificationDispatch`, inbox in-app, registro de devices e dispatcher de push.
-- Health/readiness, `check --deploy`, logs estruturados e Sentry opcional.
+- Health/readiness, `check --deploy`, logs estruturados com sanitizacao de segredos em query string e Sentry opcional.
+- Hardening de avatar com validacao de formato/MIME, limite de tamanho, limite de dimensoes e recorte seguro.
 
 ## Stack
 
@@ -285,6 +288,8 @@ Regra pratica:
 - `POST /auth/logout/`
 - `GET /me/`
 - `GET /me/entitlements/`
+- `GET /me/data-export/`
+- `POST /me/data-erasure/`
 - `GET /me/notifications/`
 - `POST /me/notifications/<dispatch_id>/ack/`
 - `POST /me/notifications/in-app/consume-latest/`
@@ -301,6 +306,7 @@ Regra pratica:
 - `GET /books/<book_id>/search/?q=...`
 - `GET /search/?q=...&book_id=...`
 - `GET /search/?q=...&book_version_id=...`
+- `GET /search/global/?q=...`
 
 ### Anotacoes
 
@@ -397,10 +403,9 @@ Norteador UX do Admin para operacao juridica (nao-tech):
 
 ## Limites conhecidos
 
-- Busca global cross-modulo ainda nao existe; `/search/` hoje e busca de livro.
-- LGPD (exportacao/exclusao de dados) ainda nao existe.
-- Em 2026-03-03, `python manage.py test` falhou em 1 teste de CORS do `/health/` para Expo web.
-- O hardening final de throttle/scans para os endpoints novos ainda faz parte do backlog pre-deploy.
+- A busca global atual cobre biblioteca, jurisprudencia e comunidade; cursos e banco de pecas ainda nao entram nesse agregador.
+- `NOTIFICATIONS_PUSH_PROVIDER` continua `noop` por padrao em dev; FCM/APNs seguem dependentes da configuracao de deploy.
+- Para uploads protegidos do Banco de Pecas em producao, a configuracao recomendada continua sendo object storage S3-compativel.
 
 ## CI
 
