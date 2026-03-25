@@ -1,13 +1,54 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .request_context import reset_request_context, set_request_context, update_request_user_id
 
 
 logger = logging.getLogger("livro_vivo.api")
+
+REQUEST_ID_ALLOWED_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+SENSITIVE_QUERY_PARAM_NAMES = {
+    "token",
+    "access_token",
+    "refresh",
+    "signature",
+    "sig",
+    "x-amz-credential",
+    "x-amz-security-token",
+    "x-amz-signature",
+}
+
+
+def _build_request_id() -> str:
+    return uuid.uuid4().hex
+
+
+def _normalize_request_id(raw_value: str | None) -> str:
+    candidate = (raw_value or "").strip()
+    if not candidate or not REQUEST_ID_ALLOWED_RE.fullmatch(candidate):
+        return _build_request_id()
+    return candidate
+
+
+def _sanitize_request_path(raw_path: str | None) -> str:
+    path = (raw_path or "").strip() or "/"
+    parsed = urlsplit(path)
+    if not parsed.query:
+        return path
+
+    sanitized_query = urlencode(
+        [
+            (key, "redacted" if key.lower() in SENSITIVE_QUERY_PARAM_NAMES else value)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        ],
+        doseq=True,
+    )
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, sanitized_query, parsed.fragment))
 
 
 class RequestContextMiddleware:
@@ -19,13 +60,13 @@ class RequestContextMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        request_id = (request.headers.get("X-Request-ID") or uuid.uuid4().hex).strip() or uuid.uuid4().hex
+        request_id = _normalize_request_id(request.headers.get("X-Request-ID"))
         request.request_id = request_id
         started_at = time.monotonic()
         tokens = set_request_context(
             request_id=request_id,
             method=request.method,
-            path=request.get_full_path(),
+            path=_sanitize_request_path(request.get_full_path()),
         )
 
         response = None

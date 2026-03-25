@@ -87,9 +87,7 @@ def _search_library(*, query: str, query_lower: str, user) -> list[dict]:
             book_version__status=BookVersion.Status.PUBLISHED,
             book_version__book__status=Book.Status.PUBLISHED,
         )
-        if user_has_subscription(user):
-            pass
-        else:
+        if not user_has_subscription(user):
             allowed_book_ids = entitled_book_ids(user)
             if not allowed_book_ids:
                 return []

@@ -408,6 +408,27 @@ class AccountsAPITests(TestCase):
         self.assertIsNone(response.data['avatar_storage_key'])
         self.assertEqual(response.data['avatar_storage_backend'], 'external_url')
 
+    def test_me_patch_rejects_avatar_url_with_unsupported_scheme(self):
+        user = User.objects.create_user(
+            username='patch-avatar-url-invalid@example.com',
+            email='patch-avatar-url-invalid@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.patch(
+            reverse('me'),
+            {
+                'avatar_url': 'ftp://example.com/avatar.jpg',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('avatar_url', response.data)
+        self.assertIn('HTTP ou HTTPS', str(response.data['avatar_url'][0]))
+
     def test_me_patch_accepts_avatar_upload_and_returns_absolute_url(self):
         user = User.objects.create_user(
             username='patch-upload@example.com',
@@ -510,6 +531,37 @@ class AccountsAPITests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('avatar', response.data)
         self.assertIn('no máximo', str(response.data['avatar'][0]))
+
+    def test_me_patch_rejects_avatar_with_excessive_source_dimensions(self):
+        user = User.objects.create_user(
+            username='patch-dimension-limit@example.com',
+            email='patch-dimension-limit@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        image_buffer = io.BytesIO()
+        Image.new('RGB', (64, 64), color='#1D4ED8').save(image_buffer, format='PNG')
+
+        with tempfile.TemporaryDirectory(prefix='accounts-avatar-dimension-limit-') as media_root:
+            with self.settings(MEDIA_ROOT=media_root):
+                with mock.patch('accounts.serializers._avatar_max_source_pixels', return_value=1024):
+                    response = self.client.patch(
+                        reverse('me'),
+                        {
+                            'avatar': SimpleUploadedFile(
+                                'avatar.png',
+                                image_buffer.getvalue(),
+                                content_type='image/png',
+                            ),
+                        },
+                        format='multipart',
+                    )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('avatar', response.data)
+        self.assertIn('dimensões maiores', str(response.data['avatar'][0]))
 
     def test_me_patch_accepts_cropped_avatar_upload(self):
         user = User.objects.create_user(
@@ -883,124 +935,143 @@ class AccountsAPITests(TestCase):
         )
 
     def test_me_data_erasure_anonymizes_account_and_keeps_community_retention_trail(self):
-        user = User.objects.create_user(
-            username='erase@example.com',
-            email='erase@example.com',
-            password='StrongPass123',
-        )
-        profile, _ = Profile.objects.get_or_create(user=user)
-        profile.full_name = 'Usuário a remover'
-        profile.profession = 'Profissional'
-        profile.save()
-        NotificationPreference.objects.create(user=user)
-        device = PushDevice.objects.create(
-            user=user,
-            platform=PushDevice.Platform.ANDROID,
-            expo_push_token='ExponentPushToken[lgpd-erasure]',
-        )
+        with tempfile.TemporaryDirectory(prefix='accounts-erasure-avatar-') as media_root:
+            with self.settings(MEDIA_ROOT=media_root):
+                user = User.objects.create_user(
+                    username='erase@example.com',
+                    email='erase@example.com',
+                    password='StrongPass123',
+                )
+                profile, _ = Profile.objects.get_or_create(user=user)
+                profile.full_name = 'Usuário a remover'
+                profile.profession = 'Profissional'
+                profile.avatar_url = 'https://example.com/avatar-antigo.jpg'
+                avatar_buffer = io.BytesIO()
+                Image.new('RGB', (16, 16), color='#1D4ED8').save(avatar_buffer, format='PNG')
+                profile.avatar = SimpleUploadedFile(
+                    'avatar.png',
+                    avatar_buffer.getvalue(),
+                    content_type='image/png',
+                )
+                profile.save()
+                avatar_path = profile.avatar.path
+                self.assertTrue(os.path.exists(avatar_path))
 
-        book = Book.objects.create(title='Livro remoção', status=Book.Status.PUBLISHED)
-        book_version = BookVersion.objects.create(
-            book=book,
-            version='2026.02',
-            status=BookVersion.Status.PUBLISHED,
-        )
-        chapter = BookChapter.objects.create(
-            book_version=book_version,
-            order=1,
-            title='Capítulo remoção',
-            slug='cap-remocao',
-            content_rich='<p>Texto</p>',
-        )
-        Annotation.objects.create(
-            user=user,
-            book_version=book_version,
-            chapter=chapter,
-            selector={'type': 'range'},
-            start_offset=0,
-            end_offset=5,
-            excerpt='Texto',
-            note='Nota para apagar',
-        )
+                NotificationPreference.objects.create(user=user)
+                device = PushDevice.objects.create(
+                    user=user,
+                    platform=PushDevice.Platform.ANDROID,
+                    expo_push_token='ExponentPushToken[lgpd-erasure]',
+                )
 
-        subscription = Subscription.objects.create(
-            user=user,
-            tier=Subscription.Tier.ESSENTIAL,
-            status=Subscription.Status.ACTIVE,
-            source='test',
-        )
-        entitlement = Entitlement.objects.create(
-            user=user,
-            product=Entitlement.Product.SUBSCRIPTION,
-            subscription=subscription,
-            status=Entitlement.Status.ACTIVE,
-            source='test',
-        )
+                book = Book.objects.create(title='Livro remoção', status=Book.Status.PUBLISHED)
+                book_version = BookVersion.objects.create(
+                    book=book,
+                    version='2026.02',
+                    status=BookVersion.Status.PUBLISHED,
+                )
+                chapter = BookChapter.objects.create(
+                    book_version=book_version,
+                    order=1,
+                    title='Capítulo remoção',
+                    slug='cap-remocao',
+                    content_rich='<p>Texto</p>',
+                )
+                Annotation.objects.create(
+                    user=user,
+                    book_version=book_version,
+                    chapter=chapter,
+                    selector={'type': 'range'},
+                    start_offset=0,
+                    end_offset=5,
+                    excerpt='Texto',
+                    note='Nota para apagar',
+                )
 
-        category = Category.objects.create(name='Retenção', slug='retencao')
-        post = CommunityPost.objects.create(
-            author=user,
-            category=category,
-            title='Post preservado',
-            body='Conteúdo a reter',
-        )
-        CommunityComment.objects.create(
-            post=post,
-            author=user,
-            body='Comentário preservado',
-        )
-        Report.objects.create(
-            reporter=user,
-            post=post,
-            reason='Denúncia preservada',
-        )
+                subscription = Subscription.objects.create(
+                    user=user,
+                    tier=Subscription.Tier.ESSENTIAL,
+                    status=Subscription.Status.ACTIVE,
+                    source='test',
+                )
+                entitlement = Entitlement.objects.create(
+                    user=user,
+                    product=Entitlement.Product.SUBSCRIPTION,
+                    subscription=subscription,
+                    status=Entitlement.Status.ACTIVE,
+                    source='test',
+                )
 
-        access = str(RefreshToken.for_user(user).access_token)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+                category = Category.objects.create(name='Retenção', slug='retencao')
+                post = CommunityPost.objects.create(
+                    author=user,
+                    category=category,
+                    title='Post preservado',
+                    body='Conteúdo a reter',
+                )
+                CommunityComment.objects.create(
+                    post=post,
+                    author=user,
+                    body='Comentário preservado',
+                )
+                Report.objects.create(
+                    reporter=user,
+                    post=post,
+                    reason='Denúncia preservada',
+                )
 
-        response = self.client.post(
-            reverse('me-data-erasure'),
-            {'confirmation': 'DELETE', 'reason': 'Solicitação LGPD de teste'},
-            format='json',
-        )
+                access = str(RefreshToken.for_user(user).access_token)
+                self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
 
-        self.assertEqual(response.status_code, 202)
-        self.assertEqual(response.data['status'], DataPrivacyRequest.Status.COMPLETED)
-        self.assertIn('retention_policy', response.data)
+                response = self.client.post(
+                    reverse('me-data-erasure'),
+                    {'confirmation': 'DELETE', 'reason': 'Solicitação LGPD de teste'},
+                    format='json',
+                )
 
-        user.refresh_from_db()
-        profile.refresh_from_db()
-        subscription.refresh_from_db()
-        entitlement.refresh_from_db()
+                self.assertEqual(response.status_code, 202)
+                self.assertEqual(response.data['status'], DataPrivacyRequest.Status.COMPLETED)
+                self.assertIn('retention_policy', response.data)
 
-        self.assertFalse(user.is_active)
-        self.assertTrue(user.username.startswith(f'deleted-user-{user.id}-'))
-        self.assertTrue(user.email.startswith(f'deleted+{user.id}-'))
-        self.assertEqual(profile.full_name, 'Conta anonimizada')
-        self.assertEqual(profile.profession, '')
-        self.assertEqual(subscription.status, Subscription.Status.INACTIVE)
-        self.assertEqual(entitlement.status, Entitlement.Status.REVOKED)
-        device.refresh_from_db()
-        self.assertFalse(device.is_active)
-        self.assertEqual(Annotation.objects.filter(user=user).count(), 0)
-        self.assertEqual(CommunityPost.objects.filter(author=user).count(), 1)
-        self.assertEqual(CommunityComment.objects.filter(author=user).count(), 1)
-        self.assertEqual(Report.objects.filter(reporter=user).count(), 1)
+                user.refresh_from_db()
+                profile.refresh_from_db()
+                subscription.refresh_from_db()
+                entitlement.refresh_from_db()
 
-        preference = NotificationPreference.objects.get(user=user)
-        self.assertFalse(preference.notifications_enabled)
-        self.assertFalse(preference.book_version_updates_enabled)
-        self.assertFalse(preference.new_content_updates_enabled)
-        self.assertFalse(preference.community_interaction_updates_enabled)
-        self.assertFalse(preference.push_enabled)
+                self.assertFalse(user.is_active)
+                self.assertTrue(user.username.startswith(f'deleted-user-{user.id}-'))
+                self.assertTrue(user.email.startswith(f'deleted+{user.id}-'))
+                self.assertEqual(profile.full_name, 'Conta anonimizada')
+                self.assertEqual(profile.profession, '')
+                self.assertFalse(bool(profile.avatar))
+                self.assertEqual(profile.avatar_url, '')
+                self.assertFalse(os.path.exists(avatar_path))
+                self.assertEqual(subscription.status, Subscription.Status.INACTIVE)
+                self.assertEqual(entitlement.status, Entitlement.Status.REVOKED)
+                device.refresh_from_db()
+                self.assertFalse(device.is_active)
+                self.assertNotEqual(device.expo_push_token, 'ExponentPushToken[lgpd-erasure]')
+                self.assertTrue(device.expo_push_token.startswith(f'erased-device-{user.id}-{device.id}-'))
+                self.assertEqual(Annotation.objects.filter(user=user).count(), 0)
+                self.assertEqual(CommunityPost.objects.filter(author=user).count(), 1)
+                self.assertEqual(CommunityComment.objects.filter(author=user).count(), 1)
+                self.assertEqual(Report.objects.filter(reporter=user).count(), 1)
 
-        privacy_request = DataPrivacyRequest.objects.get(pk=response.data['request_id'])
-        self.assertEqual(privacy_request.request_type, DataPrivacyRequest.RequestType.ERASURE)
-        self.assertEqual(privacy_request.status, DataPrivacyRequest.Status.COMPLETED)
-        self.assertIn('moderação', privacy_request.retention_policy)
-        self.assertEqual(privacy_request.payload['actions']['community_posts_retained_total'], 1)
-        self.assertEqual(privacy_request.payload['actions']['community_comments_retained_total'], 1)
-        self.assertEqual(privacy_request.payload['actions']['community_reports_retained_total'], 1)
+                preference = NotificationPreference.objects.get(user=user)
+                self.assertFalse(preference.notifications_enabled)
+                self.assertFalse(preference.book_version_updates_enabled)
+                self.assertFalse(preference.new_content_updates_enabled)
+                self.assertFalse(preference.community_interaction_updates_enabled)
+                self.assertFalse(preference.push_enabled)
+
+                privacy_request = DataPrivacyRequest.objects.get(pk=response.data['request_id'])
+                self.assertEqual(privacy_request.request_type, DataPrivacyRequest.RequestType.ERASURE)
+                self.assertEqual(privacy_request.status, DataPrivacyRequest.Status.COMPLETED)
+                self.assertIn('moderação', privacy_request.retention_policy)
+                self.assertEqual(privacy_request.payload['actions']['community_posts_retained_total'], 1)
+                self.assertEqual(privacy_request.payload['actions']['community_comments_retained_total'], 1)
+                self.assertEqual(privacy_request.payload['actions']['community_reports_retained_total'], 1)
+                self.assertEqual(privacy_request.payload['actions']['push_devices_scrubbed_total'], 1)
 
     def test_me_notification_preferences_get_creates_defaults(self):
         user = User.objects.create_user(
@@ -2228,3 +2299,9 @@ class HealthAndReadinessTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response['X-Request-ID'], 'test-request-id-123')
+
+    def test_health_replaces_invalid_incoming_request_id(self):
+        response = self.client.get('/healthz/', HTTP_X_REQUEST_ID='request id with spaces')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertRegex(response['X-Request-ID'], r'^[a-f0-9]{32}$')

@@ -69,6 +69,38 @@ def _serialize_subscription_for_export(subscription: Subscription | None) -> dic
     }
 
 
+def _delete_profile_avatar_file(*, user_id: int, avatar_storage, avatar_name: str) -> None:
+    if not avatar_storage or not avatar_name:
+        return
+
+    try:
+        avatar_storage.delete(avatar_name)
+    except Exception:
+        logger.exception(
+            'profile_avatar_delete_failed_after_erasure',
+            extra={'user_id': user_id},
+        )
+
+
+def _scrub_push_devices_for_erasure(*, user, anonymized_suffix: str) -> int:
+    scrubbed_devices = 0
+    for device in PushDevice.objects.filter(user=user).order_by('id'):
+        device.is_active = False
+        device.disabled_reason = 'lgpd_erasure_request'
+        device.expo_push_token = f'erased-device-{user.pk}-{device.pk}-{anonymized_suffix}'
+        device.save(
+            update_fields=[
+                'is_active',
+                'disabled_reason',
+                'expo_push_token',
+                'last_seen_at',
+                'updated_at',
+            ]
+        )
+        scrubbed_devices += 1
+    return scrubbed_devices
+
+
 def create_user_data_export_package(*, user) -> dict:
     profile, _ = Profile.objects.get_or_create(user=user)
     notification_preference, _ = NotificationPreference.objects.get_or_create(user=user)
@@ -214,6 +246,7 @@ def create_user_data_export_package(*, user) -> dict:
 
 def request_user_data_erasure(*, user, reason: str = '') -> dict:
     now = timezone.now()
+    anonymized_suffix = now.strftime('%Y%m%d%H%M%S')
 
     with transaction.atomic():
         privacy_request = DataPrivacyRequest.objects.create(
@@ -228,9 +261,9 @@ def request_user_data_erasure(*, user, reason: str = '') -> dict:
         notification_preferences, _ = NotificationPreference.objects.get_or_create(user=user)
 
         deleted_annotations, _ = Annotation.objects.filter(user=user).delete()
-        deactivated_push_devices = PushDevice.objects.filter(user=user, is_active=True).update(
-            is_active=False,
-            disabled_reason='lgpd_erasure_request',
+        scrubbed_push_devices = _scrub_push_devices_for_erasure(
+            user=user,
+            anonymized_suffix=anonymized_suffix,
         )
         revoked_entitlements = Entitlement.objects.filter(
             user=user,
@@ -265,7 +298,6 @@ def request_user_data_erasure(*, user, reason: str = '') -> dict:
             ]
         )
 
-        anonymized_suffix = now.strftime('%Y%m%d%H%M%S')
         user.username = f'deleted-user-{user.pk}-{anonymized_suffix}'
         user.email = f'deleted+{user.pk}-{anonymized_suffix}@anon.livrovivo.local'
         user.first_name = ''
@@ -287,10 +319,19 @@ def request_user_data_erasure(*, user, reason: str = '') -> dict:
             ]
         )
 
+        avatar_storage = profile.avatar.storage if profile.avatar and profile.avatar.name else None
+        avatar_name = profile.avatar.name if profile.avatar and profile.avatar.name else ''
         profile.full_name = 'Conta anonimizada'
         profile.profession = ''
         profile.role = Profile.Role.MEMBER
-        profile.save(update_fields=['full_name', 'profession', 'role'])
+        profile.avatar = None
+        profile.avatar_url = ''
+        profile.save(update_fields=['full_name', 'profession', 'role', 'avatar', 'avatar_url'])
+        _delete_profile_avatar_file(
+            user_id=user.id,
+            avatar_storage=avatar_storage,
+            avatar_name=avatar_name,
+        )
 
         privacy_request.status = DataPrivacyRequest.Status.COMPLETED
         privacy_request.processed_at = now
@@ -298,7 +339,8 @@ def request_user_data_erasure(*, user, reason: str = '') -> dict:
             'reason': (reason or '').strip(),
             'actions': {
                 'annotations_deleted_total': deleted_annotations,
-                'push_devices_deactivated_total': deactivated_push_devices,
+                'push_devices_deactivated_total': scrubbed_push_devices,
+                'push_devices_scrubbed_total': scrubbed_push_devices,
                 'entitlements_revoked_total': revoked_entitlements,
                 'subscriptions_deactivated_total': deactivated_subscriptions,
                 'community_posts_retained_total': CommunityPost.objects.filter(author=user).count(),
