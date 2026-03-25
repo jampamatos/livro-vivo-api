@@ -359,6 +359,9 @@ class AccountsAPITests(TestCase):
         self.assertEqual(response.data['name'], '')
         self.assertEqual(response.data['profession'], '')
         self.assertIsNone(response.data['avatar_url'])
+        self.assertEqual(response.data['avatar_source'], 'none')
+        self.assertEqual(response.data['avatar_storage_alias'], 'avatars')
+        self.assertEqual(response.data['avatar_storage_backend'], 'filesystem')
 
     def test_me_accepts_jwt_bearer_token(self):
         user = User.objects.create_user(
@@ -401,6 +404,9 @@ class AccountsAPITests(TestCase):
         self.assertEqual(response.data['name'], 'Jampa Matos')
         self.assertEqual(response.data['profession'], 'Advogado')
         self.assertEqual(response.data['avatar_url'], 'https://example.com/avatar.jpg')
+        self.assertEqual(response.data['avatar_source'], 'remote_url')
+        self.assertIsNone(response.data['avatar_storage_key'])
+        self.assertEqual(response.data['avatar_storage_backend'], 'external_url')
 
     def test_me_patch_accepts_avatar_upload_and_returns_absolute_url(self):
         user = User.objects.create_user(
@@ -439,6 +445,10 @@ class AccountsAPITests(TestCase):
                 self.assertTrue(bool(user.profile.avatar))
                 self.assertIn('/media/avatars/', response.data['avatar_url'])
                 self.assertTrue(response.data['avatar_url'].startswith('http://testserver/media/avatars/'))
+                self.assertEqual(response.data['avatar_source'], 'upload')
+                self.assertEqual(response.data['avatar_storage_alias'], 'avatars')
+                self.assertEqual(response.data['avatar_storage_backend'], 'filesystem')
+                self.assertTrue(response.data['avatar_storage_key'].startswith('avatars/'))
 
     def test_me_patch_rejects_avatar_with_invalid_type(self):
         user = User.objects.create_user(

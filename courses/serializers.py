@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from config.storage import build_media_reference
+
 from .models import CourseAsset, CoursePost, LiveEvent
 
 
@@ -45,6 +47,21 @@ class CourseAssetSerializer(serializers.ModelSerializer):
         write_only=True,
     )
     post = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        file_reference = build_media_reference(
+            remote_url=instance.file_url,
+            request=request,
+        )
+        data['file_url'] = file_reference['url']
+        data['file_source'] = file_reference['source']
+        data['file_storage_alias'] = file_reference['storage_alias']
+        data['file_storage_backend'] = file_reference['storage_backend']
+        data['file_storage_key'] = file_reference['storage_key']
+        data['file_cache_control'] = file_reference['cache_control']
+        return data
 
     def validate_tags(self, value):
         if value is None:

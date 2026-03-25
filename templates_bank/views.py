@@ -130,6 +130,7 @@ class TemplatePieceViewSet(viewsets.ModelViewSet):
         if payload.get('uid') != request.user.id:
             raise PermissionDenied('Token não pertence ao usuário autenticado.')
 
+        file_reference = piece.resolve_file_reference(request=request)
         return Response(
             {
                 'id': piece.id,
@@ -140,6 +141,11 @@ class TemplatePieceViewSet(viewsets.ModelViewSet):
                 'file_mime_type': piece.file_mime_type,
                 'file_size_bytes': piece.file_size_bytes,
                 'file_sha256': piece.file_sha256,
-                'file_url': piece.resolved_file_url(request=request),
+                'file_url': file_reference['url'],
+                'file_source': file_reference['source'],
+                'file_storage_alias': file_reference['storage_alias'],
+                'file_storage_backend': file_reference['storage_backend'],
+                'file_storage_key': file_reference['storage_key'],
+                'file_cache_control': file_reference['cache_control'],
             }
         )

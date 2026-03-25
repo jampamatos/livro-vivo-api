@@ -25,9 +25,11 @@ Implementado e ativo em `main`:
 - Django 5
 - Django REST Framework
 - PostgreSQL (dev/prod)
+- Filesystem storage em dev / object storage S3-compativel em stage-producao
 - `djangorestframework-simplejwt`
 - `django-cors-headers`
 - `django-tinymce`
+- `django-storages` + `boto3`
 - `sentry-sdk` (opcional)
 
 ## Setup local
@@ -80,6 +82,18 @@ Variaveis principais:
 - `SENTRY_DSN`
 - `SENTRY_ENVIRONMENT`
 - `SENTRY_TRACES_SAMPLE_RATE`
+- `DJANGO_STORAGE_PROVIDER`: `filesystem` | `s3`
+- `DJANGO_MEDIA_URL`
+- `DJANGO_MEDIA_ROOT`
+- `DJANGO_MEDIA_PUBLIC_CACHE_CONTROL`
+- `DJANGO_MEDIA_PRIVATE_CACHE_CONTROL`
+- `DJANGO_STORAGE_S3_BUCKET_NAME`
+- `DJANGO_STORAGE_S3_ENDPOINT_URL`
+- `DJANGO_STORAGE_S3_REGION_NAME`
+- `DJANGO_STORAGE_S3_ACCESS_KEY_ID`
+- `DJANGO_STORAGE_S3_SECRET_ACCESS_KEY`
+- `DJANGO_STORAGE_S3_CUSTOM_DOMAIN`
+- `DJANGO_STORAGE_S3_QUERYSTRING_EXPIRE`
 - `DJANGO_AVATAR_MAX_UPLOAD_BYTES`
 - `DJANGO_AVATAR_MAX_DIMENSION`
 - `DJANGO_AVATAR_ALLOWED_MIME_TYPES`
@@ -96,6 +110,54 @@ Banco de Pecas:
 - `TEMPLATES_BANK_DOWNLOAD_TOKEN_MAX_AGE_SECONDS`
 - `TEMPLATES_BANK_REMOTE_FILE_FETCH_TIMEOUT_SECONDS`
 - `TEMPLATES_BANK_REMOTE_FILE_MAX_BYTES`
+
+## Storage de midia e anexos
+
+O backend agora suporta storage configuravel por alias:
+
+- `avatars`: midia publica do usuario
+- `template_uploads`: uploads do Banco de Pecas
+
+Modo padrao em desenvolvimento:
+
+- `DJANGO_STORAGE_PROVIDER=filesystem`
+- arquivos servidos por `MEDIA_ROOT` / `MEDIA_URL`
+
+Modo recomendado para stage/producao:
+
+- `DJANGO_STORAGE_PROVIDER=s3`
+- bucket/object storage compativel com S3
+- `avatars` com entrega publica e cacheavel
+- `template_uploads` preparados para entrega com URL assinada
+
+Diretriz tecnica:
+
+- manter texto e metadados no Postgres
+- manter arquivos binarios em object storage
+- usar CDN/dominio publico para avatar
+- preferir entrega assinada para uploads protegidos do Banco de Pecas
+
+Metadados expostos pela API para assets/arquivos:
+
+- `*_url`
+- `*_source`
+- `*_storage_alias`
+- `*_storage_backend`
+- `*_storage_key`
+- `*_cache_control`
+
+Politica minima recomendada:
+
+- avatar: `public, max-age=86400, stale-while-revalidate=604800`
+- uploads protegidos: `private, max-age=300, no-store`
+
+Migracao recomendada para object storage:
+
+1. configurar bucket e credenciais S3 compativeis;
+2. subir com `DJANGO_STORAGE_PROVIDER=s3`;
+3. manter URLs remotas historicas onde elas ja existirem;
+4. migrar uploads locais existentes para o bucket e preservar `name/key`;
+5. validar `health/`, `readyz/` e payloads com `storage_key` antes de abrir trafego.
 
 ### 4) Banco e migrations
 

@@ -1,6 +1,8 @@
 from django.conf import settings
 from django.db import models
 
+from config.storage import get_avatar_storage
+
 
 class Profile(models.Model):
     """Informações extras do usuário."""
@@ -17,7 +19,7 @@ class Profile(models.Model):
     )
     full_name = models.CharField(max_length=150, blank=True)
     profession = models.CharField(max_length=120, blank=True)
-    avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
+    avatar = models.ImageField(storage=get_avatar_storage, upload_to='avatars/', blank=True, null=True)
     avatar_url = models.URLField(max_length=500, blank=True, default='')
     role = models.CharField(
         max_length=16,
