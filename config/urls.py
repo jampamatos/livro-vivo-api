@@ -8,6 +8,10 @@ from django.urls import include, path
 from django.views.decorators.http import require_GET
 
 from . import admin_navigation  # noqa: F401
+import logging
+
+
+logger = logging.getLogger("livro_vivo.api")
 
 
 @require_GET
@@ -47,9 +51,16 @@ def readiness(_request):
         checks['cache'] = 'error'
         http_status = 503
 
+    if http_status != 200:
+        logger.warning(
+            'api_readiness_degraded',
+            extra={'checks': checks},
+        )
+
     return JsonResponse(
         {
             'status': 'ok' if http_status == 200 else 'degraded',
+            'app': 'livro-vivo-api',
             'checks': checks,
             'version': settings.APP_VERSION,
         },

@@ -13,8 +13,11 @@ class LoggingConfigTests(SimpleTestCase):
         )
 
         self.assertEqual(config['handlers']['console']['formatter'], 'console')
+        self.assertEqual(config['handlers']['console']['filters'], ['request_context'])
+        self.assertIn('[%(request_id)s]', config['formatters']['console']['format'])
         self.assertEqual(config['root']['level'], 'DEBUG')
         self.assertEqual(config['loggers']['django']['level'], 'INFO')
+        self.assertEqual(config['loggers']['django.request']['level'], 'ERROR')
         self.assertEqual(config['loggers']['django.server']['level'], 'INFO')
 
     def test_prod_profile_defaults_to_structured_json_and_restrictive_levels(self):
@@ -28,6 +31,7 @@ class LoggingConfigTests(SimpleTestCase):
         self.assertEqual(config['handlers']['console']['formatter'], 'json')
         self.assertEqual(config['root']['level'], 'INFO')
         self.assertEqual(config['loggers']['django']['level'], 'WARNING')
+        self.assertEqual(config['loggers']['django.request']['level'], 'ERROR')
         self.assertEqual(config['loggers']['django.server']['level'], 'WARNING')
 
     def test_include_request_logs_false_raises_django_server_level_in_dev(self):
@@ -91,3 +95,16 @@ class LoggingConfigTests(SimpleTestCase):
             structured=True,
         )
         self.assertEqual(config['handlers']['console']['formatter'], 'json')
+
+    def test_logging_config_registers_request_context_filter(self):
+        config = build_logging_config(
+            debug=False,
+            profile='prod',
+            include_request_logs=False,
+            structured=True,
+        )
+        self.assertIn('request_context', config['filters'])
+        self.assertEqual(
+            config['filters']['request_context']['()'],
+            'config.logging.RequestContextFilter',
+        )

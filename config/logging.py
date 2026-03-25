@@ -2,6 +2,8 @@ import json
 import logging
 from datetime import datetime, timezone
 
+from .request_context import get_request_context
+
 LOG_RESERVED_ATTRS = {
     "args",
     "asctime",
@@ -22,6 +24,10 @@ LOG_RESERVED_ATTRS = {
     "process",
     "processName",
     "relativeCreated",
+    "request_id",
+    "request_method",
+    "request_path",
+    "request_user_id",
     "stack_info",
     "thread",
     "threadName",
@@ -59,8 +65,20 @@ class JsonFormatter(logging.Formatter):
             payload["exc_info"] = self.formatException(record.exc_info)
 
         request_id = getattr(record, "request_id", None)
-        if request_id:
+        if request_id and request_id != "-":
             payload["request_id"] = request_id
+
+        request_method = getattr(record, "request_method", None)
+        if request_method and request_method != "-":
+            payload["request_method"] = request_method
+
+        request_path = getattr(record, "request_path", None)
+        if request_path and request_path != "-":
+            payload["request_path"] = request_path
+
+        request_user_id = getattr(record, "request_user_id", None)
+        if request_user_id and request_user_id != "-":
+            payload["request_user_id"] = request_user_id
 
         extras = {
             key: value
@@ -71,6 +89,16 @@ class JsonFormatter(logging.Formatter):
             payload["extra"] = {key: _json_safe(value) for key, value in extras.items()}
 
         return json.dumps(payload, ensure_ascii=True)
+
+
+class RequestContextFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        context = get_request_context()
+        record.request_id = context["request_id"]
+        record.request_method = context["request_method"]
+        record.request_path = context["request_path"]
+        record.request_user_id = context["request_user_id"]
+        return True
 
 
 def _normalize_profile(value: str | None, *, debug: bool) -> str:
@@ -118,9 +146,14 @@ def build_logging_config(
     return {
         "version": 1,
         "disable_existing_loggers": False,
+        "filters": {
+            "request_context": {
+                "()": "config.logging.RequestContextFilter",
+            },
+        },
         "formatters": {
             "console": {
-                "format": "%(asctime)s %(levelname)s [%(name)s] %(message)s",
+                "format": "%(asctime)s %(levelname)s [%(name)s] [%(request_id)s] %(message)s",
             },
             "json": {
                 "()": "config.logging.JsonFormatter",
@@ -130,6 +163,7 @@ def build_logging_config(
             "console": {
                 "class": "logging.StreamHandler",
                 "formatter": formatter_name,
+                "filters": ["request_context"],
             },
         },
         "root": {
@@ -144,7 +178,7 @@ def build_logging_config(
             },
             "django.request": {
                 "handlers": ["console"],
-                "level": "WARNING",
+                "level": "ERROR",
                 "propagate": False,
             },
             "django.server": {
