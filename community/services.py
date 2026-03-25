@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from accounts.models import NotificationEvent
 from accounts.services import enqueue_notification_event, get_active_subscription_user_ids
+from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Q
 from django.utils import timezone
 
@@ -303,10 +304,12 @@ def ensure_post_like(*, post: Post, user) -> PostLike:
 
 
 def deactivate_post_like(*, post: Post, user) -> None:
-    PostLike.objects.filter(post=post, user=user, is_active=True).update(
+    updated = PostLike.objects.filter(post=post, user=user, is_active=True).update(
         is_active=False,
         updated_at=timezone.now(),
     )
+    if updated:
+        refresh_post_public_metrics(post=post)
 
 
 def ensure_comment_like(*, comment: Comment, user) -> CommentLike:
@@ -322,10 +325,74 @@ def ensure_comment_like(*, comment: Comment, user) -> CommentLike:
 
 
 def deactivate_comment_like(*, comment: Comment, user) -> None:
-    CommentLike.objects.filter(comment=comment, user=user, is_active=True).update(
+    updated = CommentLike.objects.filter(comment=comment, user=user, is_active=True).update(
         is_active=False,
         updated_at=timezone.now(),
     )
+    if updated:
+        refresh_comment_public_metrics(comment=comment)
+
+
+def refresh_post_public_metrics(*, post: Post | int) -> None:
+    post_id = post if isinstance(post, int) else post.pk
+    if not post_id:
+        return
+
+    try:
+        post_obj = Post.objects.only(
+            'id',
+            'created_at',
+            'likes_count',
+            'comments_count',
+            'last_comment_at',
+            'last_activity_at',
+        ).get(pk=post_id)
+    except (Post.DoesNotExist, ObjectDoesNotExist):
+        return
+
+    active_comments = Comment.objects.filter(
+        post_id=post_id,
+        moderation_state=Comment.ModerationState.ACTIVE,
+    )
+    comments_count = active_comments.count()
+    last_comment_at = active_comments.order_by('-created_at').values_list('created_at', flat=True).first()
+    likes_count = PostLike.objects.filter(post_id=post_id, is_active=True).count()
+    last_activity_at = last_comment_at or post_obj.created_at
+
+    update_fields = []
+    if post_obj.likes_count != likes_count:
+        post_obj.likes_count = likes_count
+        update_fields.append('likes_count')
+    if post_obj.comments_count != comments_count:
+        post_obj.comments_count = comments_count
+        update_fields.append('comments_count')
+    if post_obj.last_comment_at != last_comment_at:
+        post_obj.last_comment_at = last_comment_at
+        update_fields.append('last_comment_at')
+    if post_obj.last_activity_at != last_activity_at:
+        post_obj.last_activity_at = last_activity_at
+        update_fields.append('last_activity_at')
+
+    if update_fields:
+        post_obj.save(update_fields=update_fields + ['updated_at'])
+
+
+def refresh_comment_public_metrics(*, comment: Comment | int) -> None:
+    comment_id = comment if isinstance(comment, int) else comment.pk
+    if not comment_id:
+        return
+
+    try:
+        comment_obj = Comment.objects.only('id', 'likes_count').get(pk=comment_id)
+    except (Comment.DoesNotExist, ObjectDoesNotExist):
+        return
+
+    likes_count = CommentLike.objects.filter(comment_id=comment_id, is_active=True).count()
+    if comment_obj.likes_count == likes_count:
+        return
+
+    comment_obj.likes_count = likes_count
+    comment_obj.save(update_fields=['likes_count', 'updated_at'])
 
 
 def enqueue_new_comment_notifications(*, comment):

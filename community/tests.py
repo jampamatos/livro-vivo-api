@@ -60,6 +60,13 @@ class CommunityApiTests(APITestCase):
     def auth(self, access):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
 
+    def paginated_results(self, response):
+        self.assertIn("results", response.data)
+        self.assertIn("count", response.data)
+        self.assertIn("limit", response.data)
+        self.assertIn("offset", response.data)
+        return response.data["results"]
+
     def test_categories_list_requires_auth(self):
         res = self.client.get("/community/categories/")
         self.assertEqual(res.status_code, 401)
@@ -111,7 +118,7 @@ class CommunityApiTests(APITestCase):
         self.auth(self.other_access)
         list_response = self.client.get("/community/posts/")
         self.assertEqual(list_response.status_code, 200)
-        listed_post = next(item for item in list_response.data if item["id"] == post.id)
+        listed_post = next(item for item in self.paginated_results(list_response) if item["id"] == post.id)
         self.assertFalse(listed_post["is_following"])
 
         follow_response = self.client.post(f"/community/posts/{post.id}/follow/")
@@ -134,7 +141,7 @@ class CommunityApiTests(APITestCase):
         self.auth(self.other_access)
         list_response = self.client.get("/community/posts/")
         self.assertEqual(list_response.status_code, 200)
-        listed_post = next(item for item in list_response.data if item["id"] == post.id)
+        listed_post = next(item for item in self.paginated_results(list_response) if item["id"] == post.id)
         self.assertEqual(listed_post["likes_count"], 0)
         self.assertFalse(listed_post["liked_by_me"])
         self.assertEqual(listed_post["comments_count"], 0)
@@ -164,7 +171,7 @@ class CommunityApiTests(APITestCase):
         self.auth(self.user_access)
         list_response = self.client.get("/community/posts/")
         self.assertEqual(list_response.status_code, 200)
-        listed_post = next(item for item in list_response.data if item["id"] == post.id)
+        listed_post = next(item for item in self.paginated_results(list_response) if item["id"] == post.id)
         self.assertEqual(listed_post["comments_count"], 2)
         self.assertIsNotNone(listed_post["last_comment_at"])
 
@@ -190,7 +197,7 @@ class CommunityApiTests(APITestCase):
 
         comments_response = self.client.get(f"/community/comments/?post={post.id}")
         self.assertEqual(comments_response.status_code, 200)
-        listed_comment = next(item for item in comments_response.data if item["id"] == comment.id)
+        listed_comment = next(item for item in self.paginated_results(comments_response) if item["id"] == comment.id)
         self.assertEqual(listed_comment["author_display"], "Jampa Matos")
         self.assertIn("author_avatar_url", listed_comment)
 
@@ -222,7 +229,7 @@ class CommunityApiTests(APITestCase):
 
         res = self.client.get(f"/community/comments/?post={post.id}")
         self.assertEqual(res.status_code, 200)
-        self.assertTrue(len(res.data) >= 1)
+        self.assertTrue(len(self.paginated_results(res)) >= 1)
 
     def test_post_mentions_candidates_list_participants(self):
         profile_user, _ = Profile.objects.get_or_create(user=self.user)
@@ -307,7 +314,7 @@ class CommunityApiTests(APITestCase):
         self.auth(self.other_access)
         list_response = self.client.get(f"/community/comments/?post={post.id}")
         self.assertEqual(list_response.status_code, 200)
-        listed_comment = next(item for item in list_response.data if item["id"] == comment.id)
+        listed_comment = next(item for item in self.paginated_results(list_response) if item["id"] == comment.id)
         self.assertEqual(listed_comment["likes_count"], 0)
         self.assertFalse(listed_comment["liked_by_me"])
 
@@ -348,7 +355,21 @@ class CommunityApiTests(APITestCase):
         self.auth(self.user_access)
         res = self.client.get(f"/community/posts/?category={self.category.id}")
         self.assertEqual(res.status_code, 200)
-        self.assertTrue(all(p["category"]["id"] == self.category.id for p in res.data))
+        self.assertTrue(all(p["category"]["id"] == self.category.id for p in self.paginated_results(res)))
+
+    def test_posts_limit_offset_and_activity_ordering(self):
+        older_live = Post.objects.create(author=self.user, category=self.category, title="Mais antigo", body="B")
+        newer_silent = Post.objects.create(author=self.user, category=self.category, title="Sem comentario", body="B")
+        Comment.objects.create(post=older_live, author=self.other, body="Comentário recente")
+
+        self.auth(self.user_access)
+        res = self.client.get("/community/posts/?limit=1&offset=0")
+        self.assertEqual(res.status_code, 200)
+        results = self.paginated_results(res)
+        self.assertEqual(res.data["limit"], 1)
+        self.assertEqual(res.data["offset"], 0)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["id"], older_live.id)
 
     def test_comment_update_delete_permissions(self):
         post = Post.objects.create(author=self.user, category=self.category, title="T", body="B")
@@ -598,7 +619,7 @@ class CommunityApiTests(APITestCase):
         self.auth(self.user_access)
         list_res = self.client.get("/community/posts/")
         self.assertEqual(list_res.status_code, 200)
-        listed_ids = {item["id"] for item in list_res.data}
+        listed_ids = {item["id"] for item in self.paginated_results(list_res)}
         self.assertIn(post_visible.id, listed_ids)
         self.assertNotIn(post_remove.id, listed_ids)
         self.assertNotIn(post_escalate.id, listed_ids)
@@ -623,7 +644,7 @@ class CommunityApiTests(APITestCase):
         self.auth(self.user_access)
         comments_res = self.client.get(f"/community/comments/?post={post.id}")
         self.assertEqual(comments_res.status_code, 200)
-        self.assertEqual(len(comments_res.data), 0)
+        self.assertEqual(len(self.paginated_results(comments_res)), 0)
 
     def test_remove_decision_issues_warning_to_target_author(self):
         ModerationConfig.objects.update_or_create(
@@ -1075,7 +1096,7 @@ class CommunityAdminUxTests(TestCase):
 
         response = self.client.get(reverse("admin:community_post_changelist"))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Comentarios")
+        self.assertContains(response, "Comments count")
         self.assertContains(response, 'field-comments_count">2<', html=False)
 
     def test_comment_changelist_shows_context_path_for_filtered_post(self):

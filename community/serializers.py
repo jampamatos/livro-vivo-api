@@ -2,8 +2,6 @@ from django.contrib.auth import get_user_model
 
 from rest_framework import serializers
 from .models import Category, Post, Comment, Report, ReportModerationAction
-from accounts.roles import user_is_moderator_or_above
-
 User = get_user_model()
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -20,11 +18,11 @@ class PostSerializer(serializers.ModelSerializer):
     author_display = serializers.SerializerMethodField(read_only=True)
     author_avatar_url = serializers.SerializerMethodField(read_only=True)
     is_following = serializers.SerializerMethodField(read_only=True)
-    likes_count = serializers.SerializerMethodField(read_only=True)
+    likes_count = serializers.IntegerField(read_only=True)
     liked_by_me = serializers.SerializerMethodField(read_only=True)
-    comments_count = serializers.SerializerMethodField(read_only=True)
-    last_comment_at = serializers.SerializerMethodField(read_only=True)
-    last_activity = serializers.DateTimeField(read_only=True)
+    comments_count = serializers.IntegerField(read_only=True)
+    last_comment_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    last_activity = serializers.SerializerMethodField(read_only=True)
     category = CategorySerializer(read_only=True)
     category_id = serializers.PrimaryKeyRelatedField(
         source='category',
@@ -149,12 +147,6 @@ class PostSerializer(serializers.ModelSerializer):
             return bool(annotated)
         return obj.follows.filter(user=user, is_active=True).exists()
 
-    def get_likes_count(self, obj) -> int:
-        annotated = getattr(obj, 'likes_count', None)
-        if annotated is not None:
-            return int(annotated)
-        return obj.likes.filter(is_active=True).count()
-
     def get_liked_by_me(self, obj) -> bool:
         request = self.context.get('request')
         user = getattr(request, 'user', None)
@@ -165,35 +157,13 @@ class PostSerializer(serializers.ModelSerializer):
             return bool(annotated)
         return obj.likes.filter(user=user, is_active=True).exists()
 
-    def get_comments_count(self, obj) -> int:
-        annotated = getattr(obj, 'comments_count', None)
-        if annotated is not None:
-            return int(annotated)
-
-        request = self.context.get('request')
-        user = getattr(request, 'user', None)
-        comments = obj.comments.all()
-        if not user_is_moderator_or_above(user):
-            comments = comments.filter(moderation_state=Comment.ModerationState.ACTIVE)
-        return comments.count()
-
-    def get_last_comment_at(self, obj):
-        annotated = getattr(obj, 'last_comment_at', None)
-        if annotated is not None:
-            return annotated
-
-        request = self.context.get('request')
-        user = getattr(request, 'user', None)
-        comments = obj.comments.all()
-        if not user_is_moderator_or_above(user):
-            comments = comments.filter(moderation_state=Comment.ModerationState.ACTIVE)
-        latest = comments.order_by('-created_at').values_list('created_at', flat=True).first()
-        return latest
+    def get_last_activity(self, obj):
+        return obj.last_activity_at or obj.created_at
 
 class CommentSerializer(serializers.ModelSerializer):
     author_display = serializers.SerializerMethodField(read_only=True)
     author_avatar_url = serializers.SerializerMethodField(read_only=True)
-    likes_count = serializers.SerializerMethodField(read_only=True)
+    likes_count = serializers.IntegerField(read_only=True)
     liked_by_me = serializers.SerializerMethodField(read_only=True)
     post_id = serializers.PrimaryKeyRelatedField(
         source='post',
@@ -241,12 +211,6 @@ class CommentSerializer(serializers.ModelSerializer):
         if avatar_url and request and avatar_url.startswith('/'):
             return request.build_absolute_uri(avatar_url)
         return avatar_url
-
-    def get_likes_count(self, obj) -> int:
-        annotated = getattr(obj, 'likes_count', None)
-        if annotated is not None:
-            return int(annotated)
-        return obj.likes.filter(is_active=True).count()
 
     def get_liked_by_me(self, obj) -> bool:
         request = self.context.get('request')
