@@ -2182,6 +2182,8 @@ class HealthAndReadinessTests(TestCase):
         self.assertEqual(payload['status'], 'ok')
         self.assertEqual(payload['app'], 'livro-vivo-api')
         self.assertIn('version', payload)
+        self.assertIn('X-Request-ID', response)
+        self.assertIn('X-Response-Time-ms', response)
 
     def test_readyz_returns_ok_when_dependencies_respond(self):
         response = self.client.get('/readyz/')
@@ -2189,6 +2191,7 @@ class HealthAndReadinessTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(payload['status'], 'ok')
+        self.assertEqual(payload['app'], 'livro-vivo-api')
         self.assertEqual(payload['checks']['database'], 'ok')
         self.assertEqual(payload['checks']['cache'], 'ok')
 
@@ -2209,3 +2212,9 @@ class HealthAndReadinessTests(TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(payload['status'], 'degraded')
         self.assertEqual(payload['checks']['cache'], 'error')
+
+    def test_health_preserves_incoming_request_id(self):
+        response = self.client.get('/healthz/', HTTP_X_REQUEST_ID='test-request-id-123')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['X-Request-ID'], 'test-request-id-123')

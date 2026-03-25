@@ -1,3 +1,5 @@
+import logging
+
 from django.contrib.auth import authenticate, get_user_model
 from django.utils import timezone
 
@@ -34,6 +36,7 @@ from community.services import (
 )
 
 User = get_user_model()
+logger = logging.getLogger("livro_vivo.api")
 
 
 def issue_tokens_for_user(user):
@@ -99,6 +102,7 @@ class RegisterView(APIView):
         user = serializer.save()
         profile, _ = Profile.objects.get_or_create(user=user)
         tokens = issue_tokens_for_user(user)
+        logger.info("auth_register_success", extra={"user_id": user.id})
 
         return Response(
             {
@@ -121,6 +125,7 @@ class LoginView(APIView):
         password = request.data.get('password') or ''
 
         if not email or not password:
+            logger.warning("auth_login_failed", extra={"reason": "missing_credentials"})
             return Response({"detail": "email e password são obrigatórios."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Django autentica por username; aqui tratamos email como username.
@@ -141,17 +146,20 @@ class LoginView(APIView):
                 user = candidate_user
 
         if not user:
+            logger.warning("auth_login_failed", extra={"reason": "invalid_credentials"})
             return Response({"detail": "Credenciais inválidas."}, status=status.HTTP_401_UNAUTHORIZED)
 
         sync_user_activity_with_moderation(user)
         user.refresh_from_db(fields=['is_active'])
         message = get_banned_login_message(user)
         if message:
+            logger.warning("auth_login_blocked", extra={"reason": "account_banned", "user_id": user.id})
             return Response(
                 {"detail": message, "code": "account_banned"},
                 status=status.HTTP_403_FORBIDDEN,
             )
         if not user.is_active:
+            logger.warning("auth_login_blocked", extra={"reason": "inactive_account", "user_id": user.id})
             return Response(
                 {"detail": "Esta conta está inativa."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -164,6 +172,10 @@ class LoginView(APIView):
         payload = {**tokens}
         if moderation_notice:
             payload['moderation_notice'] = moderation_notice
+        logger.info(
+            "auth_login_success",
+            extra={"user_id": user.id, "has_moderation_notice": bool(moderation_notice)},
+        )
 
         return Response(payload, status=status.HTTP_200_OK)
 
@@ -173,14 +185,16 @@ class LogoutView(APIView):
     def post(self, request):
         refresh = request.data.get('refresh')
         if not refresh:
+            logger.warning("auth_logout_failed", extra={"reason": "missing_refresh"})
             return Response({"detail": "Token de refresh é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             token = RefreshToken(refresh)
             token.blacklist()
+            logger.info("auth_logout_success", extra={"user_id": request.user.id, "token_status": "blacklisted"})
         except TokenError:
             # não vaza detalhe: se já expirou ou é inválido, tratamos como logout idempotente
-            pass
+            logger.info("auth_logout_success", extra={"user_id": request.user.id, "token_status": "idempotent"})
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -237,6 +251,23 @@ class MeView(APIView):
             current_avatar_name = profile.avatar.name if profile.avatar and profile.avatar.name else ''
             if previous_avatar_name and previous_avatar_name != current_avatar_name:
                 _delete_stored_file(previous_avatar_storage, previous_avatar_name)
+            avatar_action = (
+                'upload'
+                if ('avatar' in serializer.validated_data and serializer.validated_data['avatar'] is not None)
+                else 'clear'
+                if serializer.validated_data.get('avatar_clear')
+                else 'url'
+                if 'avatar_url' in serializer.validated_data and serializer.validated_data['avatar_url']
+                else 'none'
+            )
+            logger.info(
+                'me_profile_updated',
+                extra={
+                    'user_id': user.id,
+                    'updated_fields': list(dict.fromkeys(update_fields)),
+                    'avatar_action': avatar_action,
+                },
+            )
 
         return Response(_serialize_user_payload(user, profile, request=request), status=status.HTTP_200_OK)
 
@@ -251,6 +282,7 @@ class MePasswordChangeView(APIView):
         user = request.user
         user.set_password(serializer.validated_data['new_password'])
         user.save(update_fields=['password'])
+        logger.info('me_password_changed', extra={'user_id': user.id})
 
         return Response({'detail': 'Senha atualizada com sucesso.'}, status=status.HTTP_200_OK)
 
@@ -262,6 +294,7 @@ class MeDataExportView(APIView):
 
     def get(self, request):
         export_payload = create_user_data_export_package(user=request.user)
+        logger.info('me_data_export_generated', extra={'user_id': request.user.id})
         return Response(export_payload, status=status.HTTP_200_OK)
 
 
@@ -283,6 +316,7 @@ class MeDataErasureRequestView(APIView):
 
         reason = (request.data.get('reason') or '').strip()
         result = request_user_data_erasure(user=request.user, reason=reason)
+        logger.info('me_data_erasure_requested', extra={'user_id': request.user.id})
         return Response(result, status=status.HTTP_202_ACCEPTED)
 
 

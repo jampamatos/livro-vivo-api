@@ -70,6 +70,19 @@ Variaveis principais:
 - `DJANGO_LOG_STRUCTURED`: `true` para JSON estruturado
 - `DJANGO_LOG_LEVEL`: override opcional do nivel raiz
 - `DJANGO_LOG_DJANGO_LEVEL`: override opcional do nivel do logger `django`
+- `DJANGO_SECURE_SSL_REDIRECT`
+- `DJANGO_SESSION_COOKIE_SECURE`
+- `DJANGO_CSRF_COOKIE_SECURE`
+- `DJANGO_SECURE_PROXY_SSL_HEADER_ENABLED`
+- `DJANGO_SECURE_HSTS_SECONDS`
+- `DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS`
+- `DJANGO_SECURE_HSTS_PRELOAD`
+- `SENTRY_DSN`
+- `SENTRY_ENVIRONMENT`
+- `SENTRY_TRACES_SAMPLE_RATE`
+- `DJANGO_AVATAR_MAX_UPLOAD_BYTES`
+- `DJANGO_AVATAR_MAX_DIMENSION`
+- `DJANGO_AVATAR_ALLOWED_MIME_TYPES`
 
 Notificacoes:
 
@@ -135,6 +148,8 @@ python manage.py check --deploy --fail-level WARNING
 
 - `GET /health/` (e alias `/healthz/`)
 - `GET /readyz/`
+- Header de rastreio em todas as respostas: `X-Request-ID`
+- Header simples de latencia: `X-Response-Time-ms`
 
 Exemplo:
 
@@ -142,6 +157,61 @@ Exemplo:
 curl -s http://127.0.0.1:8000/health/
 curl -s http://127.0.0.1:8000/readyz/
 ```
+
+## Operacao minima de homologacao
+
+### Subida minima
+
+```bash
+python manage.py migrate
+python manage.py check --deploy --fail-level WARNING
+python manage.py runserver
+```
+
+Checklist minima apos subir:
+
+```bash
+curl -i http://127.0.0.1:8000/health/
+curl -i http://127.0.0.1:8000/readyz/
+```
+
+O esperado e:
+
+- `health/` -> `200`
+- `readyz/` -> `200`
+- presenca de `X-Request-ID` nas respostas
+
+### Logging util na primeira homologacao
+
+Os fluxos abaixo agora geram logs dedicados:
+
+- `auth_register_success`
+- `auth_login_failed`
+- `auth_login_blocked`
+- `auth_login_success`
+- `auth_logout_success`
+- `me_profile_updated`
+- `me_password_changed`
+- `me_data_export_generated`
+- `me_data_erasure_requested`
+- `api_readiness_degraded`
+- `api_request_client_error`
+- `api_request_failed`
+- `api_request_unhandled_exception`
+
+### Rollback minimo
+
+Procedimento recomendado:
+
+1. voltar a release do app/servico para o artefato anterior;
+2. manter o banco no estado atual por padrao;
+3. so reverter migration se a migration nova for comprovadamente a causa e tiver rollback seguro;
+4. usar `readyz/` e logs por `X-Request-ID` para confirmar recuperacao.
+
+Regra pratica:
+
+- preferir `roll-forward` quando o schema ja tiver sido aplicado;
+- usar rollback de banco apenas quando a migration for reversivel e o impacto estiver claro.
 
 ## Endpoints principais
 
