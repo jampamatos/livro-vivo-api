@@ -65,6 +65,15 @@ def _resolve_profile_avatar_url(profile: Profile, request=None):
     return None
 
 
+def _delete_stored_file(storage, name: str):
+    if not storage or not name:
+        return
+    try:
+        storage.delete(name)
+    except Exception:  # pragma: no cover
+        return
+
+
 def _serialize_user_payload(user, profile: Profile, request=None):
     return {
         'id': user.id,
@@ -194,6 +203,8 @@ class MeView(APIView):
         serializer.is_valid(raise_exception=True)
 
         update_fields = []
+        previous_avatar_storage = profile.avatar.storage if profile.avatar and profile.avatar.name else None
+        previous_avatar_name = profile.avatar.name if profile.avatar and profile.avatar.name else ''
 
         if 'name' in serializer.validated_data:
             profile.full_name = serializer.validated_data['name']
@@ -205,24 +216,27 @@ class MeView(APIView):
 
         if 'avatar_url' in serializer.validated_data:
             profile.avatar_url = serializer.validated_data['avatar_url']
-            update_fields.append('avatar_url')
+            if serializer.validated_data['avatar_url'] and profile.avatar:
+                profile.avatar = None
+                update_fields.extend(['avatar', 'avatar_url'])
+            else:
+                update_fields.append('avatar_url')
 
         if serializer.validated_data.get('avatar_clear'):
-            if profile.avatar:
-                profile.avatar.delete(save=False)
             profile.avatar = None
             profile.avatar_url = ''
             update_fields.extend(['avatar', 'avatar_url'])
 
         if 'avatar' in serializer.validated_data and serializer.validated_data['avatar'] is not None:
-            if profile.avatar:
-                profile.avatar.delete(save=False)
             profile.avatar = serializer.validated_data['avatar']
             profile.avatar_url = ''
             update_fields.extend(['avatar', 'avatar_url'])
 
         if update_fields:
             profile.save(update_fields=list(dict.fromkeys(update_fields)))
+            current_avatar_name = profile.avatar.name if profile.avatar and profile.avatar.name else ''
+            if previous_avatar_name and previous_avatar_name != current_avatar_name:
+                _delete_stored_file(previous_avatar_storage, previous_avatar_name)
 
         return Response(_serialize_user_payload(user, profile, request=request), status=status.HTTP_200_OK)
 

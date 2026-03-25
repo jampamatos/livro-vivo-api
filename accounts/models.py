@@ -32,6 +32,13 @@ class Profile(models.Model):
             self.user.is_staff = should_be_staff
             self.user.save(update_fields=['is_staff'])
 
+    def delete(self, *args, **kwargs):
+        avatar_storage = self.avatar.storage if self.avatar and self.avatar.name else None
+        avatar_name = self.avatar.name if self.avatar and self.avatar.name else ''
+        super().delete(*args, **kwargs)
+        if avatar_storage and avatar_name:
+            avatar_storage.delete(avatar_name)
+
     def __str__(self) -> str:
         return f"Profile(user_id={self.user_id})"
 

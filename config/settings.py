@@ -265,6 +265,16 @@ USE_TZ = True
 STATIC_URL = 'static/'
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+AVATAR_MAX_UPLOAD_BYTES = int(os.getenv('DJANGO_AVATAR_MAX_UPLOAD_BYTES', str(5 * 1024 * 1024)))
+AVATAR_MAX_DIMENSION = int(os.getenv('DJANGO_AVATAR_MAX_DIMENSION', '1024'))
+AVATAR_ALLOWED_MIME_TYPES = tuple(
+    item.strip()
+    for item in env_list(
+        'DJANGO_AVATAR_ALLOWED_MIME_TYPES',
+        'image/jpeg,image/png,image/webp',
+    )
+    if item.strip()
+)
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

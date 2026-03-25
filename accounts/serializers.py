@@ -1,11 +1,100 @@
+import io
+from pathlib import Path
+
+from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.utils.text import slugify
 from rest_framework import serializers
+from PIL import Image, UnidentifiedImageError
 
 from .models import NotificationDispatch, NotificationPreference, Profile, PushDevice
 
 User = get_user_model()
+
+ALLOWED_AVATAR_FORMATS = {
+    'JPEG': ('image/jpeg', 'jpg'),
+    'PNG': ('image/png', 'png'),
+    'WEBP': ('image/webp', 'webp'),
+}
+
+
+def _avatar_max_upload_bytes() -> int:
+    return int(getattr(settings, 'AVATAR_MAX_UPLOAD_BYTES', 5 * 1024 * 1024))
+
+
+def _avatar_max_dimension() -> int:
+    return int(getattr(settings, 'AVATAR_MAX_DIMENSION', 1024))
+
+
+def _avatar_allowed_mime_types() -> set[str]:
+    configured = getattr(settings, 'AVATAR_ALLOWED_MIME_TYPES', tuple(item[0] for item in ALLOWED_AVATAR_FORMATS.values()))
+    return {str(item).strip().lower() for item in configured if str(item).strip()}
+
+
+def _format_avatar_max_size(bytes_value: int) -> str:
+    megabytes = bytes_value / (1024 * 1024)
+    return f"{megabytes:.0f} MB" if megabytes.is_integer() else f"{megabytes:.1f} MB"
+
+
+def _normalize_avatar_upload(uploaded_file, crop: dict[str, int] | None = None):
+    try:
+        uploaded_file.seek(0)
+    except Exception:
+        pass
+
+    try:
+        with Image.open(uploaded_file) as image:
+            image.load()
+            source_format = (image.format or '').upper()
+            if source_format not in ALLOWED_AVATAR_FORMATS:
+                raise serializers.ValidationError("Avatar deve ser uma imagem JPG, PNG ou WEBP.")
+
+            normalized = image.copy()
+    except (UnidentifiedImageError, OSError, ValueError):
+        raise serializers.ValidationError("Avatar deve ser uma imagem válida em JPG, PNG ou WEBP.")
+
+    if crop:
+        crop_x = int(crop['x'])
+        crop_y = int(crop['y'])
+        crop_size = int(crop['size'])
+        width, height = normalized.size
+        if crop_x < 0 or crop_y < 0 or crop_size <= 0 or crop_x + crop_size > width or crop_y + crop_size > height:
+            raise serializers.ValidationError("Recorte do avatar inválido.")
+        normalized = normalized.crop((crop_x, crop_y, crop_x + crop_size, crop_y + crop_size))
+
+    max_dimension = _avatar_max_dimension()
+    if max(normalized.size) > max_dimension:
+        normalized.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+
+    if source_format == 'JPEG':
+        if normalized.mode not in {'RGB', 'L'}:
+            normalized = normalized.convert('RGB')
+    elif source_format == 'PNG':
+        if normalized.mode not in {'RGB', 'RGBA', 'L', 'LA'}:
+            normalized = normalized.convert('RGBA' if 'A' in normalized.getbands() else 'RGB')
+    elif source_format == 'WEBP':
+        if normalized.mode not in {'RGB', 'RGBA'}:
+            normalized = normalized.convert('RGBA' if 'A' in normalized.getbands() else 'RGB')
+
+    output = io.BytesIO()
+    save_kwargs = {'optimize': True}
+    if source_format == 'JPEG':
+        save_kwargs.update({'quality': 85, 'progressive': True})
+    elif source_format == 'WEBP':
+        save_kwargs.update({'quality': 85, 'method': 6})
+
+    normalized.save(output, format=source_format, **save_kwargs)
+    content = output.getvalue()
+    content_type, extension = ALLOWED_AVATAR_FORMATS[source_format]
+    base_name = slugify(Path(getattr(uploaded_file, 'name', '') or '').stem)[:48] or 'avatar'
+    return SimpleUploadedFile(
+        f"{base_name}.{extension}",
+        content,
+        content_type=content_type,
+    )
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -74,6 +163,9 @@ class MeUpdateSerializer(serializers.Serializer):
     avatar_url = serializers.URLField(required=False, allow_blank=True, allow_null=True, max_length=500)
     avatar = serializers.ImageField(required=False, allow_null=True)
     avatar_clear = serializers.BooleanField(required=False, default=False)
+    avatar_crop_x = serializers.IntegerField(required=False, min_value=0)
+    avatar_crop_y = serializers.IntegerField(required=False, min_value=0)
+    avatar_crop_size = serializers.IntegerField(required=False, min_value=1)
 
     def validate_name(self, value: str) -> str:
         return value.strip()
@@ -85,6 +177,62 @@ class MeUpdateSerializer(serializers.Serializer):
         if value is None:
             return ''
         return value.strip()
+
+    def validate_avatar(self, value):
+        max_bytes = _avatar_max_upload_bytes()
+        if value.size > max_bytes:
+            raise serializers.ValidationError(
+                f"Avatar deve ter no máximo {_format_avatar_max_size(max_bytes)}."
+            )
+
+        content_type = (getattr(value, 'content_type', '') or '').strip().lower()
+        allowed_mime_types = _avatar_allowed_mime_types()
+        if content_type and content_type not in allowed_mime_types:
+            raise serializers.ValidationError("Avatar deve ser uma imagem JPG, PNG ou WEBP.")
+
+        crop = self.initial_data
+        has_crop = any(crop.get(key) not in (None, "") for key in ('avatar_crop_x', 'avatar_crop_y', 'avatar_crop_size'))
+        crop_payload = None
+        if has_crop:
+            crop_x = self.initial_data.get('avatar_crop_x')
+            crop_y = self.initial_data.get('avatar_crop_y')
+            crop_size = self.initial_data.get('avatar_crop_size')
+            if crop_x in (None, "") or crop_y in (None, "") or crop_size in (None, ""):
+                raise serializers.ValidationError("Recorte do avatar incompleto.")
+            try:
+                crop_payload = {
+                    'x': int(crop_x),
+                    'y': int(crop_y),
+                    'size': int(crop_size),
+                }
+            except (TypeError, ValueError):
+                raise serializers.ValidationError("Recorte do avatar inválido.")
+
+        normalized = _normalize_avatar_upload(value, crop=crop_payload)
+        if normalized.size > max_bytes:
+            raise serializers.ValidationError(
+                f"Avatar deve ter no máximo {_format_avatar_max_size(max_bytes)}."
+            )
+        return normalized
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        has_avatar_upload = attrs.get('avatar') is not None
+        has_avatar_url = bool(attrs.get('avatar_url'))
+        has_avatar_clear = bool(attrs.get('avatar_clear'))
+        has_any_crop_field = any(
+            attrs.get(field) is not None for field in ('avatar_crop_x', 'avatar_crop_y', 'avatar_crop_size')
+        )
+
+        if sum([has_avatar_upload, has_avatar_url, has_avatar_clear]) > 1:
+            raise serializers.ValidationError(
+                "Envie apenas uma operação de avatar por vez: upload, avatar_url ou avatar_clear."
+            )
+
+        if has_any_crop_field and not has_avatar_upload:
+            raise serializers.ValidationError("Recorte de avatar só pode ser enviado junto com um upload.")
+
+        return attrs
 
 
 class MePasswordChangeSerializer(serializers.Serializer):

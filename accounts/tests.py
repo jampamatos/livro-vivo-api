@@ -1,6 +1,7 @@
 from datetime import timedelta
 import io
 import json
+import os
 import tempfile
 from unittest import mock
 
@@ -439,6 +440,128 @@ class AccountsAPITests(TestCase):
                 self.assertIn('/media/avatars/', response.data['avatar_url'])
                 self.assertTrue(response.data['avatar_url'].startswith('http://testserver/media/avatars/'))
 
+    def test_me_patch_rejects_avatar_with_invalid_type(self):
+        user = User.objects.create_user(
+            username='patch-invalid-type@example.com',
+            email='patch-invalid-type@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        image_buffer = io.BytesIO()
+        Image.new('RGB', (8, 8), color='#1D4ED8').save(image_buffer, format='GIF')
+
+        with tempfile.TemporaryDirectory(prefix='accounts-avatar-invalid-type-') as media_root:
+            with self.settings(MEDIA_ROOT=media_root):
+                response = self.client.patch(
+                    reverse('me'),
+                    {
+                        'avatar': SimpleUploadedFile(
+                            'avatar.gif',
+                            image_buffer.getvalue(),
+                            content_type='image/gif',
+                        ),
+                    },
+                    format='multipart',
+                )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('avatar', response.data)
+        self.assertIn('JPG, PNG ou WEBP', str(response.data['avatar'][0]))
+
+    def test_me_patch_rejects_avatar_too_large(self):
+        user = User.objects.create_user(
+            username='patch-too-large@example.com',
+            email='patch-too-large@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        image_buffer = io.BytesIO()
+        Image.new('RGB', (8, 8), color='#1D4ED8').save(image_buffer, format='PNG')
+        image_bytes = image_buffer.getvalue()
+
+        with tempfile.TemporaryDirectory(prefix='accounts-avatar-too-large-') as media_root:
+            with self.settings(MEDIA_ROOT=media_root, AVATAR_MAX_UPLOAD_BYTES=max(1, len(image_bytes) - 1)):
+                response = self.client.patch(
+                    reverse('me'),
+                    {
+                        'avatar': SimpleUploadedFile(
+                            'avatar.png',
+                            image_bytes,
+                            content_type='image/png',
+                        ),
+                    },
+                    format='multipart',
+                )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('avatar', response.data)
+        self.assertIn('no máximo', str(response.data['avatar'][0]))
+
+    def test_me_patch_accepts_cropped_avatar_upload(self):
+        user = User.objects.create_user(
+            username='patch-crop@example.com',
+            email='patch-crop@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        image_buffer = io.BytesIO()
+        image = Image.new('RGB', (400, 200), color='#DC2626')
+        for x in range(200, 400):
+            for y in range(0, 200):
+                image.putpixel((x, y), (29, 78, 216))
+        image.save(image_buffer, format='PNG')
+
+        with tempfile.TemporaryDirectory(prefix='accounts-avatar-crop-') as media_root:
+            with self.settings(MEDIA_ROOT=media_root):
+                response = self.client.patch(
+                    reverse('me'),
+                    {
+                        'avatar': SimpleUploadedFile(
+                            'avatar.png',
+                            image_buffer.getvalue(),
+                            content_type='image/png',
+                        ),
+                        'avatar_crop_x': 200,
+                        'avatar_crop_y': 0,
+                        'avatar_crop_size': 200,
+                    },
+                    format='multipart',
+                )
+
+                self.assertEqual(response.status_code, 200)
+                user.refresh_from_db()
+                with Image.open(user.profile.avatar.path) as stored:
+                    self.assertEqual(stored.size, (200, 200))
+                    self.assertEqual(stored.getpixel((100, 100)), (29, 78, 216))
+
+    def test_me_patch_rejects_avatar_crop_without_upload(self):
+        user = User.objects.create_user(
+            username='patch-crop-invalid@example.com',
+            email='patch-crop-invalid@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.patch(
+            reverse('me'),
+            {
+                'avatar_crop_x': 10,
+                'avatar_crop_y': 10,
+                'avatar_crop_size': 120,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('non_field_errors', response.data)
+
     def test_me_patch_avatar_clear_removes_existing_avatar_reference(self):
         user = User.objects.create_user(
             username='patch-clear@example.com',
@@ -464,6 +587,125 @@ class AccountsAPITests(TestCase):
         user.refresh_from_db()
         self.assertEqual(user.profile.avatar_url, '')
         self.assertIsNone(response.data['avatar_url'])
+
+    def test_me_patch_replaces_avatar_and_deletes_old_file(self):
+        user = User.objects.create_user(
+            username='patch-replace@example.com',
+            email='patch-replace@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        first_image = io.BytesIO()
+        Image.new('RGB', (16, 16), color='#1D4ED8').save(first_image, format='PNG')
+        second_image = io.BytesIO()
+        Image.new('RGB', (16, 16), color='#DC2626').save(second_image, format='PNG')
+
+        with tempfile.TemporaryDirectory(prefix='accounts-avatar-replace-') as media_root:
+            with self.settings(MEDIA_ROOT=media_root):
+                first_response = self.client.patch(
+                    reverse('me'),
+                    {
+                        'avatar': SimpleUploadedFile(
+                            'avatar-1.png',
+                            first_image.getvalue(),
+                            content_type='image/png',
+                        ),
+                    },
+                    format='multipart',
+                )
+                self.assertEqual(first_response.status_code, 200)
+                user.refresh_from_db()
+                first_avatar_path = user.profile.avatar.path
+                self.assertTrue(os.path.exists(first_avatar_path))
+
+                second_response = self.client.patch(
+                    reverse('me'),
+                    {
+                        'avatar': SimpleUploadedFile(
+                            'avatar-2.png',
+                            second_image.getvalue(),
+                            content_type='image/png',
+                        ),
+                    },
+                    format='multipart',
+                )
+                self.assertEqual(second_response.status_code, 200)
+                user.refresh_from_db()
+                self.assertTrue(bool(user.profile.avatar))
+                self.assertNotEqual(user.profile.avatar.path, first_avatar_path)
+                self.assertFalse(os.path.exists(first_avatar_path))
+                self.assertTrue(os.path.exists(user.profile.avatar.path))
+
+    def test_me_patch_avatar_url_replaces_uploaded_avatar_and_deletes_old_file(self):
+        user = User.objects.create_user(
+            username='patch-avatar-url@example.com',
+            email='patch-avatar-url@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        image_buffer = io.BytesIO()
+        Image.new('RGB', (16, 16), color='#1D4ED8').save(image_buffer, format='PNG')
+
+        with tempfile.TemporaryDirectory(prefix='accounts-avatar-url-replace-') as media_root:
+            with self.settings(MEDIA_ROOT=media_root):
+                upload_response = self.client.patch(
+                    reverse('me'),
+                    {
+                        'avatar': SimpleUploadedFile(
+                            'avatar.png',
+                            image_buffer.getvalue(),
+                            content_type='image/png',
+                        ),
+                    },
+                    format='multipart',
+                )
+                self.assertEqual(upload_response.status_code, 200)
+                user.refresh_from_db()
+                avatar_path = user.profile.avatar.path
+                self.assertTrue(os.path.exists(avatar_path))
+
+                url_response = self.client.patch(
+                    reverse('me'),
+                    {
+                        'avatar_url': 'https://example.com/avatar-final.jpg',
+                    },
+                    format='json',
+                )
+                self.assertEqual(url_response.status_code, 200)
+                user.refresh_from_db()
+                self.assertFalse(bool(user.profile.avatar))
+                self.assertEqual(user.profile.avatar_url, 'https://example.com/avatar-final.jpg')
+                self.assertFalse(os.path.exists(avatar_path))
+
+    def test_profile_delete_removes_avatar_file(self):
+        user = User.objects.create_user(
+            username='profile-delete@example.com',
+            email='profile-delete@example.com',
+            password='StrongPass123',
+        )
+        profile, _ = Profile.objects.get_or_create(user=user)
+
+        image_buffer = io.BytesIO()
+        Image.new('RGB', (16, 16), color='#1D4ED8').save(image_buffer, format='PNG')
+
+        with tempfile.TemporaryDirectory(prefix='accounts-avatar-profile-delete-') as media_root:
+            with self.settings(MEDIA_ROOT=media_root):
+                profile.avatar = SimpleUploadedFile(
+                    'avatar.png',
+                    image_buffer.getvalue(),
+                    content_type='image/png',
+                )
+                profile.save(update_fields=['avatar'])
+                avatar_path = profile.avatar.path
+                self.assertTrue(os.path.exists(avatar_path))
+
+                profile.delete()
+
+                self.assertFalse(os.path.exists(avatar_path))
 
     def test_me_change_password_updates_credentials(self):
         user = User.objects.create_user(
