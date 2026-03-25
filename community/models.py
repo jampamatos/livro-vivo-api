@@ -53,12 +53,26 @@ class Post(models.Model):
     )
     moderated_at = models.DateTimeField(null=True, blank=True)
     moderation_note = models.TextField(blank=True, default='')
+    likes_count = models.PositiveIntegerField(default=0)
+    comments_count = models.PositiveIntegerField(default=0)
+    last_comment_at = models.DateTimeField(null=True, blank=True)
+    last_activity_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['-created_at']
+        ordering = ['-last_activity_at', '-created_at']
+        indexes = [
+            models.Index(
+                fields=['moderation_state', 'last_activity_at', 'created_at'],
+                name='comm_post_activity_idx',
+            ),
+            models.Index(
+                fields=['category', 'moderation_state', 'last_activity_at', 'created_at'],
+                name='comm_post_cat_activity_idx',
+            ),
+        ]
 
     def __str__(self) -> str:
         return self.title
@@ -115,6 +129,9 @@ class PostLike(models.Model):
                 name='community_post_like_unique',
             ),
         ]
+        indexes = [
+            models.Index(fields=['post', 'is_active'], name='comm_post_like_state_idx'),
+        ]
 
     def __str__(self) -> str:
         return f'PostLike(post_id={self.post_id}, user_id={self.user_id}, active={self.is_active})'
@@ -151,12 +168,19 @@ class Comment(models.Model):
     )
     moderated_at = models.DateTimeField(null=True, blank=True)
     moderation_note = models.TextField(blank=True, default='')
+    likes_count = models.PositiveIntegerField(default=0)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['created_at']
+        indexes = [
+            models.Index(
+                fields=['post', 'moderation_state', 'created_at'],
+                name='comm_comment_post_state_idx',
+            ),
+        ]
     
     def __str__(self) -> str:
         return f"Comment #{self.pk} on Post #{self.post_id}"
@@ -184,6 +208,9 @@ class CommentLike(models.Model):
                 fields=['comment', 'user'],
                 name='community_comment_like_unique',
             ),
+        ]
+        indexes = [
+            models.Index(fields=['comment', 'is_active'], name='comm_comment_like_state_idx'),
         ]
 
     def __str__(self) -> str:

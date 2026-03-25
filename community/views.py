@@ -1,6 +1,5 @@
 from django.contrib.auth import get_user_model
-from django.db.models import Count, Exists, F, Max, OuterRef, Q
-from django.db.models.functions import Coalesce
+from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
 from rest_framework import filters
@@ -12,6 +11,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.viewsets import ModelViewSet
 
 from .models import Category, Comment, CommentLike, Post, PostFollow, PostLike, Report, ReportModerationAction
+from .pagination import CommunityPagination
 from .permissions import (
     IsModeratorOrAbove,
     IsNotCommunityBanned,
@@ -57,26 +57,14 @@ class PostViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated, IsNotCommunityBanned, IsOwnerOrStaff]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'community_api'
+    pagination_class = CommunityPagination
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['title', 'body']
-    ordering_fields = ['created_at', 'updated_at', 'last_activity']
-    ordering = ['-last_activity', '-created_at']
+    ordering_fields = ['created_at', 'updated_at', 'last_activity_at']
+    ordering = ['-last_activity_at', '-created_at']
 
     def get_queryset(self):
-        comments_filter = Q()
-        if not user_is_moderator_or_above(self.request.user):
-            comments_filter = Q(comments__moderation_state=Comment.ModerationState.ACTIVE)
-
-        qs = (
-            Post.objects.select_related('author', 'author__profile', 'category')
-            .annotate(
-                last_comment_at=Max('comments__created_at', filter=comments_filter),
-                last_activity=Coalesce(Max('comments__created_at', filter=comments_filter), F('created_at')),
-                comments_count=Count('comments', filter=comments_filter, distinct=True),
-                likes_count=Count('likes', filter=Q(likes__is_active=True), distinct=True),
-            )
-            .all()
-        )
+        qs = Post.objects.select_related('author', 'author__profile', 'category').all()
         if self.request.user and self.request.user.is_authenticated:
             qs = qs.annotate(
                 is_following=Exists(
@@ -199,14 +187,13 @@ class CommentViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated, IsNotCommunityBanned, IsOwnerOrStaff]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'community_api'
+    pagination_class = CommunityPagination
     filter_backends =  [filters.OrderingFilter]
     ordering_fields = ['created_at']
     ordering = ['created_at']
 
     def get_queryset(self):
-        qs = Comment.objects.select_related('author', 'author__profile', 'post').annotate(
-            likes_count=Count('likes', filter=Q(likes__is_active=True), distinct=True),
-        ).all()
+        qs = Comment.objects.select_related('author', 'author__profile', 'post').all()
         if self.request.user and self.request.user.is_authenticated:
             qs = qs.annotate(
                 liked_by_me=Exists(
