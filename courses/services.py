@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.db import transaction
 from django.utils.text import Truncator
 
 from accounts.models import NotificationEvent
@@ -40,6 +41,12 @@ def enqueue_course_post_publication_notifications(*, course_post: CoursePost) ->
     )
 
 
+def schedule_course_post_publication_notifications(*, course_post: CoursePost) -> None:
+    transaction.on_commit(
+        lambda: enqueue_course_post_publication_notifications(course_post=course_post)
+    )
+
+
 def enqueue_course_asset_publication_notifications(*, course_asset: CourseAsset) -> NotificationEvent | None:
     if not course_asset or not course_asset.pk or course_asset.status != PublicationStatus.PUBLISHED:
         return None
@@ -61,6 +68,12 @@ def enqueue_course_asset_publication_notifications(*, course_asset: CourseAsset)
         recipient_user_ids=_eligible_professional_user_ids(),
         preference_field='new_content_updates_enabled',
         preference_disabled_reason='new_content_disabled',
+    )
+
+
+def schedule_course_asset_publication_notifications(*, course_asset: CourseAsset) -> None:
+    transaction.on_commit(
+        lambda: enqueue_course_asset_publication_notifications(course_asset=course_asset)
     )
 
 
@@ -92,4 +105,10 @@ def enqueue_live_event_notifications(*, live_event: LiveEvent) -> NotificationEv
         recipient_user_ids=_eligible_professional_user_ids(),
         preference_field='new_content_updates_enabled',
         preference_disabled_reason='new_content_disabled',
+    )
+
+
+def schedule_live_event_notifications(*, live_event: LiveEvent) -> None:
+    transaction.on_commit(
+        lambda: enqueue_live_event_notifications(live_event=live_event)
     )

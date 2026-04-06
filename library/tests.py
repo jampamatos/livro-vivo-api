@@ -354,13 +354,14 @@ class LibraryServicesTests(LibraryBaseTestCase):
             push_enabled=True,
         )
 
-        created = create_preloaded_book_version(
-            source_version=source,
-            new_version='2024.02',
-            changelog='Publicação com alerta',
-            status=BookVersion.Status.PUBLISHED,
-            published_at=timezone.localdate(),
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            created = create_preloaded_book_version(
+                source_version=source,
+                new_version='2024.02',
+                changelog='Publicação com alerta',
+                status=BookVersion.Status.PUBLISHED,
+                published_at=timezone.localdate(),
+            )
 
         event = NotificationEvent.objects.get(dedup_key=f'book-version-published:{created.id}')
         self.assertEqual(event.event_type, NotificationEvent.EventType.BOOK_VERSION_PUBLISHED)
@@ -451,13 +452,14 @@ class LibraryServicesTests(LibraryBaseTestCase):
             push_enabled=True,
         )
 
-        chapter = BookChapter.objects.create(
-            book_version=version,
-            order=1,
-            title='Novo capítulo',
-            slug='novo-capitulo',
-            content_rich='<p>Conteúdo novo do capítulo.</p>',
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            chapter = BookChapter.objects.create(
+                book_version=version,
+                order=1,
+                title='Novo capítulo',
+                slug='novo-capitulo',
+                content_rich='<p>Conteúdo novo do capítulo.</p>',
+            )
 
         event = NotificationEvent.objects.get(dedup_key=f'book-chapter-published:{chapter.id}')
         push_dispatches = {

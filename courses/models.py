@@ -26,16 +26,16 @@ def _normalize_tags(value) -> list[str]:
 
 
 class PublicationStatus(models.TextChoices):
-    DRAFT = 'draft', 'Draft'
-    PUBLISHED = 'published', 'Published'
-    ARCHIVED = 'archived', 'Archived'
+    DRAFT = 'draft', 'Rascunho'
+    PUBLISHED = 'published', 'Publicado'
+    ARCHIVED = 'archived', 'Arquivado'
 
 
 class CoursePost(models.Model):
     class PostType(models.TextChoices):
-        BLOG = 'blog', 'Blog'
-        LESSON = 'lesson', 'Lesson'
-        ANNOUNCEMENT = 'announcement', 'Announcement'
+        BLOG = 'blog', 'Artigo'
+        LESSON = 'lesson', 'Aula'
+        ANNOUNCEMENT = 'announcement', 'Aviso'
 
     title = models.CharField(max_length=200)
     slug = models.SlugField(max_length=220, unique=True)
@@ -72,9 +72,9 @@ class CoursePost(models.Model):
         result = super().save(*args, **kwargs)
 
         if self.status == PublicationStatus.PUBLISHED and previous_status != PublicationStatus.PUBLISHED:
-            from .services import enqueue_course_post_publication_notifications
+            from .services import schedule_course_post_publication_notifications
 
-            enqueue_course_post_publication_notifications(course_post=self)
+            schedule_course_post_publication_notifications(course_post=self)
 
         return result
 
@@ -83,10 +83,10 @@ class CourseAsset(models.Model):
     class AssetType(models.TextChoices):
         PDF = 'pdf', 'PDF'
         CHECKLIST = 'checklist', 'Checklist'
-        MODEL = 'model', 'Model'
-        VIDEO = 'video', 'Video'
+        MODEL = 'model', 'Modelo'
+        VIDEO = 'video', 'Vídeo'
         LINK = 'link', 'Link'
-        OTHER = 'other', 'Other'
+        OTHER = 'other', 'Outro'
 
     post = models.ForeignKey(
         CoursePost,
@@ -124,25 +124,25 @@ class CourseAsset(models.Model):
         result = super().save(*args, **kwargs)
 
         if self.status == PublicationStatus.PUBLISHED and previous_status != PublicationStatus.PUBLISHED:
-            from .services import enqueue_course_asset_publication_notifications
+            from .services import schedule_course_asset_publication_notifications
 
-            enqueue_course_asset_publication_notifications(course_asset=self)
+            schedule_course_asset_publication_notifications(course_asset=self)
 
         return result
 
 
 class LiveEvent(models.Model):
     class EventType(models.TextChoices):
-        LIVE_CLASS = 'live_class', 'Live class'
-        MENTORING = 'mentoring', 'Mentoring'
+        LIVE_CLASS = 'live_class', 'Aula ao vivo'
+        MENTORING = 'mentoring', 'Mentoria'
         WEBINAR = 'webinar', 'Webinar'
 
     class Status(models.TextChoices):
-        DRAFT = 'draft', 'Draft'
-        SCHEDULED = 'scheduled', 'Scheduled'
-        LIVE = 'live', 'Live'
-        FINISHED = 'finished', 'Finished'
-        CANCELED = 'canceled', 'Canceled'
+        DRAFT = 'draft', 'Rascunho'
+        SCHEDULED = 'scheduled', 'Agendada'
+        LIVE = 'live', 'Ao vivo'
+        FINISHED = 'finished', 'Encerrada'
+        CANCELED = 'canceled', 'Cancelada'
 
     post = models.ForeignKey(
         CoursePost,
@@ -184,8 +184,8 @@ class LiveEvent(models.Model):
             self.Status.FINISHED,
         }
         if self.status in notifiable_statuses and previous_status not in notifiable_statuses:
-            from .services import enqueue_live_event_notifications
+            from .services import schedule_live_event_notifications
 
-            enqueue_live_event_notifications(live_event=self)
+            schedule_live_event_notifications(live_event=self)
 
         return result

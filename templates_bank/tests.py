@@ -254,8 +254,9 @@ class TemplatesBankApiTests(TestCase):
         self.assertEqual(response.data['file_url'], self.piece_v2.file_url)
         self.assertEqual(response.data['file_name'], self.piece_v2.file_name)
         self.assertEqual(response.data['file_source'], 'remote_url')
-        self.assertIsNone(response.data['file_storage_key'])
-        self.assertEqual(response.data['file_storage_backend'], 'external_url')
+        self.assertNotIn('file_storage_key', response.data)
+        self.assertNotIn('file_storage_backend', response.data)
+        self.assertNotIn('file_cache_control', response.data)
 
     def test_download_blocks_essential_even_with_token_from_other_user(self):
         self._auth(self.professional_token)
@@ -322,9 +323,9 @@ class TemplatesBankApiTests(TestCase):
                 self.assertTrue(response.data['file_url'].startswith('http://testserver/media/templates_bank/uploads/'))
                 self.assertEqual(response.data['file_name'], 'modelo-upload-api.docx')
                 self.assertEqual(response.data['file_source'], 'upload')
-                self.assertEqual(response.data['file_storage_alias'], 'template_uploads')
-                self.assertEqual(response.data['file_storage_backend'], 'filesystem')
-                self.assertTrue(response.data['file_storage_key'].startswith('templates_bank/uploads/'))
+                self.assertNotIn('file_storage_alias', response.data)
+                self.assertNotIn('file_storage_backend', response.data)
+                self.assertNotIn('file_storage_key', response.data)
 
     def test_templates_bank_endpoints_are_throttled(self):
         cache.clear()

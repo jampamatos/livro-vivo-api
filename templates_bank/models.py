@@ -15,19 +15,19 @@ def _normalize_tags(value) -> list[str]:
 
 
 class PublicationStatus(models.TextChoices):
-    DRAFT = 'draft', 'Draft'
-    PUBLISHED = 'published', 'Published'
-    ARCHIVED = 'archived', 'Archived'
+    DRAFT = 'draft', 'Rascunho'
+    PUBLISHED = 'published', 'Publicado'
+    ARCHIVED = 'archived', 'Arquivado'
 
 
 class TemplatePiece(models.Model):
     class Category(models.TextChoices):
-        PETITION = 'petition', 'Petition'
-        CONTRACT = 'contract', 'Contract'
-        APPEAL = 'appeal', 'Appeal'
-        MOTION = 'motion', 'Motion'
-        ADMINISTRATIVE = 'administrative', 'Administrative'
-        OTHER = 'other', 'Other'
+        PETITION = 'petition', 'Petição'
+        CONTRACT = 'contract', 'Contrato'
+        APPEAL = 'appeal', 'Recurso'
+        MOTION = 'motion', 'Petição intermediária'
+        ADMINISTRATIVE = 'administrative', 'Administrativo'
+        OTHER = 'other', 'Outro'
 
     title = models.CharField(max_length=220)
     slug = models.SlugField(max_length=250, unique=True)

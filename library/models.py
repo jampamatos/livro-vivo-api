@@ -179,9 +179,9 @@ class Book(models.Model):
     """Catálogo de livros."""
 
     class Status(models.TextChoices):
-        DRAFT = 'draft', 'Draft'
-        PUBLISHED = 'published', 'Published'
-        ARCHIVED = 'archived', 'Archived'
+        DRAFT = 'draft', 'Rascunho'
+        PUBLISHED = 'published', 'Publicado'
+        ARCHIVED = 'archived', 'Arquivado'
 
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
@@ -202,9 +202,9 @@ class BookVersion(models.Model):
     """Versões publicáveis de um livro."""
 
     class Status(models.TextChoices):
-        DRAFT = 'draft', 'Draft'
-        PUBLISHED = 'published', 'Published'
-        ARCHIVED = 'archived', 'Archived'
+        DRAFT = 'draft', 'Rascunho'
+        PUBLISHED = 'published', 'Publicado'
+        ARCHIVED = 'archived', 'Arquivado'
 
     @staticmethod
     def book_version_pdf_path(instance, filename):
@@ -294,13 +294,13 @@ class BookChapter(models.Model):
         if is_create:
             from .services import (
                 book_chapter_notifications_suppressed_for_version,
-                enqueue_book_chapter_publication_notifications,
+                schedule_book_chapter_publication_notifications,
             )
 
             if book_chapter_notifications_suppressed_for_version(version_id=self.book_version_id):
                 return result
 
-            enqueue_book_chapter_publication_notifications(book_chapter=self)
+            schedule_book_chapter_publication_notifications(book_chapter=self)
 
         return result
 

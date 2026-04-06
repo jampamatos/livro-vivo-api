@@ -207,8 +207,9 @@ class CoursesApiTests(TestCase):
         self.assertEqual(res.data[0]['id'], self.asset_video.id)
         self.assertEqual(res.data[0]['asset_type'], CourseAsset.AssetType.VIDEO)
         self.assertEqual(res.data[0]['file_source'], 'remote_url')
-        self.assertEqual(res.data[0]['file_storage_backend'], 'external_url')
-        self.assertIsNone(res.data[0]['file_storage_key'])
+        self.assertNotIn('file_storage_backend', res.data[0])
+        self.assertNotIn('file_storage_key', res.data[0])
+        self.assertNotIn('file_cache_control', res.data[0])
 
     def test_lives_filters_status_type_and_date_range(self):
         self._auth(self.professional_token)
