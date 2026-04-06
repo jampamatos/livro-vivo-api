@@ -15,3 +15,5 @@ media/
 
 # Other
 .markdownlint.json
+.coverage
+htmlcov/

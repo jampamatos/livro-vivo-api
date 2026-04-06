@@ -7,6 +7,7 @@ from django.core.cache import cache
 from django.test import Client, TestCase
 from django.test.client import RequestFactory
 from django.urls import reverse
+from rest_framework.exceptions import ValidationError
 from rest_framework.test import APITestCase
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -16,6 +17,12 @@ from entitlements.models import Entitlement, Subscription
 
 from .models import Category, Comment, CommentLike, Post, PostFollow, PostLike, Report, ReportModerationAction
 from .models import ModerationConfig, UserModerationStatus
+from .view_helpers import (
+    build_mention_candidates,
+    build_post_queryset,
+    build_report_queryset,
+    parse_mention_user_ids,
+)
 
 
 User = get_user_model()
@@ -1109,3 +1116,136 @@ class CommunityAdminUxTests(TestCase):
         self.assertContains(response, self.category.name)
         self.assertContains(response, self.post.title)
         self.assertContains(response, "Comentários")
+
+
+class CommunityViewHelperTests(TestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.author = User.objects.create_user(
+            username="autor-helper@test.com",
+            email="autor-helper@test.com",
+            password="pass1234",
+        )
+        self.member = User.objects.create_user(
+            username="membro-helper@test.com",
+            email="membro-helper@test.com",
+            password="pass1234",
+        )
+        self.moderator = User.objects.create_user(
+            username="moderador-helper@test.com",
+            email="moderador-helper@test.com",
+            password="pass1234",
+        )
+        Profile.objects.update_or_create(
+            user=self.moderator,
+            defaults={"role": Profile.Role.MODERATOR},
+        )
+        self.category = Category.objects.create(name="Ajuda", slug="ajuda")
+
+    def test_parse_mention_user_ids_normalizes_and_deduplicates(self):
+        parsed = parse_mention_user_ids(["3", 1, "3", 2])
+
+        self.assertEqual(parsed, [1, 2, 3])
+
+    def test_parse_mention_user_ids_rejects_invalid_values(self):
+        with self.assertRaises(ValidationError):
+            parse_mention_user_ids(["abc"])
+
+        with self.assertRaises(ValidationError):
+            parse_mention_user_ids([0])
+
+    def test_build_mention_candidates_returns_sorted_participants(self):
+        profile_author, _ = Profile.objects.get_or_create(user=self.author)
+        profile_author.full_name = "Joao Paulo"
+        profile_author.save(update_fields=["full_name"])
+
+        profile_member, _ = Profile.objects.get_or_create(user=self.member)
+        profile_member.full_name = "Maria Clara"
+        profile_member.save(update_fields=["full_name"])
+
+        post = Post.objects.create(author=self.author, category=self.category, title="T", body="B")
+        Comment.objects.create(post=post, author=self.member, body="Primeiro comentário")
+
+        request = self.factory.get("/community/posts/")
+        candidates = build_mention_candidates(post=post, request=request, query="")
+
+        self.assertEqual(
+            [item["display_name"] for item in candidates],
+            ["Joao Paulo", "Maria Clara"],
+        )
+
+    def test_build_post_queryset_hides_removed_posts_for_regular_user(self):
+        visible_post = Post.objects.create(
+            author=self.author,
+            category=self.category,
+            title="Visível",
+            body="B",
+            moderation_state=Post.ModerationState.ACTIVE,
+        )
+        Post.objects.create(
+            author=self.author,
+            category=self.category,
+            title="Removido",
+            body="B",
+            moderation_state=Post.ModerationState.REMOVED,
+        )
+        PostFollow.objects.create(post=visible_post, user=self.member, is_active=True)
+        PostLike.objects.create(post=visible_post, user=self.member, is_active=True)
+
+        queryset = build_post_queryset(request_user=self.member)
+        listed_posts = list(queryset.order_by("id"))
+
+        self.assertEqual([post.id for post in listed_posts], [visible_post.id])
+        self.assertTrue(listed_posts[0].is_following)
+        self.assertTrue(listed_posts[0].liked_by_me)
+
+    def test_build_post_queryset_keeps_removed_posts_for_moderator(self):
+        visible_post = Post.objects.create(
+            author=self.author,
+            category=self.category,
+            title="Visível",
+            body="B",
+            moderation_state=Post.ModerationState.ACTIVE,
+        )
+        removed_post = Post.objects.create(
+            author=self.author,
+            category=self.category,
+            title="Removido",
+            body="B",
+            moderation_state=Post.ModerationState.REMOVED,
+        )
+
+        queryset = build_post_queryset(request_user=self.moderator)
+
+        self.assertEqual(
+            list(queryset.order_by("id").values_list("id", flat=True)),
+            [visible_post.id, removed_post.id],
+        )
+
+    def test_build_report_queryset_applies_filters(self):
+        post = Post.objects.create(author=self.author, category=self.category, title="Post", body="B")
+        comment = Comment.objects.create(post=post, author=self.member, body="Comentário")
+        matching_report = Report.objects.create(
+            reporter=self.author,
+            post=post,
+            reason="Post precisa de revisão",
+            status=Report.Status.OPEN,
+            priority=Report.Priority.HIGH,
+            decision=Report.Decision.REMOVE,
+        )
+        Report.objects.create(
+            reporter=self.author,
+            comment=comment,
+            reason="Outro fluxo",
+            status=Report.Status.RESOLVED,
+            priority=Report.Priority.LOW,
+            decision=Report.Decision.REJECT,
+        )
+
+        queryset = build_report_queryset(
+            status_filter=Report.Status.OPEN,
+            priority_filter=Report.Priority.HIGH,
+            decision_filter=Report.Decision.REMOVE,
+        )
+
+        self.assertEqual(list(queryset.values_list("id", flat=True)), [matching_report.id])

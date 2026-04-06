@@ -51,6 +51,12 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
+Para desenvolvimento com cobertura e checks locais completos:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
 ### 3) Variaveis de ambiente
 
 Crie `.env` a partir de `.env.example`:
@@ -185,6 +191,15 @@ python manage.py runserver
 ```bash
 python manage.py test
 ```
+
+### Cobertura
+
+```bash
+coverage run --rcfile=.coveragerc manage.py test
+coverage report --rcfile=.coveragerc
+```
+
+Threshold global atual: `>= 78%`.
 
 ### Sem migrations pendentes
 
@@ -409,6 +424,7 @@ Norteador UX do Admin para operacao juridica (nao-tech):
 Workflow API (`.github/workflows/ci.yml`) executa:
 
 - testes unitarios
+- coverage com threshold minimo
 - check de migrations
 - smoke em Postgres real
 - `check --deploy` com ambiente de producao simulado

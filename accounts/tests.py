@@ -3,13 +3,14 @@ import io
 import json
 import os
 import tempfile
+from types import SimpleNamespace
 from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connections
-from django.test import Client, TestCase
+from django.test import Client, RequestFactory, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
@@ -30,6 +31,7 @@ from community.models import (
     UserModerationStatus,
 )
 from courses.models import CourseAsset, CoursePost, LiveEvent, PublicationStatus
+from config.storage import build_media_reference
 
 from .models import (
     DataPrivacyRequest,
@@ -41,6 +43,7 @@ from .models import (
 )
 from .services import dispatch_pending_push_notifications
 from .signals import cleanup_legacy_user_token_rows
+from .view_helpers import authenticate_user_by_email, serialize_user_payload
 from entitlements.models import Entitlement, Subscription
 from library.models import Book, BookChapter, BookVersion
 
@@ -2340,3 +2343,95 @@ class HealthAndReadinessTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertRegex(response['X-Request-ID'], r'^[a-f0-9]{32}$')
+
+
+class AccountViewHelperTests(TestCase):
+    def setUp(self):
+        self.request = RequestFactory().post('/auth/login/')
+
+    def test_authenticate_user_by_email_resolves_username_fallback(self):
+        user = User.objects.create_user(
+            username='usuario-login',
+            email='login@example.com',
+            password='StrongPass123',
+        )
+
+        authenticated = authenticate_user_by_email(self.request, 'LOGIN@example.com', 'StrongPass123')
+
+        self.assertEqual(authenticated, user)
+
+    def test_authenticate_user_by_email_allows_inactive_user_with_valid_password(self):
+        user = User.objects.create_user(
+            username='banido-login',
+            email='inactive@example.com',
+            password='StrongPass123',
+            is_active=False,
+        )
+
+        authenticated = authenticate_user_by_email(self.request, 'inactive@example.com', 'StrongPass123')
+
+        self.assertEqual(authenticated, user)
+
+    def test_authenticate_user_by_email_returns_none_for_invalid_password(self):
+        User.objects.create_user(
+            username='usuario-invalido',
+            email='invalid@example.com',
+            password='StrongPass123',
+            is_active=False,
+        )
+
+        authenticated = authenticate_user_by_email(self.request, 'invalid@example.com', 'senha-errada')
+
+        self.assertIsNone(authenticated)
+
+    def test_serialize_user_payload_exposes_only_public_avatar_fields(self):
+        user = User.objects.create_user(
+            username='perfil@example.com',
+            email='perfil@example.com',
+            password='StrongPass123',
+        )
+        profile = Profile.objects.create(
+            user=user,
+            full_name='Perfil Público',
+            profession='Advogada',
+            avatar_url='https://cdn.example.com/avatar.jpg',
+            role=Profile.Role.MODERATOR,
+        )
+
+        payload = serialize_user_payload(user, profile, request=None)
+
+        self.assertEqual(payload['name'], 'Perfil Público')
+        self.assertEqual(payload['profession'], 'Advogada')
+        self.assertEqual(payload['avatar_url'], 'https://cdn.example.com/avatar.jpg')
+        self.assertEqual(payload['avatar_source'], 'remote_url')
+        self.assertEqual(payload['role'], 'moderator')
+        self.assertNotIn('storage_key', payload)
+        self.assertNotIn('storage_backend', payload)
+
+    def test_build_media_reference_hides_internal_metadata_by_default(self):
+        upload_field = SimpleNamespace(name='avatars/teste.png', url='/media/avatars/teste.png')
+
+        reference = build_media_reference(
+            upload_field=upload_field,
+            request=None,
+            storage_alias='avatars',
+        )
+
+        self.assertEqual(reference, {'url': '/media/avatars/teste.png', 'source': 'upload'})
+
+    def test_build_media_reference_exposes_internal_metadata_only_when_requested(self):
+        upload_field = SimpleNamespace(name='avatars/teste.png', url='/media/avatars/teste.png')
+
+        reference = build_media_reference(
+            upload_field=upload_field,
+            request=None,
+            storage_alias='avatars',
+            include_internal_metadata=True,
+        )
+
+        self.assertEqual(reference['url'], '/media/avatars/teste.png')
+        self.assertEqual(reference['source'], 'upload')
+        self.assertEqual(reference['storage_key'], 'avatars/teste.png')
+        self.assertEqual(reference['storage_alias'], 'avatars')
+        self.assertIn('storage_backend', reference)
+        self.assertIn('cache_control', reference)
