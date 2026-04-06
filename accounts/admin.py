@@ -438,7 +438,16 @@ class NotificationEventAdmin(HierarchicalAdminMixin, admin.ModelAdmin):
 
 @admin.register(NotificationDispatch)
 class NotificationDispatchAdmin(HierarchicalAdminMixin, admin.ModelAdmin):
-    list_display = ('event', 'user', 'channel', 'status', 'reason', 'created_at', 'dispatched_at', 'acknowledged_at')
+    list_display = (
+        'event_reference',
+        'user',
+        'channel',
+        'status',
+        'reason',
+        'created_at',
+        'dispatched_at',
+        'acknowledged_at',
+    )
     list_filter = ('channel', 'status', 'created_at', 'event__event_type')
     search_fields = ('user__email', 'user__username', 'event__dedup_key', 'reason')
     readonly_fields = (
@@ -507,6 +516,15 @@ class NotificationDispatchAdmin(HierarchicalAdminMixin, admin.ModelAdmin):
 
     def get_lv_parent_redirect_url(self, request, obj):
         return _notification_event_change_url(obj.event)
+
+    @admin.display(description='Evento')
+    def event_reference(self, obj):
+        title = obj.event.title or obj.event.get_event_type_display()
+        return format_html(
+            '{}<div class="help">{}</div>',
+            title,
+            obj.event.dedup_key,
+        )
 
     def has_add_permission(self, request):
         return False
