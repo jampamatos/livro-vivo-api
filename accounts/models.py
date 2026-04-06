@@ -42,7 +42,7 @@ class Profile(models.Model):
             avatar_storage.delete(avatar_name)
 
     def __str__(self) -> str:
-        return f"Profile(user_id={self.user_id})"
+        return self.full_name or self.user.email or self.user.username or f'Usuário #{self.user_id}'
 
 
 class DataPrivacyRequest(models.Model):
@@ -75,10 +75,7 @@ class DataPrivacyRequest(models.Model):
         ordering = ['-created_at']
 
     def __str__(self) -> str:
-        return (
-            f"DataPrivacyRequest(user_id={self.user_id}, "
-            f"type={self.request_type}, status={self.status})"
-        )
+        return f'Solicitação de privacidade #{self.pk or "nova"} ({self.get_status_display()})'
 
 
 class NotificationPreference(models.Model):
@@ -101,7 +98,7 @@ class NotificationPreference(models.Model):
         ordering = ['-updated_at', '-created_at']
 
     def __str__(self) -> str:
-        return f"NotificationPreference(user_id={self.user_id})"
+        return f'Preferências de notificação de usuário #{self.user_id}'
 
 
 class NotificationEvent(models.Model):
@@ -125,7 +122,7 @@ class NotificationEvent(models.Model):
         ordering = ['-created_at']
 
     def __str__(self) -> str:
-        return f"NotificationEvent(type={self.event_type}, dedup_key={self.dedup_key})"
+        return f'Evento de notificação #{self.pk or "novo"} ({self.get_event_type_display()})'
 
 
 class NotificationDispatch(models.Model):
@@ -169,10 +166,7 @@ class NotificationDispatch(models.Model):
         ordering = ['-created_at']
 
     def __str__(self) -> str:
-        return (
-            f"NotificationDispatch(event_id={self.event_id}, user_id={self.user_id}, "
-            f"channel={self.channel}, status={self.status})"
-        )
+        return f'Envio de notificação #{self.pk or "novo"} ({self.get_status_display()})'
 
 
 class PushDevice(models.Model):
@@ -199,4 +193,4 @@ class PushDevice(models.Model):
         ordering = ['-last_seen_at', '-created_at']
 
     def __str__(self) -> str:
-        return f"PushDevice(user_id={self.user_id}, platform={self.platform}, active={self.is_active})"
+        return f'Dispositivo push #{self.pk or "novo"} ({self.get_platform_display()})'

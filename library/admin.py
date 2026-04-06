@@ -3,7 +3,7 @@ from django.contrib import admin
 from django.contrib import messages
 from django.contrib.admin.helpers import ActionForm
 from django.db import IntegrityError, transaction
-from django.db.models import Count
+from django.db.models import Count, Max
 from django.http import HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import path, reverse
@@ -12,6 +12,14 @@ from django.utils.safestring import mark_safe
 from django.utils.text import Truncator
 from django.utils import timezone
 from tinymce.widgets import TinyMCE
+
+from config.admin_hierarchy import (
+    HierarchicalAdminMixin,
+    admin_url,
+    get_admin_action,
+    nav_item,
+    object_from_request,
+)
 
 from .models import (
     ALLOWED_CHAPTER_TAGS,
@@ -28,12 +36,14 @@ from .services import (
 
 
 BOOK_CHAPTER_WORDLIKE_MCE_ATTRS = {
-    'height': 520,
+    'height': 680,
+    'min_height': 680,
+    'width': '100%',
     'menubar': False,
     'toolbar_mode': 'sliding',
     'branding': False,
     'browser_spellcheck': True,
-    'plugins': 'lists link autoresize wordcount',
+    'plugins': 'lists link wordcount',
     'toolbar': 'undo redo | blocks | bold italic underline | bullist numlist | link removeformat',
     'block_formats': 'Parágrafo=p;Título 2=h2;Título 3=h3;Citação=blockquote',
     'valid_elements': 'p,br,strong,em,u,ul,ol,li,blockquote,h2,h3,a[href|title|target|rel]',
@@ -41,6 +51,7 @@ BOOK_CHAPTER_WORDLIKE_MCE_ATTRS = {
     'forced_root_block': 'p',
     'convert_urls': False,
     'elementpath': True,
+    'resize': False,
     'content_style': (
         'body {'
         ' font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;'
@@ -57,6 +68,34 @@ BOOK_CHAPTER_WORDLIKE_MCE_ATTRS = {
 }
 
 
+def _library_root_url():
+    return reverse('admin:library_book_changelist')
+
+
+def _book_change_url(book: Book) -> str:
+    return reverse('admin:library_book_change', args=[book.id])
+
+
+def _version_changelist_url(book: Book) -> str:
+    return admin_url('admin:library_bookversion_changelist', params={'book__id__exact': book.id})
+
+
+def _version_add_url(book: Book) -> str:
+    return admin_url('admin:library_bookversion_add', params={'book': book.id})
+
+
+def _version_change_url(version: BookVersion) -> str:
+    return reverse('admin:library_bookversion_change', args=[version.id])
+
+
+def _chapter_changelist_url(version: BookVersion) -> str:
+    return admin_url('admin:library_bookchapter_changelist', params={'book_version__id__exact': version.id})
+
+
+def _chapter_add_url(version: BookVersion) -> str:
+    return admin_url('admin:library_bookchapter_add', params={'book_version': version.id})
+
+
 class BookChapterAdminForm(forms.ModelForm):
     class Meta:
         model = BookChapter
@@ -65,6 +104,8 @@ class BookChapterAdminForm(forms.ModelForm):
             'content_rich': TinyMCE(
                 attrs={
                     'rows': 18,
+                    'cols': 120,
+                    'style': 'width: 100%;',
                     'class': 'vLargeTextField',
                 },
                 mce_attrs=BOOK_CHAPTER_WORDLIKE_MCE_ATTRS,
@@ -119,7 +160,7 @@ class BookVersionActionForm(ActionForm):
 
 
 @admin.register(Book)
-class BookAdmin(admin.ModelAdmin):
+class BookAdmin(HierarchicalAdminMixin, admin.ModelAdmin):
     list_display = ('title', 'status', 'current_version_label', 'updated_at')
     search_fields = ('title',)
     list_filter = ('status',)
@@ -141,7 +182,7 @@ class BookAdmin(admin.ModelAdmin):
             },
         ),
         (
-            'Pipeline de versoes',
+            'Pipeline de versões',
             {
                 'fields': (
                     'current_version_label',
@@ -166,6 +207,24 @@ class BookAdmin(admin.ModelAdmin):
         }
         js = ('library/admin/book_version_pipeline.js',)
 
+    def get_lv_navigation_path(self, request):
+        books_url = _library_root_url()
+        path = [
+            nav_item('Biblioteca', books_url),
+            nav_item('Livros', books_url),
+        ]
+
+        action = get_admin_action(request)
+        if action == 'add':
+            path.append(nav_item('Novo livro'))
+            return path
+
+        object_id = request.resolver_match.kwargs.get('object_id')
+        book = self.get_object(request, object_id) if object_id else None
+        if book:
+            path.append(nav_item(book.title))
+        return path
+
     def _get_current_version(self, obj: Book | None) -> BookVersion | None:
         if not obj or not obj.pk:
             return None
@@ -178,7 +237,7 @@ class BookAdmin(admin.ModelAdmin):
             return published
         return obj.versions.order_by('-created_at', '-id').first()
 
-    @admin.display(description='Versao atual')
+    @admin.display(description='Versão atual')
     def current_version_label(self, obj: Book):
         current = self._get_current_version(obj)
         if not current:
@@ -197,10 +256,10 @@ class BookAdmin(admin.ModelAdmin):
             current.get_status_display(),
         )
 
-    @admin.display(description='Controle de versoes')
+    @admin.display(description='Controle de versões')
     def versions_pipeline_panel(self, obj: Book):
         if not obj or not obj.pk:
-            return 'Salve o livro para gerenciar versoes.'
+            return 'Salve o livro para gerenciar versões.'
 
         versions = obj.versions.order_by('-created_at', '-id')
         create_url = reverse('admin:library_book_create_version', args=[obj.id])
@@ -211,18 +270,18 @@ class BookAdmin(admin.ModelAdmin):
                 '<div class="lv-feedback-banner lv-version-pipeline__feedback" id="lv-version-feedback" '
                 'role="status" aria-live="polite" hidden></div>'
                 '<div class="lv-empty-state">'
-                '<p class="lv-empty-state__title">Este livro ainda nao possui versoes.</p>'
-                '<p class="lv-empty-state__text">Crie uma versao em rascunho para iniciar o controle editorial.</p>'
+                '<p class="lv-empty-state__title">Este livro ainda não possui versões.</p>'
+                '<p class="lv-empty-state__text">Crie uma versão em rascunho para iniciar o controle editorial.</p>'
                 '</div>'
-                '<button type="button" class="button default lv-add-version-btn">Adicionar nova versao</button>'
+                '<button type="button" class="button default lv-add-version-btn">Adicionar nova versão</button>'
                 '<div class="lv-version-modal" id="lv-add-version-modal" hidden>'
                 '<div class="lv-version-modal__card">'
-                '<h3>Adicionar nova versao</h3>'
-                '<label>Nome da versao</label>'
+                '<h3>Adicionar nova versão</h3>'
+                '<label>Nome da versão</label>'
                 '<input type="text" id="lv-new-version-name" placeholder="2026.03.11">'
                 '<label>Changelog</label>'
-                '<textarea id="lv-new-version-changelog" rows="4" placeholder="Resumo das mudancas"></textarea>'
-                '<p class="lv-version-modal__note">A nova versao sera criada como rascunho.</p>'
+                '<textarea id="lv-new-version-changelog" rows="4" placeholder="Resumo das mudanças"></textarea>'
+                '<p class="lv-version-modal__note">A nova versão será criada como rascunho.</p>'
                 '<div class="lv-version-modal__actions">'
                 '<button type="button" class="button default" id="lv-confirm-add-version">Criar rascunho</button>'
                 '<button type="button" class="button" id="lv-cancel-add-version">Cancelar</button>'
@@ -270,7 +329,7 @@ class BookAdmin(admin.ModelAdmin):
                         '<div class="lv-inline-actions">'
                         '<a class="button" href="{}">Capitulos</a> '
                         '<a class="button" href="{}">Adicionar capitulo</a> '
-                        '<a class="button" href="{}">Editar versao</a>'
+                        '<a class="button" href="{}">Editar versão</a>'
                         '</div>',
                         chapters_url,
                         add_chapter_url,
@@ -284,22 +343,22 @@ class BookAdmin(admin.ModelAdmin):
             '<div class="lv-feedback-banner lv-version-pipeline__feedback" id="lv-version-feedback" '
             'role="status" aria-live="polite" hidden></div>'
             '<div class="lv-version-pipeline__header">'
-            '<button type="button" class="button default lv-add-version-btn">Adicionar nova versao</button>'
+            '<button type="button" class="button default lv-add-version-btn">Adicionar nova versão</button>'
             '</div>'
             '<table class="lv-version-pipeline__table">'
             '<thead><tr>'
-            '<th>Versao</th><th>Status</th><th>Changelog</th><th>Publicacao</th><th>Acoes</th>'
+            '<th>Versão</th><th>Status</th><th>Changelog</th><th>Publicação</th><th>Ações</th>'
             '</tr></thead>'
             '<tbody>{}</tbody>'
             '</table>'
             '<div class="lv-version-modal" id="lv-add-version-modal" hidden>'
             '<div class="lv-version-modal__card">'
-            '<h3>Adicionar nova versao</h3>'
-            '<label>Nome da versao</label>'
+            '<h3>Adicionar nova versão</h3>'
+            '<label>Nome da versão</label>'
             '<input type="text" id="lv-new-version-name" placeholder="2026.03.11">'
             '<label>Changelog</label>'
-            '<textarea id="lv-new-version-changelog" rows="4" placeholder="Resumo das mudancas"></textarea>'
-            '<p class="lv-version-modal__note">A nova versao sera criada como rascunho.</p>'
+            '<textarea id="lv-new-version-changelog" rows="4" placeholder="Resumo das mudanças"></textarea>'
+            '<p class="lv-version-modal__note">A nova versão será criada como rascunho.</p>'
             '<div class="lv-version-modal__actions">'
             '<button type="button" class="button default" id="lv-confirm-add-version">Criar rascunho</button>'
             '<button type="button" class="button" id="lv-cancel-add-version">Cancelar</button>'
@@ -310,7 +369,7 @@ class BookAdmin(admin.ModelAdmin):
             '<div class="lv-version-modal__card">'
             '<h3>Confirmar publicacao</h3>'
             '<p id="lv-publish-version-message"></p>'
-            '<p class="lv-version-modal__note">Ao confirmar, esta versao vira publicada e as demais ficam arquivadas.</p>'
+            '<p class="lv-version-modal__note">Ao confirmar, esta versão vira publicada e as demais ficam arquivadas.</p>'
             '<div class="lv-version-modal__actions">'
             '<button type="button" class="button default" id="lv-confirm-publish-version">Sim, publicar</button>'
             '<button type="button" class="button" id="lv-cancel-publish-version">Cancelar</button>'
@@ -356,10 +415,10 @@ class BookAdmin(admin.ModelAdmin):
         version_name = (request.POST.get('version') or '').strip()
         changelog = (request.POST.get('changelog') or '').strip()
         if not version_name:
-            self.message_user(request, 'Informe o nome da nova versao.', level=messages.ERROR)
+            self.message_user(request, 'Informe o nome da nova versão.', level=messages.ERROR)
             return self._book_change_redirect(book.id)
         if not changelog:
-            self.message_user(request, 'Informe o changelog da nova versao.', level=messages.ERROR)
+            self.message_user(request, 'Informe o changelog da nova versão.', level=messages.ERROR)
             return self._book_change_redirect(book.id)
 
         source_version = self._get_current_version(book)
@@ -385,7 +444,7 @@ class BookAdmin(admin.ModelAdmin):
         except IntegrityError:
             self.message_user(
                 request,
-                'Ja existe uma versao com esse identificador para este livro.',
+                'Já existe uma versão com esse identificador para este livro.',
                 level=messages.ERROR,
             )
             return self._book_change_redirect(book.id)
@@ -409,7 +468,7 @@ class BookAdmin(admin.ModelAdmin):
         if not (version.changelog or '').strip():
             self.message_user(
                 request,
-                'Nao e possivel publicar sem changelog. Atualize a versao antes de publicar.',
+                'Não é possível publicar sem changelog. Atualize a versão antes de publicar.',
                 level=messages.ERROR,
             )
             return self._book_change_redirect(book.id)
@@ -438,7 +497,7 @@ class BookAdmin(admin.ModelAdmin):
 
         self.message_user(
             request,
-            f'Versao "{version.version}" publicada com sucesso. {archived_count} versao(oes) arquivada(s).',
+            f'Versão "{version.version}" publicada com sucesso. {archived_count} versão(ões) arquivada(s).',
             level=messages.SUCCESS,
         )
         return self._book_change_redirect(book.id)
@@ -466,15 +525,16 @@ class BookChapterInline(admin.StackedInline):
 
 
 @admin.register(BookVersion)
-class BookVersionAdmin(admin.ModelAdmin):
+class BookVersionAdmin(HierarchicalAdminMixin, admin.ModelAdmin):
     form = BookVersionAdminForm
     action_form = BookVersionActionForm
+    lv_request_initial_fields = {'book': ('book', 'book__id__exact')}
     list_display = ('book', 'version', 'status', 'chapters_count', 'published_at', 'created_at')
     search_fields = ('book__title', 'version')
     list_filter = ('status', 'book', 'published_at', 'created_at')
     inlines = [BookChapterInline]
     actions = ('create_preloaded_version', 'publish_selected_versions', 'archive_selected_versions')
-    readonly_fields = ('created_at', 'publication_guardrails')
+    readonly_fields = ('created_at', 'publication_guardrails', 'chapters_management_panel')
     fieldsets = (
         (
             'Dados da versão',
@@ -497,6 +557,14 @@ class BookVersionAdmin(admin.ModelAdmin):
             },
         ),
         (
+            'Capítulos da versão',
+            {
+                'fields': (
+                    'chapters_management_panel',
+                )
+            },
+        ),
+        (
             'Auditoria',
             {
                 'fields': (
@@ -505,6 +573,49 @@ class BookVersionAdmin(admin.ModelAdmin):
             },
         ),
     )
+
+    def has_module_permission(self, request):
+        return False
+
+    def _get_book_from_request(self, request):
+        return object_from_request(request, Book.objects.all(), 'book', 'book__id__exact')
+
+    def get_lv_navigation_path(self, request):
+        books_url = _library_root_url()
+        path = [
+            nav_item('Biblioteca', books_url),
+            nav_item('Livros', books_url),
+        ]
+
+        action = get_admin_action(request)
+        object_id = request.resolver_match.kwargs.get('object_id')
+        version = self.get_object(request, object_id) if object_id else None
+        book = version.book if version else self._get_book_from_request(request)
+
+        if not book:
+            path.append(nav_item('Versões do livro', reverse('admin:library_bookversion_changelist')))
+            if action == 'add':
+                path.append(nav_item('Nova versão'))
+            elif version:
+                path.append(nav_item(version.version))
+            return path
+
+        path.append(nav_item(book.title, _book_change_url(book)))
+        if action == 'changelist':
+            path.append(nav_item('Versões', _version_changelist_url(book)))
+            return path
+        if action == 'add':
+            path.append(nav_item('Nova versão'))
+            return path
+        if version:
+            path.append(nav_item(version.version))
+        return path
+
+    def get_lv_parent_redirect_url(self, request, obj):
+        return _book_change_url(obj.book)
+
+    def get_lv_addanother_redirect_url(self, request, obj):
+        return _version_add_url(obj.book)
 
     def get_queryset(self, request):
         return super().get_queryset(request).annotate(_chapters_count=Count('chapters', distinct=True))
@@ -521,6 +632,24 @@ class BookVersionAdmin(admin.ModelAdmin):
             '<li>Publicação exige changelog preenchido.</li>'
             '<li>Ao publicar, as demais versões ficam arquivadas.</li>'
             '</ul>'
+        )
+
+    @admin.display(description='Fluxo hierárquico')
+    def chapters_management_panel(self, obj):
+        if not obj or not obj.pk:
+            return 'Salve a versão para gerenciar os capítulos dentro dela.'
+
+        chapters_total = obj.chapters.count()
+        return format_html(
+            '<div class="lv-inline-actions">'
+            '<a class="button" href="{}">Ver capítulos desta versão ({})</a> '
+            '<a class="button" href="{}">Adicionar capitulo</a> '
+            '<a class="button" href="{}">Voltar para o livro</a>'
+            '</div>',
+            _chapter_changelist_url(obj),
+            chapters_total,
+            _chapter_add_url(obj),
+            _book_change_url(obj.book),
         )
 
     def _is_sensitive_action_confirmed(self, request):
@@ -723,8 +852,9 @@ class BookVersionAdmin(admin.ModelAdmin):
 
 
 @admin.register(BookChapter)
-class BookChapterAdmin(admin.ModelAdmin):
+class BookChapterAdmin(HierarchicalAdminMixin, admin.ModelAdmin):
     form = BookChapterAdminForm
+    lv_request_initial_fields = {'book_version': ('book_version', 'book_version__id__exact')}
     list_display = ('book_version', 'order', 'title', 'slug', 'content_preview_compact', 'updated_at')
     list_editable = ('order',)
     list_display_links = ('book_version', 'title')
@@ -745,9 +875,73 @@ class BookChapterAdmin(admin.ModelAdmin):
         'updated_at',
     )
 
+    def _get_book_version_from_request(self, request):
+        return object_from_request(
+            request,
+            BookVersion.objects.select_related('book'),
+            'book_version',
+            'book_version__id__exact',
+        )
+
+    def get_changeform_initial_data(self, request):
+        initial = super().get_changeform_initial_data(request)
+        version = self._get_book_version_from_request(request)
+        if not version:
+            return initial
+
+        if initial.get('book_version') in (None, ''):
+            initial['book_version'] = version.id
+
+        if initial.get('order') not in (None, ''):
+            return initial
+
+        last_order = (
+            version.chapters.aggregate(max_order=Max('order')).get('max_order')
+        )
+        initial['order'] = 1 if last_order is None else last_order + 1
+        return initial
+
     def has_module_permission(self, request):
         # A gestao de capitulos acontece pelo fluxo de Livro.
         return False
+
+    def get_lv_navigation_path(self, request):
+        books_url = _library_root_url()
+        path = [
+            nav_item('Biblioteca', books_url),
+            nav_item('Livros', books_url),
+        ]
+
+        action = get_admin_action(request)
+        object_id = request.resolver_match.kwargs.get('object_id')
+        chapter = self.get_object(request, object_id) if object_id else None
+        version = chapter.book_version if chapter else self._get_book_version_from_request(request)
+
+        if not version:
+            path.append(nav_item('Capitulos', reverse('admin:library_bookchapter_changelist')))
+            if action == 'add':
+                path.append(nav_item('Novo capitulo'))
+            elif chapter:
+                path.append(nav_item(chapter.title))
+            return path
+
+        path.append(nav_item(version.book.title, _book_change_url(version.book)))
+        path.append(nav_item(version.version, _version_change_url(version)))
+        if action == 'changelist':
+            path.append(nav_item('Capitulos', _chapter_changelist_url(version)))
+            return path
+        if action == 'add':
+            path.append(nav_item('Novo capitulo'))
+            return path
+        if chapter:
+            path.append(nav_item(chapter.title))
+        return path
+
+    def get_lv_parent_redirect_url(self, request, obj):
+        return _version_change_url(obj.book_version)
+
+    def get_lv_addanother_redirect_url(self, request, obj):
+        return _chapter_add_url(obj.book_version)
 
     @admin.display(description='Preview')
     def content_preview(self, obj):

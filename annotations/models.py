@@ -56,12 +56,4 @@ class Annotation(models.Model):
         ordering = ['-updated_at', '-created_at']
 
     def __str__(self) -> str:
-        return (
-            "Annotation("
-            f"u={self.user_id}, "
-            f"v={self.book_version_id}, "
-            f"c={self.chapter_id}, "
-            f"s={self.start_offset}, "
-            f"e={self.end_offset}"
-            ")"
-        )
+        return f'Anotação #{self.pk or "nova"} no capítulo #{self.chapter_id}'

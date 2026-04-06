@@ -605,8 +605,8 @@ class LibraryAdminTests(TestCase):
         response = self.client.get(reverse('admin:library_book_change', args=[self.book.id]))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Pipeline de versoes')
-        self.assertContains(response, 'Adicionar nova versao')
+        self.assertContains(response, 'Pipeline de versões')
+        self.assertContains(response, 'Adicionar nova versão')
         self.assertContains(response, 'id="lv-version-feedback"')
         self.assertContains(response, f'data-create-url="{reverse("admin:library_book_create_version", args=[self.book.id])}"')
         self.assertContains(response, f'data-version-label="{draft_version.version}"')
@@ -683,7 +683,7 @@ class LibraryAdminTests(TestCase):
         self.assertTrue(
             NotificationEvent.objects.filter(dedup_key=f'book-version-published:{target.id}').exists()
         )
-        self.assertContains(response, f'Versao &quot;{target.version}&quot; publicada com sucesso.')
+        self.assertContains(response, f'Versão &quot;{target.version}&quot; publicada com sucesso.')
 
     def test_book_admin_publish_version_endpoint_requires_changelog(self):
         target = BookVersion.objects.create(
@@ -701,7 +701,7 @@ class LibraryAdminTests(TestCase):
         self.assertEqual(response.status_code, 200)
         target.refresh_from_db()
         self.assertEqual(target.status, BookVersion.Status.DRAFT)
-        self.assertContains(response, 'Nao e possivel publicar sem changelog.')
+        self.assertContains(response, 'Não é possível publicar sem changelog.')
 
     def test_book_chapter_admin_changelist_renders_preview_and_order(self):
         response = self.client.get(reverse('admin:library_bookchapter_changelist'))
@@ -748,6 +748,11 @@ class LibraryAdminTests(TestCase):
         self.assertContains(response, 'tinymce/tinymce.min.js')
         self.assertContains(response, 'django_tinymce/init_tinymce.js')
         self.assertContains(response, 'undo redo | blocks | bold italic underline')
+        self.assertContains(response, 'min_height')
+        self.assertContains(response, '&quot;width&quot;: &quot;100%&quot;')
+        self.assertContains(response, 'style="width: 100%;"')
+        self.assertContains(response, 'lists link wordcount')
+        self.assertNotContains(response, 'lists link autoresize wordcount')
         self.assertContains(response, 'Tags permitidas:')
         self.assertContains(response, 'Tags permitidas: a, blockquote, br')
         self.assertContains(response, 'lv-rich-editor-preview')

@@ -10,6 +10,7 @@ from django.utils.text import Truncator
 from django.utils import timezone
 
 from accounts.roles import user_is_moderator_or_above, user_is_owner_or_superuser
+from config.admin_hierarchy import HierarchicalAdminMixin, admin_url
 
 from .models import (
     Category,
@@ -150,7 +151,7 @@ class ReportAdmin(admin.ModelAdmin):
     )
     fieldsets = (
         (
-            "Dados do report",
+            "Dados da denúncia",
             {
                 "fields": (
                     "reporter",
@@ -241,7 +242,7 @@ class ReportAdmin(admin.ModelAdmin):
     def target(self, obj: Report):
         if obj.post_id:
             return f"Post #{obj.post_id} — {obj.post.title}"
-        return f"Comment #{obj.comment_id} — Post #{obj.comment.post_id}"
+        return f"Comentário #{obj.comment_id} — Post #{obj.comment.post_id}"
     target.short_description = "Alvo"
 
     def _apply_bulk_action(self, request, queryset, *, action_type, next_status, decision, label):
@@ -282,7 +283,7 @@ class ReportAdmin(admin.ModelAdmin):
             label="em revisão",
         )
 
-    @admin.action(description="Aprovar conteúdo reportado")
+    @admin.action(description="Aprovar conteúdo denunciado")
     def approve_reports(self, request, queryset):
         self._apply_bulk_action(
             request,
@@ -293,12 +294,12 @@ class ReportAdmin(admin.ModelAdmin):
             label="resolvido/aprovado",
         )
 
-    @admin.action(description="Remover conteúdo reportado")
+    @admin.action(description="Remover conteúdo denunciado")
     def remove_reports(self, request, queryset):
         if not self._is_sensitive_action_confirmed(request):
             self.message_user(
                 request,
-                "Confirme a ação sensível para remover conteúdos reportados em massa.",
+                "Confirme a ação sensível para remover conteúdos denunciados em massa.",
                 level=messages.ERROR,
             )
             return
@@ -315,7 +316,7 @@ class ReportAdmin(admin.ModelAdmin):
             action_type=ReportModerationAction.ActionType.REMOVED,
             next_status=Report.Status.RESOLVED,
             decision=Report.Decision.REMOVE,
-            label="resolved/remove",
+            label="resolvido/removido",
         )
 
     @admin.action(description="Escalar denúncia")
@@ -340,7 +341,7 @@ class ReportAdmin(admin.ModelAdmin):
             label="rejeitado",
         )
 
-    @admin.action(description="Banir autor do conteúdo reportado")
+    @admin.action(description="Banir autor do conteúdo denunciado")
     def ban_report_authors(self, request, queryset):
         if not self._is_sensitive_action_confirmed(request):
             self.message_user(
@@ -365,7 +366,7 @@ class ReportAdmin(admin.ModelAdmin):
             if target is None:
                 skipped += 1
                 continue
-            reason = f'{moderation_note} (report #{report.id})'
+            reason = f'{moderation_note} (denúncia #{report.id})'
             ban_user_from_app(user=target, actor=request.user, reason=reason, report=report)
             processed += 1
         if processed:
@@ -374,7 +375,8 @@ class ReportAdmin(admin.ModelAdmin):
             self.message_user(request, f"{skipped} denúncia(s) sem autor alvo.", level=messages.WARNING)
 
 @admin.register(Post)
-class PostAdmin(admin.ModelAdmin):
+class PostAdmin(HierarchicalAdminMixin, admin.ModelAdmin):
+    lv_request_initial_fields = {'category': ('category', 'category__id__exact')}
     list_display = ("title", "author", "moderation_state", "comments_count", "open_reports", "created_at")
     search_fields = ("title", "body", "author__email", "category__name")
     list_filter = ("category", "moderation_state", "created_at")
@@ -392,7 +394,7 @@ class PostAdmin(admin.ModelAdmin):
             },
         ),
         (
-            "Comentarios do post",
+            "Comentários do post",
             {
                 "fields": (
                     "comments_panel",
@@ -409,7 +411,7 @@ class PostAdmin(admin.ModelAdmin):
             },
         ),
         (
-            "Moderacao",
+            "Moderação",
             {
                 "fields": (
                     "moderation_state",
@@ -430,20 +432,20 @@ class PostAdmin(admin.ModelAdmin):
 
     def comments_count(self, obj: Post):
         return getattr(obj, "_comments_count", 0)
-    comments_count.short_description = "Comentarios"
+    comments_count.short_description = "Comentários"
     comments_count.admin_order_field = "_comments_count"
 
     def open_reports(self, obj: Post):
         return getattr(obj, "_open_reports", 0)
-    open_reports.short_description = "Denuncias abertas"
+    open_reports.short_description = "Denúncias abertas"
     open_reports.admin_order_field = "_open_reports"
 
-    @admin.display(description="Comentarios")
+    @admin.display(description="Comentários")
     def comments_panel(self, obj: Post):
         if not obj or not obj.pk:
             return format_html(
                 '<div class="lv-empty-state">'
-                '<p class="lv-empty-state__title">Salve o post para gerenciar comentarios.</p>'
+                '<p class="lv-empty-state__title">Salve o post para gerenciar comentários.</p>'
                 '</div>'
             )
 
@@ -458,10 +460,10 @@ class PostAdmin(admin.ModelAdmin):
         if not comments.exists():
             return format_html(
                 '<div class="lv-empty-state">'
-                '<p class="lv-empty-state__title">Este post ainda nao possui comentarios.</p>'
-                '<p class="lv-empty-state__text">Use o botao abaixo para criar o primeiro comentario.</p>'
+                '<p class="lv-empty-state__title">Este post ainda não possui comentários.</p>'
+                '<p class="lv-empty-state__text">Use o botão abaixo para criar o primeiro comentário.</p>'
                 "</div>"
-                '<div class="lv-inline-actions"><a class="button" href="{}">Adicionar comentario</a></div>',
+                '<div class="lv-inline-actions"><a class="button" href="{}">Adicionar comentário</a></div>',
                 add_comment_url,
             )
 
@@ -469,7 +471,7 @@ class PostAdmin(admin.ModelAdmin):
         for comment in comments:
             comment_url = reverse("admin:community_comment_change", args=[comment.id])
             comment_preview = Truncator((comment.body or "").strip()).chars(80) or "(Sem texto)"
-            author_label = comment.author.email or comment.author.username or f"Usuario {comment.author_id}"
+            author_label = comment.author.email or comment.author.username or f"Usuário {comment.author_id}"
             rows.append(
                 (
                     comment_url,
@@ -482,14 +484,14 @@ class PostAdmin(admin.ModelAdmin):
             )
 
         return format_html(
-            '<div class="lv-inline-actions"><a class="button" href="{}">Ver lista completa de comentarios</a></div>'
+            '<div class="lv-inline-actions"><a class="button" href="{}">Ver lista completa de comentários</a></div>'
             '<table class="admin-comments-panel">'
             "<thead>"
             "<tr>"
-            "<th>Comentario</th>"
+            "<th>Comentário</th>"
             "<th>Autor</th>"
-            "<th>Status de moderacao</th>"
-            "<th>Reports abertos</th>"
+            "<th>Status de moderação</th>"
+            "<th>Denúncias abertas</th>"
             "<th>Criado em</th>"
             "</tr>"
             "</thead>"
@@ -523,6 +525,16 @@ class PostAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return user_is_owner_or_superuser(request.user)
+
+    def get_lv_parent_redirect_url(self, request, obj):
+        if obj.category_id:
+            return reverse('admin:community_category_change', args=[obj.category_id])
+        return self._community_root_url()
+
+    def get_lv_addanother_redirect_url(self, request, obj):
+        if not obj.category_id:
+            return None
+        return admin_url('admin:community_post_add', params={'category': obj.category_id})
 
     def _community_root_url(self):
         return reverse("admin:community_category_changelist")
@@ -581,14 +593,15 @@ class PostAdmin(admin.ModelAdmin):
         return super().change_view(request, object_id, form_url=form_url, extra_context=context)
 
 @admin.register(Comment)
-class CommentAdmin(admin.ModelAdmin):
+class CommentAdmin(HierarchicalAdminMixin, admin.ModelAdmin):
+    lv_request_initial_fields = {'post': ('post', 'post__id__exact')}
     list_display = ("comment_preview", "author", "moderation_state", "open_reports", "created_at")
     search_fields = ("body", "author__email", "post__title")
     list_filter = ("moderation_state", "created_at",)
     readonly_fields = ("created_at", "updated_at")
     fieldsets = (
         (
-            "Dados do comentario",
+            "Dados do comentário",
             {
                 "fields": (
                     "post",
@@ -607,7 +620,7 @@ class CommentAdmin(admin.ModelAdmin):
             },
         ),
         (
-            "Moderacao",
+            "Moderação",
             {
                 "fields": (
                     "moderation_state",
@@ -625,10 +638,10 @@ class CommentAdmin(admin.ModelAdmin):
 
     def open_reports(self, obj: Comment):
         return getattr(obj, "_open_reports", 0)
-    open_reports.short_description = "Denuncias abertas"
+    open_reports.short_description = "Denúncias abertas"
     open_reports.admin_order_field = "_open_reports"
 
-    @admin.display(description="Comentario")
+    @admin.display(description="Comentário")
     def comment_preview(self, obj: Comment):
         return Truncator((obj.body or "").strip()).chars(90) or "(Sem texto)"
 
@@ -646,6 +659,12 @@ class CommentAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return user_is_owner_or_superuser(request.user)
+
+    def get_lv_parent_redirect_url(self, request, obj):
+        return reverse("admin:community_post_change", args=[obj.post_id])
+
+    def get_lv_addanother_redirect_url(self, request, obj):
+        return admin_url('admin:community_comment_add', params={'post': obj.post_id})
 
     def _community_root_url(self):
         return reverse("admin:community_category_changelist")
@@ -672,9 +691,9 @@ class CommentAdmin(admin.ModelAdmin):
             if category:
                 path.append(_nav_item(category.name, self._build_post_changelist_url(category)))
             path.append(_nav_item(post_obj.title, reverse("admin:community_post_change", args=[post_obj.id])))
-            path.append(_nav_item("Comentarios"))
+            path.append(_nav_item("Comentários"))
         else:
-            path.append(_nav_item("Comentarios"))
+            path.append(_nav_item("Comentários"))
         context = _merge_extra_context(extra_context, navigation_path=path)
         return super().changelist_view(request, extra_context=context)
 
@@ -686,10 +705,10 @@ class CommentAdmin(admin.ModelAdmin):
             if category:
                 path.append(_nav_item(category.name, self._build_post_changelist_url(category)))
             path.append(_nav_item(post_obj.title, reverse("admin:community_post_change", args=[post_obj.id])))
-            path.append(_nav_item("Novo comentario"))
+            path.append(_nav_item("Novo comentário"))
         else:
-            path.append(_nav_item("Comentarios", reverse("admin:community_comment_changelist")))
-            path.append(_nav_item("Novo comentario"))
+            path.append(_nav_item("Comentários", reverse("admin:community_comment_changelist")))
+            path.append(_nav_item("Novo comentário"))
         context = _merge_extra_context(extra_context, navigation_path=path)
         return super().add_view(request, form_url=form_url, extra_context=context)
 
@@ -702,9 +721,9 @@ class CommentAdmin(admin.ModelAdmin):
             if category:
                 path.append(_nav_item(category.name, self._build_post_changelist_url(category)))
             path.append(_nav_item(post_obj.title, reverse("admin:community_post_change", args=[post_obj.id])))
-            path.append(_nav_item(f"Comentario #{comment_obj.id}"))
+            path.append(_nav_item(f"Comentário #{comment_obj.id}"))
         else:
-            path.append(_nav_item("Comentarios"))
+            path.append(_nav_item("Comentários"))
         context = _merge_extra_context(extra_context, navigation_path=path)
         return super().change_view(request, object_id, form_url=form_url, extra_context=context)
 
@@ -762,7 +781,7 @@ class CategoryAdmin(admin.ModelAdmin):
         url = reverse("admin:community_category_change", args=[obj.id])
         return format_html('<a href="{}">Editar</a>', url)
 
-    @admin.display(description="Acoes")
+    @admin.display(description="Ações")
     def posts_panel_links(self, obj: Category):
         if not obj or not obj.pk:
             return format_html(

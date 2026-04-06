@@ -47,4 +47,4 @@ class CaseLawAdmin(admin.ModelAdmin):
         anchors = obj.anchors if isinstance(obj.anchors, list) else []
         return len(anchors)
 
-    anchors_count.short_description = 'Anchors'
+    anchors_count.short_description = 'Âncoras'

@@ -320,6 +320,11 @@ class CoursesAdminTests(TestCase):
         self.assertContains(response, 'tinymce/tinymce.min.js')
         self.assertContains(response, 'django_tinymce/init_tinymce.js')
         self.assertContains(response, 'undo redo | blocks | bold italic underline')
+        self.assertContains(response, 'min_height')
+        self.assertContains(response, '&quot;width&quot;: &quot;100%&quot;')
+        self.assertContains(response, 'style="width: 100%;"')
+        self.assertContains(response, 'lists link wordcount')
+        self.assertNotContains(response, 'lists link autoresize wordcount')
         self.assertContains(response, 'Tags permitidas:')
         self.assertContains(response, 'lv-rich-editor-preview')
 

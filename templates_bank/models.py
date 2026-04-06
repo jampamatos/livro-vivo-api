@@ -65,7 +65,7 @@ class TemplatePiece(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f'{self.template_code} v{self.version} ({self.status})'
+        return f'{self.template_code} v{self.version} ({self.get_status_display()})'
 
     def _metadata_is_complete(self) -> bool:
         return bool(

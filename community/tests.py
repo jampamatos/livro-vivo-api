@@ -936,7 +936,7 @@ class CommunityAdminModerationTests(TestCase):
         self.post.refresh_from_db()
         self.assertEqual(self.report.status, Report.Status.OPEN)
         self.assertEqual(self.post.moderation_state, Post.ModerationState.ACTIVE)
-        self.assertContains(response, "Confirme a ação sensível para remover conteúdos reportados em massa.")
+        self.assertContains(response, "Confirme a ação sensível para remover conteúdos denunciados em massa.")
 
     def test_bulk_remove_reports_updates_state_when_confirmed(self):
         response = self.client.post(
@@ -1040,7 +1040,7 @@ class CommunityAdminUxTests(TestCase):
         self.assertEqual(response.status_code, 200)
 
         expected_posts_url = f"{reverse('admin:community_post_changelist')}?category__id__exact={self.category.id}"
-        self.assertContains(response, "Voce esta em:")
+        self.assertContains(response, "Você está em:")
         self.assertContains(response, "Comunidade")
         self.assertContains(response, expected_posts_url)
         self.assertContains(response, self.category.name)
@@ -1050,7 +1050,7 @@ class CommunityAdminUxTests(TestCase):
             f"{reverse('admin:community_post_changelist')}?category__id__exact={self.category.id}"
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Voce esta em:")
+        self.assertContains(response, "Você está em:")
         self.assertContains(response, "Comunidade")
         self.assertContains(response, self.category.name)
 
@@ -1058,13 +1058,13 @@ class CommunityAdminUxTests(TestCase):
         response = self.client.get(reverse("admin:community_post_change", args=[self.post.id]))
         self.assertEqual(response.status_code, 200)
 
-        self.assertContains(response, "Voce esta em:")
+        self.assertContains(response, "Você está em:")
         self.assertContains(response, "Comunidade")
         self.assertContains(response, self.category.name)
         self.assertContains(response, self.post.title)
-        self.assertContains(response, "Comentarios do post")
+        self.assertContains(response, "Comentários do post")
         self.assertContains(response, reverse("admin:community_comment_change", args=[self.comment.id]))
-        self.assertContains(response, "Status de moderacao")
+        self.assertContains(response, "Status de moderação")
         self.assertContains(response, 'name="moderation_state"', html=False)
         self.assertContains(response, 'name="moderated_by"', html=False)
         self.assertContains(response, 'name="moderated_at_0"', html=False)
@@ -1075,12 +1075,12 @@ class CommunityAdminUxTests(TestCase):
         response = self.client.get(reverse("admin:community_comment_change", args=[self.comment.id]))
         self.assertEqual(response.status_code, 200)
 
-        self.assertContains(response, "Voce esta em:")
+        self.assertContains(response, "Você está em:")
         self.assertContains(response, "Comunidade")
         self.assertContains(response, self.category.name)
         self.assertContains(response, self.post.title)
-        self.assertContains(response, f"Comentario #{self.comment.id}")
-        self.assertContains(response, "Moderacao")
+        self.assertContains(response, f"Comentário #{self.comment.id}")
+        self.assertContains(response, "Moderação")
         self.assertContains(response, 'name="moderation_state"', html=False)
         self.assertContains(response, 'name="moderated_by"', html=False)
         self.assertContains(response, 'name="moderated_at_0"', html=False)
@@ -1091,12 +1091,12 @@ class CommunityAdminUxTests(TestCase):
         Comment.objects.create(
             post=self.post,
             author=self.author,
-            body="Segundo comentario para validar contador.",
+            body="Segundo comentário para validar contador.",
         )
 
         response = self.client.get(reverse("admin:community_post_changelist"))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Comments count")
+        self.assertContains(response, "Comentários")
         self.assertContains(response, 'field-comments_count">2<', html=False)
 
     def test_comment_changelist_shows_context_path_for_filtered_post(self):
@@ -1104,8 +1104,8 @@ class CommunityAdminUxTests(TestCase):
             f"{reverse('admin:community_comment_changelist')}?post__id__exact={self.post.id}"
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Voce esta em:")
+        self.assertContains(response, "Você está em:")
         self.assertContains(response, "Comunidade")
         self.assertContains(response, self.category.name)
         self.assertContains(response, self.post.title)
-        self.assertContains(response, "Comentarios")
+        self.assertContains(response, "Comentários")

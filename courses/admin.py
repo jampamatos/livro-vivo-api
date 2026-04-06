@@ -2,23 +2,33 @@ from django import forms
 from django.contrib import admin
 from django.contrib import messages
 from django.contrib.admin.helpers import ActionForm
+from django.urls import reverse
 from django.utils.html import format_html, strip_tags
 from django.utils.safestring import mark_safe
 from django.utils.text import Truncator
 from django.utils import timezone
 from tinymce.widgets import TinyMCE
 
+from config.admin_hierarchy import (
+    HierarchicalAdminMixin,
+    admin_url,
+    get_admin_action,
+    nav_item,
+    object_from_request,
+)
 from library.models import ALLOWED_CHAPTER_TAGS, sanitize_chapter_html
 from .models import CourseAsset, CoursePost, LiveEvent, PublicationStatus
 
 
 COURSE_POST_WORDLIKE_MCE_ATTRS = {
-    'height': 520,
+    'height': 680,
+    'min_height': 680,
+    'width': '100%',
     'menubar': False,
     'toolbar_mode': 'sliding',
     'branding': False,
     'browser_spellcheck': True,
-    'plugins': 'lists link autoresize wordcount',
+    'plugins': 'lists link wordcount',
     'toolbar': 'undo redo | blocks | bold italic underline | bullist numlist | link removeformat',
     'block_formats': 'Parágrafo=p;Título 2=h2;Título 3=h3;Citação=blockquote',
     'valid_elements': 'p,br,strong,em,u,ul,ol,li,blockquote,h2,h3,a[href|title|target|rel]',
@@ -26,6 +36,7 @@ COURSE_POST_WORDLIKE_MCE_ATTRS = {
     'forced_root_block': 'p',
     'convert_urls': False,
     'elementpath': True,
+    'resize': False,
     'content_style': (
         'body {'
         ' font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;'
@@ -42,6 +53,34 @@ COURSE_POST_WORDLIKE_MCE_ATTRS = {
 }
 
 
+def _course_root_url():
+    return reverse('admin:courses_coursepost_changelist')
+
+
+def _course_post_change_url(post: CoursePost) -> str:
+    return reverse('admin:courses_coursepost_change', args=[post.id])
+
+
+def _course_post_from_request(request):
+    return object_from_request(request, CoursePost.objects.all(), 'post', 'post__id__exact')
+
+
+def _course_asset_changelist_url(post: CoursePost) -> str:
+    return admin_url('admin:courses_courseasset_changelist', params={'post__id__exact': post.id})
+
+
+def _course_asset_add_url(post: CoursePost) -> str:
+    return admin_url('admin:courses_courseasset_add', params={'post': post.id})
+
+
+def _course_live_changelist_url(post: CoursePost) -> str:
+    return admin_url('admin:courses_liveevent_changelist', params={'post__id__exact': post.id})
+
+
+def _course_live_add_url(post: CoursePost) -> str:
+    return admin_url('admin:courses_liveevent_add', params={'post': post.id})
+
+
 class CoursePostAdminForm(forms.ModelForm):
     class Meta:
         model = CoursePost
@@ -50,6 +89,8 @@ class CoursePostAdminForm(forms.ModelForm):
             'content_rich': TinyMCE(
                 attrs={
                     'rows': 18,
+                    'cols': 120,
+                    'style': 'width: 100%;',
                     'class': 'vLargeTextField',
                 },
                 mce_attrs=COURSE_POST_WORDLIKE_MCE_ATTRS,
@@ -78,6 +119,8 @@ class LiveEventAdminForm(forms.ModelForm):
             'description': TinyMCE(
                 attrs={
                     'rows': 12,
+                    'cols': 120,
+                    'style': 'width: 100%;',
                     'class': 'vLargeTextField',
                 },
                 mce_attrs=COURSE_POST_WORDLIKE_MCE_ATTRS,
@@ -106,7 +149,7 @@ class CoursesBulkActionForm(ActionForm):
 
 
 @admin.register(CoursePost)
-class CoursePostAdmin(admin.ModelAdmin):
+class CoursePostAdmin(HierarchicalAdminMixin, admin.ModelAdmin):
     form = CoursePostAdminForm
     action_form = CoursesBulkActionForm
     list_display = (
@@ -122,7 +165,14 @@ class CoursePostAdmin(admin.ModelAdmin):
     search_fields = ('title', 'author_name', 'excerpt', 'content_rich')
     prepopulated_fields = {'slug': ('title',)}
     ordering = ('-published_at', '-updated_at', '-created_at')
-    readonly_fields = ('content_preview', 'content_plain', 'created_at', 'updated_at', 'publication_guardrails')
+    readonly_fields = (
+        'content_preview',
+        'content_plain',
+        'created_at',
+        'updated_at',
+        'publication_guardrails',
+        'course_structure_panel',
+    )
     actions = ('publish_selected_posts', 'archive_selected_posts')
     fieldsets = (
         (
@@ -159,6 +209,14 @@ class CoursePostAdmin(admin.ModelAdmin):
             },
         ),
         (
+            'Estrutura do post',
+            {
+                'fields': (
+                    'course_structure_panel',
+                )
+            },
+        ),
+        (
             'Auditoria',
             {
                 'fields': (
@@ -169,6 +227,23 @@ class CoursePostAdmin(admin.ModelAdmin):
         ),
     )
 
+    def get_lv_navigation_path(self, request):
+        posts_url = _course_root_url()
+        path = [
+            nav_item('Curso', posts_url),
+            nav_item('Posts do curso', posts_url),
+        ]
+
+        action = get_admin_action(request)
+        object_id = request.resolver_match.kwargs.get('object_id')
+        post_obj = self.get_object(request, object_id) if object_id else None
+        if action == 'add':
+            path.append(nav_item('Novo post do curso'))
+            return path
+        if post_obj:
+            path.append(nav_item(post_obj.title))
+        return path
+
     @admin.display(description='Guardrails operacionais')
     def publication_guardrails(self, obj):
         return format_html(
@@ -177,6 +252,26 @@ class CoursePostAdmin(admin.ModelAdmin):
             '<li>Use publicação em massa somente com confirmação explícita.</li>'
             '<li>Arquivar remove destaque sem apagar histórico.</li>'
             '</ul>'
+        )
+
+    @admin.display(description='Operação do post')
+    def course_structure_panel(self, obj):
+        if not obj or not obj.pk:
+            return 'Salve o post para gerenciar materiais e lives dentro dele.'
+
+        return format_html(
+            '<div class="lv-inline-actions">'
+            '<a class="button" href="{}">Materiais deste post ({})</a> '
+            '<a class="button" href="{}">Adicionar material</a> '
+            '<a class="button" href="{}">Lives deste post ({})</a> '
+            '<a class="button" href="{}">Adicionar live</a>'
+            '</div>',
+            _course_asset_changelist_url(obj),
+            obj.assets.count(),
+            _course_asset_add_url(obj),
+            _course_live_changelist_url(obj),
+            obj.live_events.count(),
+            _course_live_add_url(obj),
         )
 
     def _is_sensitive_action_confirmed(self, request):
@@ -255,8 +350,9 @@ class CoursePostAdmin(admin.ModelAdmin):
 
 
 @admin.register(CourseAsset)
-class CourseAssetAdmin(admin.ModelAdmin):
+class CourseAssetAdmin(HierarchicalAdminMixin, admin.ModelAdmin):
     action_form = CoursesBulkActionForm
+    lv_request_initial_fields = {'post': ('post', 'post__id__exact')}
     list_display = ('title', 'asset_type', 'status', 'post', 'published_at', 'updated_at')
     list_filter = ('status', 'asset_type', 'published_at', 'updated_at', 'created_at')
     search_fields = ('title', 'description')
@@ -296,6 +392,50 @@ class CourseAssetAdmin(admin.ModelAdmin):
             },
         ),
     )
+
+    def has_module_permission(self, request):
+        return False
+
+    def get_lv_navigation_path(self, request):
+        posts_url = _course_root_url()
+        path = [
+            nav_item('Curso', posts_url),
+            nav_item('Posts do curso', posts_url),
+        ]
+
+        action = get_admin_action(request)
+        object_id = request.resolver_match.kwargs.get('object_id')
+        asset = self.get_object(request, object_id) if object_id else None
+        post = asset.post if asset else _course_post_from_request(request)
+
+        if not post:
+            path.append(nav_item('Materiais', reverse('admin:courses_courseasset_changelist')))
+            if action == 'add':
+                path.append(nav_item('Novo material'))
+            elif asset:
+                path.append(nav_item(asset.title))
+            return path
+
+        path.append(nav_item(post.title, _course_post_change_url(post)))
+        if action == 'changelist':
+            path.append(nav_item('Materiais', _course_asset_changelist_url(post)))
+            return path
+        if action == 'add':
+            path.append(nav_item('Novo material'))
+            return path
+        if asset:
+            path.append(nav_item(asset.title))
+        return path
+
+    def get_lv_parent_redirect_url(self, request, obj):
+        if not obj.post_id:
+            return None
+        return _course_post_change_url(obj.post)
+
+    def get_lv_addanother_redirect_url(self, request, obj):
+        if not obj.post_id:
+            return None
+        return _course_asset_add_url(obj.post)
 
     def _is_sensitive_action_confirmed(self, request):
         return str(request.POST.get('confirm_sensitive_action', '')).lower() in {'1', 'true', 'on', 'yes'}
@@ -355,9 +495,10 @@ class CourseAssetAdmin(admin.ModelAdmin):
 
 
 @admin.register(LiveEvent)
-class LiveEventAdmin(admin.ModelAdmin):
+class LiveEventAdmin(HierarchicalAdminMixin, admin.ModelAdmin):
     form = LiveEventAdminForm
     action_form = CoursesBulkActionForm
+    lv_request_initial_fields = {'post': ('post', 'post__id__exact')}
     list_display = ('title', 'post', 'event_type', 'status', 'description_preview_compact', 'starts_at', 'updated_at')
     list_filter = ('status', 'event_type', 'starts_at', 'updated_at', 'created_at')
     search_fields = ('title', 'description')
@@ -406,6 +547,50 @@ class LiveEventAdmin(admin.ModelAdmin):
             },
         ),
     )
+
+    def has_module_permission(self, request):
+        return False
+
+    def get_lv_navigation_path(self, request):
+        posts_url = _course_root_url()
+        path = [
+            nav_item('Curso', posts_url),
+            nav_item('Posts do curso', posts_url),
+        ]
+
+        action = get_admin_action(request)
+        object_id = request.resolver_match.kwargs.get('object_id')
+        live = self.get_object(request, object_id) if object_id else None
+        post = live.post if live else _course_post_from_request(request)
+
+        if not post:
+            path.append(nav_item('Lives', reverse('admin:courses_liveevent_changelist')))
+            if action == 'add':
+                path.append(nav_item('Nova live'))
+            elif live:
+                path.append(nav_item(live.title))
+            return path
+
+        path.append(nav_item(post.title, _course_post_change_url(post)))
+        if action == 'changelist':
+            path.append(nav_item('Lives', _course_live_changelist_url(post)))
+            return path
+        if action == 'add':
+            path.append(nav_item('Nova live'))
+            return path
+        if live:
+            path.append(nav_item(live.title))
+        return path
+
+    def get_lv_parent_redirect_url(self, request, obj):
+        if not obj.post_id:
+            return None
+        return _course_post_change_url(obj.post)
+
+    def get_lv_addanother_redirect_url(self, request, obj):
+        if not obj.post_id:
+            return None
+        return _course_live_add_url(obj.post)
 
     def _is_sensitive_action_confirmed(self, request):
         return str(request.POST.get('confirm_sensitive_action', '')).lower() in {'1', 'true', 'on', 'yes'}
