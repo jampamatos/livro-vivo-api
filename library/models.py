@@ -14,6 +14,8 @@ ALLOWED_CHAPTER_TAGS = {
     'strong',
     'em',
     'u',
+    'sup',
+    'sub',
     'ul',
     'ol',
     'li',
