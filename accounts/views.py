@@ -1,6 +1,6 @@
 import logging
 
-from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from rest_framework import status
@@ -11,11 +11,11 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework.views import APIView
 
 from entitlements.models import Entitlement
 from entitlements.services import get_effective_tier, get_subscription_snapshot
-from config.storage import build_media_reference
 
 from .models import NotificationDispatch, NotificationPreference, Profile, PushDevice
 from .serializers import (
@@ -29,7 +29,12 @@ from .serializers import (
     RegisterSerializer,
 )
 from .services import create_user_data_export_package, request_user_data_erasure
-from .roles import get_user_role
+from .view_helpers import (
+    authenticate_user_by_email,
+    delete_stored_file,
+    issue_tokens_for_user,
+    serialize_user_payload,
+)
 from community.services import (
     get_banned_login_message,
     get_user_moderation_summary,
@@ -38,49 +43,6 @@ from community.services import (
 
 User = get_user_model()
 logger = logging.getLogger("livro_vivo.api")
-
-
-def issue_tokens_for_user(user):
-    refresh = RefreshToken.for_user(user)
-    return {
-        'refresh': str(refresh),
-        'access': str(refresh.access_token),
-    }
-
-
-def _resolve_profile_avatar_reference(profile: Profile, request=None):
-    return build_media_reference(
-        upload_field=getattr(profile, 'avatar', None),
-        remote_url=getattr(profile, 'avatar_url', ''),
-        request=request,
-        storage_alias='avatars',
-    )
-
-
-def _delete_stored_file(storage, name: str):
-    if not storage or not name:
-        return
-    try:
-        storage.delete(name)
-    except Exception:  # pragma: no cover
-        return
-
-
-def _serialize_user_payload(user, profile: Profile, request=None):
-    avatar_reference = _resolve_profile_avatar_reference(profile, request=request)
-    return {
-        'id': user.id,
-        'email': user.email,
-        'name': profile.full_name,
-        'profession': profile.profession,
-        'avatar_url': avatar_reference['url'],
-        'avatar_source': avatar_reference['source'],
-        'avatar_storage_alias': avatar_reference['storage_alias'],
-        'avatar_storage_backend': avatar_reference['storage_backend'],
-        'avatar_storage_key': avatar_reference['storage_key'],
-        'avatar_cache_control': avatar_reference['cache_control'],
-        'role': get_user_role(user),
-    }
 
 
 class RegisterView(APIView):
@@ -102,7 +64,7 @@ class RegisterView(APIView):
         return Response(
             {
                 **tokens,
-                'user': _serialize_user_payload(user, profile, request=request),
+                'user': serialize_user_payload(user, profile, request=request),
             },
             status=status.HTTP_201_CREATED,
         )
@@ -121,24 +83,9 @@ class LoginView(APIView):
 
         if not email or not password:
             logger.warning("auth_login_failed", extra={"reason": "missing_credentials"})
-            return Response({"detail": "email e password são obrigatórios."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Email e senha são obrigatórios."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Django autentica por username; aqui tratamos email como username.
-        user = authenticate(request, username=email, password=password)
-
-        if not user:
-            # fallback: tenta achar email e autentica com username real, se existir
-            try:
-                u = User.objects.get(email=email)
-            except User.DoesNotExist:
-                u = None
-            if u:
-                user = authenticate(request, username=u.username, password=password)
-
-        if not user:
-            candidate_user = User.objects.filter(email__iexact=email).first()
-            if candidate_user and candidate_user.check_password(password):
-                user = candidate_user
+        user = authenticate_user_by_email(request, email, password)
 
         if not user:
             logger.warning("auth_login_failed", extra={"reason": "invalid_credentials"})
@@ -174,6 +121,12 @@ class LoginView(APIView):
 
         return Response(payload, status=status.HTTP_200_OK)
 
+
+class RefreshView(TokenRefreshView):
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth_refresh'
+
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -203,7 +156,7 @@ class MeView(APIView):
         user = request.user
         profile, _ = Profile.objects.get_or_create(user=user)
 
-        return Response(_serialize_user_payload(user, profile, request=request))
+        return Response(serialize_user_payload(user, profile, request=request))
 
     def patch(self, request):
         user = request.user
@@ -245,7 +198,7 @@ class MeView(APIView):
             profile.save(update_fields=list(dict.fromkeys(update_fields)))
             current_avatar_name = profile.avatar.name if profile.avatar and profile.avatar.name else ''
             if previous_avatar_name and previous_avatar_name != current_avatar_name:
-                _delete_stored_file(previous_avatar_storage, previous_avatar_name)
+                delete_stored_file(previous_avatar_storage, previous_avatar_name)
             avatar_action = (
                 'upload'
                 if ('avatar' in serializer.validated_data and serializer.validated_data['avatar'] is not None)
@@ -264,7 +217,7 @@ class MeView(APIView):
                 },
             )
 
-        return Response(_serialize_user_payload(user, profile, request=request), status=status.HTTP_200_OK)
+        return Response(serialize_user_payload(user, profile, request=request), status=status.HTTP_200_OK)
 
 
 class MePasswordChangeView(APIView):

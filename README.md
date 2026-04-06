@@ -69,7 +69,7 @@ Variaveis principais:
 - `DJANGO_CORS_ALLOWED_ORIGINS`: obrigatoria em stage/prod
 - `DJANGO_CSRF_TRUSTED_ORIGINS`: obrigatoria em stage/prod
 - `APP_VERSION`: versao exibida em health/readiness
-- `REDIS_URL`: opcional (cache/throttle distribuido)
+- `REDIS_URL`: obrigatoria em stage/prod; recomendada em desenvolvimento para reproduzir throttle/cache distribuido
 - `DJANGO_LOG_PROFILE`: `dev` | `prod`
 - `DJANGO_LOG_INCLUDE_REQUESTS`: habilita logs request-by-request do `django.server`
 - `DJANGO_LOG_STRUCTURED`: `true` para JSON estruturado
@@ -144,10 +144,6 @@ Metadados expostos pela API para assets/arquivos:
 
 - `*_url`
 - `*_source`
-- `*_storage_alias`
-- `*_storage_backend`
-- `*_storage_key`
-- `*_cache_control`
 
 Politica minima recomendada:
 
@@ -160,7 +156,7 @@ Migracao recomendada para object storage:
 2. subir com `DJANGO_STORAGE_PROVIDER=s3`;
 3. manter URLs remotas historicas onde elas ja existirem;
 4. migrar uploads locais existentes para o bucket e preservar `name/key`;
-5. validar `health/`, `readyz/` e payloads com `storage_key` antes de abrir trafego.
+5. validar `health/`, `readyz/` e a resolucao publica de `*_url` antes de abrir trafego.
 
 ### 4) Banco e migrations
 
@@ -206,6 +202,7 @@ DJANGO_ALLOWED_HOSTS=api.example.com \
 DJANGO_CORS_ALLOWED_ORIGINS=https://app.example.com \
 DJANGO_CSRF_TRUSTED_ORIGINS=https://app.example.com \
 DATABASE_URL=sqlite:///./tmp-prod-check.sqlite3 \
+REDIS_URL=redis://127.0.0.1:6379/1 \
 python manage.py check --deploy --fail-level WARNING
 ```
 

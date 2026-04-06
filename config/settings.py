@@ -161,6 +161,11 @@ DATABASES = {
 cache_timeout_seconds = int(os.getenv('DJANGO_CACHE_TIMEOUT_SECONDS', '300'))
 redis_url = (os.getenv('REDIS_URL') or '').strip()
 
+if (IS_PRODUCTION or IS_STAGE) and not IS_TESTING and not redis_url:
+    raise ImproperlyConfigured(
+        "REDIS_URL is required when DJANGO_ENV is stage/production."
+    )
+
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.redis.RedisCache',
@@ -207,6 +212,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'auth_register': '5/min',
         'auth_login': '10/min',
+        'auth_refresh': '30/min',
         'library_search': '60/min',
         'global_search': '45/min',
         'courses_api': '90/min',

@@ -1,6 +1,4 @@
 from django.contrib.auth import get_user_model
-from django.db.models import Exists, OuterRef
-from django.utils import timezone
 
 from rest_framework import filters
 from rest_framework.decorators import action
@@ -17,6 +15,15 @@ from .permissions import (
     IsNotCommunityBanned,
     IsOwnerOrStaff,
     IsStaffOrReadOnlyAuthed,
+)
+from .view_helpers import (
+    build_comment_queryset,
+    build_mention_candidates,
+    build_post_queryset,
+    build_report_queryset,
+    parse_mention_user_ids,
+    register_report_update_audit,
+    report_update_snapshot,
 )
 from .services import (
     ban_user_from_app,
@@ -36,8 +43,6 @@ from .serializers import (
     CommentSerializer,
     ReportSerializer,
 )
-
-from accounts.roles import user_is_moderator_or_above
 
 User = get_user_model()
 
@@ -64,32 +69,10 @@ class PostViewSet(ModelViewSet):
     ordering = ['-last_activity_at', '-created_at']
 
     def get_queryset(self):
-        qs = Post.objects.select_related('author', 'author__profile', 'category').all()
-        if self.request.user and self.request.user.is_authenticated:
-            qs = qs.annotate(
-                is_following=Exists(
-                    PostFollow.objects.filter(
-                        post_id=OuterRef('pk'),
-                        user_id=self.request.user.id,
-                        is_active=True,
-                    )
-                ),
-                liked_by_me=Exists(
-                    PostLike.objects.filter(
-                        post_id=OuterRef('pk'),
-                        user_id=self.request.user.id,
-                        is_active=True,
-                    )
-                ),
-            )
-
-        if not user_is_moderator_or_above(self.request.user):
-            qs = qs.filter(moderation_state=Post.ModerationState.ACTIVE)
-
-        category_id = self.request.query_params.get('category')
-        if category_id:
-            qs = qs.filter(category_id=category_id)
-        return qs
+        return build_post_queryset(
+            request_user=self.request.user,
+            category_id=self.request.query_params.get('category'),
+        )
     
     def perform_create(self, serializer):
         serializer.save(author=self.request.user)
@@ -154,32 +137,14 @@ class PostViewSet(ModelViewSet):
     )
     def mention_candidates(self, request, pk=None):
         post = self.get_object()
-        query = (request.query_params.get('q') or '').strip().lower()
-
-        participant_user_ids = set(
-            Comment.objects.filter(post_id=post.id).values_list('author_id', flat=True).distinct()
+        serializer = MentionCandidateSerializer(
+            build_mention_candidates(
+                post=post,
+                request=request,
+                query=request.query_params.get('q'),
+            ),
+            many=True,
         )
-        participant_user_ids.add(post.author_id)
-
-        users = User.objects.filter(id__in=participant_user_ids).select_related('profile').all()
-        payload = []
-        for user in users:
-            display_name = PostSerializer._resolve_author_display(user)
-            if query and query not in display_name.lower():
-                continue
-            avatar_url = PostSerializer._resolve_author_avatar_url(user)
-            if avatar_url and avatar_url.startswith('/'):
-                avatar_url = request.build_absolute_uri(avatar_url)
-            payload.append(
-                {
-                    'id': user.id,
-                    'display_name': display_name,
-                    'avatar_url': avatar_url,
-                }
-            )
-
-        payload.sort(key=lambda item: item['display_name'].lower())
-        serializer = MentionCandidateSerializer(payload[:20], many=True)
         return Response(serializer.data)
 
 class CommentViewSet(ModelViewSet):
@@ -193,44 +158,13 @@ class CommentViewSet(ModelViewSet):
     ordering = ['created_at']
 
     def get_queryset(self):
-        qs = Comment.objects.select_related('author', 'author__profile', 'post').all()
-        if self.request.user and self.request.user.is_authenticated:
-            qs = qs.annotate(
-                liked_by_me=Exists(
-                    CommentLike.objects.filter(
-                        comment_id=OuterRef('pk'),
-                        user_id=self.request.user.id,
-                        is_active=True,
-                    )
-                )
-            )
-        if not user_is_moderator_or_above(self.request.user):
-            qs = qs.filter(moderation_state=Comment.ModerationState.ACTIVE)
-        post_id = self.request.query_params.get('post')
-        if post_id:
-            qs = qs.filter(post_id=post_id)
-        return qs
-    
-    def _parse_mention_user_ids(self):
-        raw_value = self.request.data.get('mention_user_ids')
-        if raw_value in (None, ''):
-            return []
-        if not isinstance(raw_value, list):
-            raise ValidationError({'mention_user_ids': 'Envie uma lista de IDs de usuários.'})
-
-        normalized_ids = []
-        for value in raw_value:
-            try:
-                user_id = int(value)
-            except (TypeError, ValueError):
-                raise ValidationError({'mention_user_ids': 'Todos os itens devem ser IDs numéricos.'})
-            if user_id <= 0:
-                raise ValidationError({'mention_user_ids': 'Todos os IDs devem ser maiores que zero.'})
-            normalized_ids.append(user_id)
-        return sorted(set(normalized_ids))
+        return build_comment_queryset(
+            request_user=self.request.user,
+            post_id=self.request.query_params.get('post'),
+        )
 
     def perform_create(self, serializer):
-        mention_user_ids = self._parse_mention_user_ids()
+        mention_user_ids = parse_mention_user_ids(self.request.data.get('mention_user_ids'))
         comment = serializer.save(author=self.request.user)
         enqueue_new_comment_notifications(comment=comment)
         if mention_user_ids:
@@ -272,26 +206,11 @@ class ReportViewSet(ModelViewSet):
     ordering = ["status", "-created_at"]
 
     def get_queryset(self):
-        qs = (
-            Report.objects
-            .select_related("reporter", "post", "comment", "assigned_moderator", "moderated_by")
-            .prefetch_related("moderation_actions__actor")
-            .all()
+        return build_report_queryset(
+            status_filter=(self.request.query_params.get("status") or "").strip(),
+            priority_filter=(self.request.query_params.get("priority") or "").strip(),
+            decision_filter=(self.request.query_params.get("decision") or "").strip(),
         )
-
-        status_filter = (self.request.query_params.get("status") or "").strip()
-        if status_filter:
-            qs = qs.filter(status=status_filter)
-
-        priority_filter = (self.request.query_params.get("priority") or "").strip()
-        if priority_filter:
-            qs = qs.filter(priority=priority_filter)
-
-        decision_filter = (self.request.query_params.get("decision") or "").strip()
-        if decision_filter:
-            qs = qs.filter(decision=decision_filter)
-
-        return qs
 
     def get_permissions(self):
         if self.action == "create":
@@ -310,57 +229,16 @@ class ReportViewSet(ModelViewSet):
             moderation_note='',
         )
 
-    def _register_update_audit(self, report: Report, before: dict):
-        status_changed = before["status"] != report.status
-        priority_changed = before["priority"] != report.priority
-        assigned_changed = before["assigned_moderator_id"] != report.assigned_moderator_id
-        decision_changed = before["decision"] != report.decision
-        note_changed = before["moderation_note"] != report.moderation_note
-
-        if not any([status_changed, priority_changed, assigned_changed, decision_changed, note_changed]):
-            return
-
-        if status_changed:
-            action_type = ReportModerationAction.ActionType.STATUS_CHANGED
-        elif priority_changed:
-            action_type = ReportModerationAction.ActionType.PRIORITY_CHANGED
-        elif assigned_changed:
-            action_type = ReportModerationAction.ActionType.ASSIGNED
-        else:
-            action_type = ReportModerationAction.ActionType.STATUS_CHANGED
-
-        report.moderated_by = self.request.user
-        report.moderated_at = timezone.now()
-        report.save(update_fields=["moderated_by", "moderated_at", "updated_at"])
-
-        ReportModerationAction.objects.create(
-            report=report,
-            actor=self.request.user,
-            action_type=action_type,
-            from_status=before["status"],
-            to_status=report.status,
-            from_priority=before["priority"],
-            to_priority=report.priority,
-            decision=report.decision,
-            note=(report.moderation_note or "").strip(),
-        )
-
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
-        before = {
-            "status": instance.status,
-            "priority": instance.priority,
-            "decision": instance.decision,
-            "assigned_moderator_id": instance.assigned_moderator_id,
-            "moderation_note": instance.moderation_note,
-        }
+        before = report_update_snapshot(instance)
 
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
         instance.refresh_from_db()
-        self._register_update_audit(instance, before)
+        register_report_update_audit(report=instance, before=before, actor=self.request.user)
 
         response_serializer = self.get_serializer(instance)
         return Response(response_serializer.data)

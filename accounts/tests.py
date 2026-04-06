@@ -317,7 +317,7 @@ class AccountsAPITests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data['detail'], 'email e password são obrigatórios.')
+        self.assertEqual(response.data['detail'], 'Email e senha são obrigatórios.')
 
     def test_login_fallback_authenticates_when_username_differs_from_email(self):
         user = User.objects.create_user(
@@ -360,8 +360,10 @@ class AccountsAPITests(TestCase):
         self.assertEqual(response.data['profession'], '')
         self.assertIsNone(response.data['avatar_url'])
         self.assertEqual(response.data['avatar_source'], 'none')
-        self.assertEqual(response.data['avatar_storage_alias'], 'avatars')
-        self.assertEqual(response.data['avatar_storage_backend'], 'filesystem')
+        self.assertNotIn('avatar_storage_alias', response.data)
+        self.assertNotIn('avatar_storage_backend', response.data)
+        self.assertNotIn('avatar_storage_key', response.data)
+        self.assertNotIn('avatar_cache_control', response.data)
 
     def test_me_accepts_jwt_bearer_token(self):
         user = User.objects.create_user(
@@ -405,8 +407,8 @@ class AccountsAPITests(TestCase):
         self.assertEqual(response.data['profession'], 'Advogado')
         self.assertEqual(response.data['avatar_url'], 'https://example.com/avatar.jpg')
         self.assertEqual(response.data['avatar_source'], 'remote_url')
-        self.assertIsNone(response.data['avatar_storage_key'])
-        self.assertEqual(response.data['avatar_storage_backend'], 'external_url')
+        self.assertNotIn('avatar_storage_key', response.data)
+        self.assertNotIn('avatar_storage_backend', response.data)
 
     def test_me_patch_rejects_avatar_url_with_unsupported_scheme(self):
         user = User.objects.create_user(
@@ -467,9 +469,9 @@ class AccountsAPITests(TestCase):
                 self.assertIn('/media/avatars/', response.data['avatar_url'])
                 self.assertTrue(response.data['avatar_url'].startswith('http://testserver/media/avatars/'))
                 self.assertEqual(response.data['avatar_source'], 'upload')
-                self.assertEqual(response.data['avatar_storage_alias'], 'avatars')
-                self.assertEqual(response.data['avatar_storage_backend'], 'filesystem')
-                self.assertTrue(response.data['avatar_storage_key'].startswith('avatars/'))
+                self.assertNotIn('avatar_storage_alias', response.data)
+                self.assertNotIn('avatar_storage_backend', response.data)
+                self.assertNotIn('avatar_storage_key', response.data)
 
     def test_me_patch_rejects_avatar_with_invalid_type(self):
         user = User.objects.create_user(
@@ -1413,6 +1415,36 @@ class AccountsAPITests(TestCase):
         )
         self.assertEqual(replay.status_code, 401)
 
+    def test_auth_refresh_is_throttled(self):
+        cache.clear()
+        first_user = User.objects.create_user(
+            username='refresh-one@example.com',
+            email='refresh-one@example.com',
+            password='StrongPass123',
+        )
+        second_user = User.objects.create_user(
+            username='refresh-two@example.com',
+            email='refresh-two@example.com',
+            password='StrongPass123',
+        )
+        first_refresh = str(RefreshToken.for_user(first_user))
+        second_refresh = str(RefreshToken.for_user(second_user))
+
+        with mock.patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {'auth_refresh': '1/min'}):
+            first = self.client.post(
+                reverse('auth-refresh'),
+                {'refresh': first_refresh},
+                format='json',
+            )
+            second = self.client.post(
+                reverse('auth-refresh'),
+                {'refresh': second_refresh},
+                format='json',
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 429)
+
     def test_logout_requires_refresh_field(self):
         user = User.objects.create_user(
             username='user@example.com',
@@ -1705,15 +1737,16 @@ class NotificationTriggerTests(TestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
 
     def test_published_course_post_enqueues_notifications_for_professional_users_only(self):
-        course_post = CoursePost.objects.create(
-            title='Novo módulo',
-            slug='novo-modulo',
-            author_name='Equipe',
-            excerpt='Resumo do novo módulo',
-            content_rich='<p>Conteúdo do curso</p>',
-            post_type=CoursePost.PostType.LESSON,
-            status=PublicationStatus.PUBLISHED,
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            course_post = CoursePost.objects.create(
+                title='Novo módulo',
+                slug='novo-modulo',
+                author_name='Equipe',
+                excerpt='Resumo do novo módulo',
+                content_rich='<p>Conteúdo do curso</p>',
+                post_type=CoursePost.PostType.LESSON,
+                status=PublicationStatus.PUBLISHED,
+            )
 
         event = NotificationEvent.objects.get(dedup_key=f'course-post-published:{course_post.pk}')
         push_dispatches = {
@@ -1752,8 +1785,9 @@ class NotificationTriggerTests(TestCase):
         self.assertEqual(in_app_dispatches[self.professional_push_off_user.id].status, NotificationDispatch.Status.PENDING)
         self.assertNotIn(self.essential_user.id, push_dispatches)
 
-        course_post.excerpt = 'Resumo atualizado sem novo dispatch'
-        course_post.save()
+        with self.captureOnCommitCallbacks(execute=True):
+            course_post.excerpt = 'Resumo atualizado sem novo dispatch'
+            course_post.save()
 
         self.assertEqual(
             NotificationEvent.objects.filter(dedup_key=f'course-post-published:{course_post.pk}').count(),
@@ -1761,32 +1795,33 @@ class NotificationTriggerTests(TestCase):
         )
 
     def test_published_course_asset_and_live_event_enqueue_notifications(self):
-        course_post = CoursePost.objects.create(
-            title='Post base',
-            slug='post-base',
-            author_name='Equipe',
-            excerpt='Base',
-            content_rich='<p>Base</p>',
-            post_type=CoursePost.PostType.BLOG,
-            status=PublicationStatus.PUBLISHED,
-        )
-        course_asset = CourseAsset.objects.create(
-            post=course_post,
-            title='Checklist da aula',
-            description='Checklist operacional',
-            asset_type=CourseAsset.AssetType.CHECKLIST,
-            file_url='https://example.com/checklist.pdf',
-            status=PublicationStatus.PUBLISHED,
-        )
-        live_event = LiveEvent.objects.create(
-            post=course_post,
-            title='Mentoria ao vivo',
-            description='Tire dúvidas na mentoria.',
-            event_type=LiveEvent.EventType.MENTORING,
-            status=LiveEvent.Status.SCHEDULED,
-            starts_at=self.now + timedelta(days=2),
-            meeting_url='https://example.com/live',
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            course_post = CoursePost.objects.create(
+                title='Post base',
+                slug='post-base',
+                author_name='Equipe',
+                excerpt='Base',
+                content_rich='<p>Base</p>',
+                post_type=CoursePost.PostType.BLOG,
+                status=PublicationStatus.PUBLISHED,
+            )
+            course_asset = CourseAsset.objects.create(
+                post=course_post,
+                title='Checklist da aula',
+                description='Checklist operacional',
+                asset_type=CourseAsset.AssetType.CHECKLIST,
+                file_url='https://example.com/checklist.pdf',
+                status=PublicationStatus.PUBLISHED,
+            )
+            live_event = LiveEvent.objects.create(
+                post=course_post,
+                title='Mentoria ao vivo',
+                description='Tire dúvidas na mentoria.',
+                event_type=LiveEvent.EventType.MENTORING,
+                status=LiveEvent.Status.SCHEDULED,
+                starts_at=self.now + timedelta(days=2),
+                meeting_url='https://example.com/live',
+            )
 
         asset_event = NotificationEvent.objects.get(dedup_key=f'course-asset-published:{course_asset.pk}')
         live_event_notification = NotificationEvent.objects.get(dedup_key=f'course-live-announced:{live_event.pk}')

@@ -182,6 +182,7 @@ def build_media_reference(
     remote_url: str | None = '',
     request=None,
     storage_alias: str | None = None,
+    include_internal_metadata: bool = False,
 ) -> dict[str, str | None]:
     policies = getattr(settings, 'MEDIA_STORAGE_POLICIES', {}) or {}
     alias_policy = policies.get(storage_alias or '', {})
@@ -193,31 +194,51 @@ def build_media_reference(
         except Exception:
             resolved_url = ''
 
-        return {
+        reference = {
             'url': _absolute_url(resolved_url, request=request) or None,
-            'storage_key': str(upload_field.name),
             'source': 'upload',
-            'storage_alias': storage_alias,
-            'storage_backend': alias_policy.get('backend') or getattr(settings, 'MEDIA_STORAGE_PROVIDER', 'filesystem'),
-            'cache_control': alias_policy.get('cache_control', ''),
         }
+        if include_internal_metadata:
+            reference.update(
+                {
+                    'storage_key': str(upload_field.name),
+                    'storage_alias': storage_alias,
+                    'storage_backend': alias_policy.get('backend')
+                    or getattr(settings, 'MEDIA_STORAGE_PROVIDER', 'filesystem'),
+                    'cache_control': alias_policy.get('cache_control', ''),
+                }
+            )
+        return reference
 
     normalized_remote_url = (remote_url or '').strip()
     if normalized_remote_url:
-        return {
+        reference = {
             'url': _absolute_url(normalized_remote_url, request=request),
-            'storage_key': None,
             'source': 'remote_url',
-            'storage_alias': None,
-            'storage_backend': 'external_url',
-            'cache_control': '',
         }
+        if include_internal_metadata:
+            reference.update(
+                {
+                    'storage_key': None,
+                    'storage_alias': None,
+                    'storage_backend': 'external_url',
+                    'cache_control': '',
+                }
+            )
+        return reference
 
-    return {
+    reference = {
         'url': None,
-        'storage_key': None,
         'source': 'none',
-        'storage_alias': storage_alias,
-        'storage_backend': alias_policy.get('backend') or getattr(settings, 'MEDIA_STORAGE_PROVIDER', 'filesystem'),
-        'cache_control': alias_policy.get('cache_control', ''),
     }
+    if include_internal_metadata:
+        reference.update(
+            {
+                'storage_key': None,
+                'storage_alias': storage_alias,
+                'storage_backend': alias_policy.get('backend')
+                or getattr(settings, 'MEDIA_STORAGE_PROVIDER', 'filesystem'),
+                'cache_control': alias_policy.get('cache_control', ''),
+            }
+        )
+    return reference

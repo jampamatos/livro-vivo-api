@@ -57,10 +57,6 @@ class CourseAssetSerializer(serializers.ModelSerializer):
         )
         data['file_url'] = file_reference['url']
         data['file_source'] = file_reference['source']
-        data['file_storage_alias'] = file_reference['storage_alias']
-        data['file_storage_backend'] = file_reference['storage_backend']
-        data['file_storage_key'] = file_reference['storage_key']
-        data['file_cache_control'] = file_reference['cache_control']
         return data
 
     def validate_tags(self, value):

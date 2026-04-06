@@ -134,6 +134,18 @@ def enqueue_book_chapter_publication_notifications(
     )
 
 
+def schedule_book_version_publication_notifications(*, book_version: BookVersion) -> None:
+    transaction.on_commit(
+        lambda: enqueue_book_version_publication_notifications(book_version=book_version)
+    )
+
+
+def schedule_book_chapter_publication_notifications(*, book_chapter: BookChapter) -> None:
+    transaction.on_commit(
+        lambda: enqueue_book_chapter_publication_notifications(book_chapter=book_chapter)
+    )
+
+
 def create_preloaded_book_version(
     *,
     source_version: BookVersion,
@@ -191,6 +203,6 @@ def create_preloaded_book_version(
             if created_version.book.status != Book.Status.PUBLISHED:
                 created_version.book.status = Book.Status.PUBLISHED
                 created_version.book.save(update_fields=['status'])
-            enqueue_book_version_publication_notifications(book_version=created_version)
+            schedule_book_version_publication_notifications(book_version=created_version)
 
     return created_version
