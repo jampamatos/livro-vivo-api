@@ -726,7 +726,10 @@ class LibraryAdminTests(TestCase):
                 'order': 2,
                 'title': 'Introdução revisada',
                 'slug': 'introducao-revisada',
-                'content_rich': '<p onclick="alert(1)">Novo texto</p><script>alert("x")</script>',
+                'content_rich': (
+                    '<p onclick="alert(1)">Novo texto<sup>1</sup> e H<sub>2</sub>O</p>'
+                    '<script>alert("x")</script>'
+                ),
                 '_save': 'Save',
             },
             follow=True,
@@ -737,8 +740,8 @@ class LibraryAdminTests(TestCase):
         self.assertEqual(self.chapter.order, 2)
         self.assertEqual(self.chapter.title, 'Introdução revisada')
         self.assertEqual(self.chapter.slug, 'introducao-revisada')
-        self.assertEqual(self.chapter.content_rich, '<p>Novo texto</p>')
-        self.assertEqual(self.chapter.content_plain, 'Novo texto')
+        self.assertEqual(self.chapter.content_rich, '<p>Novo texto<sup>1</sup> e H<sub>2</sub>O</p>')
+        self.assertEqual(self.chapter.content_plain, 'Novo texto 1 e H 2 O')
 
     def test_book_chapter_admin_change_form_loads_rich_editor_assets(self):
         response = self.client.get(reverse('admin:library_bookchapter_change', args=[self.chapter.id]))
@@ -747,7 +750,7 @@ class LibraryAdminTests(TestCase):
         self.assertContains(response, 'library/admin/chapter_rich_editor.css')
         self.assertContains(response, 'tinymce/tinymce.min.js')
         self.assertContains(response, 'django_tinymce/init_tinymce.js')
-        self.assertContains(response, 'undo redo | blocks | bold italic underline')
+        self.assertContains(response, 'undo redo | blocks | bold italic underline superscript subscript')
         self.assertContains(response, 'min_height')
         self.assertContains(response, '&quot;width&quot;: &quot;100%&quot;')
         self.assertContains(response, 'style="width: 100%;"')
@@ -755,6 +758,7 @@ class LibraryAdminTests(TestCase):
         self.assertNotContains(response, 'lists link autoresize wordcount')
         self.assertContains(response, 'Tags permitidas:')
         self.assertContains(response, 'Tags permitidas: a, blockquote, br')
+        self.assertContains(response, 'sub, sup')
         self.assertContains(response, 'lv-rich-editor-preview')
 
     def test_book_version_changelist_uses_bulk_action_buttons_instead_of_dropdown(self):

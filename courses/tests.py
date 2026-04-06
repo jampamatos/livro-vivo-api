@@ -319,13 +319,14 @@ class CoursesAdminTests(TestCase):
         self.assertContains(response, 'library/admin/chapter_rich_editor.css')
         self.assertContains(response, 'tinymce/tinymce.min.js')
         self.assertContains(response, 'django_tinymce/init_tinymce.js')
-        self.assertContains(response, 'undo redo | blocks | bold italic underline')
+        self.assertContains(response, 'undo redo | blocks | bold italic underline superscript subscript')
         self.assertContains(response, 'min_height')
         self.assertContains(response, '&quot;width&quot;: &quot;100%&quot;')
         self.assertContains(response, 'style="width: 100%;"')
         self.assertContains(response, 'lists link wordcount')
         self.assertNotContains(response, 'lists link autoresize wordcount')
         self.assertContains(response, 'Tags permitidas:')
+        self.assertContains(response, 'sub, sup')
         self.assertContains(response, 'lv-rich-editor-preview')
 
     def test_course_post_admin_save_sanitizes_content_and_keeps_formatting(self):
@@ -342,7 +343,7 @@ class CoursesAdminTests(TestCase):
                 'published_at': (timezone.now() - timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S'),
                 'content_rich': (
                     '<h2 onclick="alert(1)">Título</h2>'
-                    '<p>Texto <strong>formatado</strong> com '
+                    '<p>Texto <strong>formatado</strong><sup>1</sup> com H<sub>2</sub>O e '
                     '<a href="https://example.com" target="_blank">link</a>.</p>'
                     '<script>alert("xss")</script>'
                 ),
@@ -356,10 +357,12 @@ class CoursesAdminTests(TestCase):
         self.post.refresh_from_db()
         self.assertIn('<h2>Título</h2>', self.post.content_rich)
         self.assertIn('<strong>formatado</strong>', self.post.content_rich)
+        self.assertIn('<sup>1</sup>', self.post.content_rich)
+        self.assertIn('<sub>2</sub>', self.post.content_rich)
         self.assertIn('href="https://example.com"', self.post.content_rich)
         self.assertNotIn('<script', self.post.content_rich)
         self.assertNotIn('onclick', self.post.content_rich)
-        self.assertIn('Título Texto formatado com link', self.post.content_plain)
+        self.assertIn('Título Texto formatado 1 com H 2 O e link', self.post.content_plain)
 
     def test_live_event_admin_change_form_loads_rich_editor_assets(self):
         response = self.client.get(reverse('admin:courses_liveevent_change', args=[self.live_event.id]))
@@ -368,8 +371,9 @@ class CoursesAdminTests(TestCase):
         self.assertContains(response, 'library/admin/chapter_rich_editor.css')
         self.assertContains(response, 'tinymce/tinymce.min.js')
         self.assertContains(response, 'django_tinymce/init_tinymce.js')
-        self.assertContains(response, 'undo redo | blocks | bold italic underline')
+        self.assertContains(response, 'undo redo | blocks | bold italic underline superscript subscript')
         self.assertContains(response, 'Tags permitidas:')
+        self.assertContains(response, 'sub, sup')
         self.assertContains(response, 'lv-rich-editor-preview')
 
     def test_live_event_admin_save_sanitizes_description_and_keeps_formatting(self):
