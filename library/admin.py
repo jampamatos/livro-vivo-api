@@ -3,7 +3,7 @@ from django.contrib import admin
 from django.contrib import messages
 from django.contrib.admin.helpers import ActionForm
 from django.db import IntegrityError, transaction
-from django.db.models import Count
+from django.db.models import Count, Max
 from django.http import HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import path, reverse
@@ -877,6 +877,24 @@ class BookChapterAdmin(HierarchicalAdminMixin, admin.ModelAdmin):
             'book_version',
             'book_version__id__exact',
         )
+
+    def get_changeform_initial_data(self, request):
+        initial = super().get_changeform_initial_data(request)
+        version = self._get_book_version_from_request(request)
+        if not version:
+            return initial
+
+        if initial.get('book_version') in (None, ''):
+            initial['book_version'] = version.id
+
+        if initial.get('order') not in (None, ''):
+            return initial
+
+        last_order = (
+            version.chapters.aggregate(max_order=Max('order')).get('max_order')
+        )
+        initial['order'] = 1 if last_order is None else last_order + 1
+        return initial
 
     def has_module_permission(self, request):
         # A gestao de capitulos acontece pelo fluxo de Livro.

@@ -5,7 +5,7 @@ from django.urls import reverse
 
 from config import admin_navigation  # noqa: F401
 from courses.models import CourseAsset, CoursePost, PublicationStatus
-from library.models import Book, BookVersion
+from library.models import Book, BookChapter, BookVersion
 
 
 class AdminNavigationTests(TestCase):
@@ -217,6 +217,47 @@ class AdminNavigationTests(TestCase):
         )
 
         self.assertRedirects(response, reverse('admin:library_bookversion_change', args=[version.id]))
+
+    def test_book_chapter_add_prefills_version_and_next_order(self):
+        self.client.force_login(self.superuser)
+        book = Book.objects.create(title='Manual de Recursos')
+        version = BookVersion.objects.create(book=book, version='2026.04.06', changelog='Nova base editorial')
+        BookChapter.objects.create(
+            book_version=version,
+            order=6,
+            title='Capítulo anterior',
+            slug='capitulo-anterior',
+            content_rich='<p>Texto anterior</p>',
+        )
+
+        response = self.client.get(f"{reverse('admin:library_bookchapter_add')}?book_version={version.id}")
+
+        self.assertEqual(response.status_code, 200)
+        form = response.context['adminform'].form
+        self.assertEqual(int(form['book_version'].value()), version.id)
+        self.assertEqual(int(form['order'].value()), 7)
+
+    def test_book_chapter_add_prefills_from_preserved_changelist_filters(self):
+        self.client.force_login(self.superuser)
+        book = Book.objects.create(title='Curso de Execução')
+        version = BookVersion.objects.create(book=book, version='2026.04.06', changelog='Nova base editorial')
+        BookChapter.objects.create(
+            book_version=version,
+            order=3,
+            title='Capítulo anterior',
+            slug='capitulo-anterior',
+            content_rich='<p>Texto anterior</p>',
+        )
+
+        response = self.client.get(
+            reverse('admin:library_bookchapter_add'),
+            {'_changelist_filters': f'book_version__id__exact={version.id}'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        form = response.context['adminform'].form
+        self.assertEqual(int(form['book_version'].value()), version.id)
+        self.assertEqual(int(form['order'].value()), 4)
 
     def test_course_asset_add_redirects_back_to_course_post_change(self):
         self.client.force_login(self.superuser)

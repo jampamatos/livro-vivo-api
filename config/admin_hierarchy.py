@@ -3,6 +3,7 @@ from __future__ import annotations
 from urllib.parse import urlencode
 
 from django.contrib.admin.options import IS_POPUP_VAR
+from django.http import QueryDict
 from django.urls import reverse
 
 from .admin_labels import install_admin_labels
@@ -36,8 +37,16 @@ def get_admin_action(request) -> str:
     return ''
 
 
-def first_request_value(request, *keys: str) -> str | None:
+def _request_sources(request):
     for source in (request.GET, request.POST):
+        yield source
+        preserved_filters = (source.get('_changelist_filters') or '').strip()
+        if preserved_filters:
+            yield QueryDict(preserved_filters, mutable=False)
+
+
+def first_request_value(request, *keys: str) -> str | None:
+    for source in _request_sources(request):
         for key in keys:
             value = (source.get(key) or '').strip()
             if value:
