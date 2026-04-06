@@ -45,7 +45,7 @@ class AnnotationAdmin(admin.ModelAdmin):
         )
         groups = []
         for row in grouped:
-            label = row['user__email'] or row['user__username'] or f"Usuario #{row['user_id']}"
+            label = row['user__email'] or row['user__username'] or f"Usuário #{row['user_id']}"
             groups.append(
                 {
                     'user_id': row['user_id'],

@@ -65,10 +65,7 @@ class Subscription(models.Model):
         return True
 
     def __str__(self) -> str:
-        return (
-            f"Subscription(user_id={self.user_id}, tier={self.tier}, "
-            f"status={self.status}, founder={self.is_founder})"
-        )
+        return f'Assinatura de usuário #{self.user_id} ({self.get_tier_display()} · {self.get_status_display()})'
 
 
 class Entitlement(models.Model):
@@ -131,5 +128,7 @@ class Entitlement(models.Model):
         return self.expires_at > timezone.now()
 
     def __str__(self) -> str:
-        return (f"Entitlement(user_id={self.user_id}, product={self.product}, "
-                f"book_id={self.book_id}, status={self.status})")
+        return (
+            f'Direito de acesso #{self.pk or "novo"} '
+            f'({self.get_product_display()} · {self.get_status_display()})'
+        )

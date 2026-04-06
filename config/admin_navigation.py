@@ -7,6 +7,8 @@ from urllib.parse import parse_qsl
 from django.contrib import admin
 from django.urls import reverse
 
+from .admin_labels import install_admin_labels
+
 
 _ORIGINAL_GET_APP_LIST = admin.AdminSite.get_app_list
 
@@ -17,21 +19,21 @@ _NAV_GROUPS = (
         'entries': (
             {
                 'source': ('community', 'Report'),
-                'name': 'Fila de reports abertos',
+                'name': 'Fila de denúncias abertas',
                 'query': 'status__exact=open',
                 'duplicate': True,
                 'hide_add': True,
             },
             {
                 'source': ('templates_bank', 'TemplatePiece'),
-                'name': 'Pecas juridicas em rascunho',
+                'name': 'Peças jurídicas em rascunho',
                 'query': 'status__exact=draft',
                 'duplicate': True,
                 'hide_add': True,
             },
             {
                 'source': ('accounts', 'DataPrivacyRequest'),
-                'name': 'Solicitacoes de privacidade pendentes',
+                'name': 'Solicitações de privacidade pendentes',
                 'query': 'status__exact=requested',
                 'duplicate': True,
                 'hide_add': True,
@@ -39,20 +41,25 @@ _NAV_GROUPS = (
         ),
     },
     {
-        'app_label': 'livros_publicacoes',
-        'name': 'Livros e publicacoes',
+        'app_label': 'biblioteca',
+        'name': 'Biblioteca',
         'entries': (
-            {'source': ('library', 'Book'), 'name': 'Catalogo de livros'},
-            {'source': ('library', 'BookChapter'), 'name': 'Capitulos do livro'},
-            {'source': ('annotations', 'Annotation'), 'name': 'Anotacoes de leitura'},
+            {'source': ('library', 'Book'), 'name': 'Livros'},
+            {'source': ('annotations', 'Annotation'), 'name': 'Anotações de leitura'},
         ),
     },
     {
-        'app_label': 'conteudo_juridico',
-        'name': 'Conteudo juridico',
+        'app_label': 'curso',
+        'name': 'Curso',
         'entries': (
-            {'source': ('templates_bank', 'TemplatePiece'), 'name': 'Pecas juridicas'},
-            {'source': ('caselaw', 'CaseLaw'), 'name': 'Jurisprudencia'},
+            {'source': ('courses', 'CoursePost'), 'name': 'Posts do curso'},
+        ),
+    },
+    {
+        'app_label': 'jurisprudencia',
+        'name': 'Jurisprudência',
+        'entries': (
+            {'source': ('caselaw', 'CaseLaw'), 'name': 'Jurisprudência'},
         ),
     },
     {
@@ -64,49 +71,48 @@ _NAV_GROUPS = (
     },
     {
         'app_label': 'moderacao_comunidade',
-        'name': 'Moderacao da comunidade',
+        'name': 'Moderação da comunidade',
         'entries': (
-            {'source': ('community', 'Report'), 'name': 'Fila de reports'},
-            {'source': ('community', 'ReportModerationAction'), 'name': 'Acoes de moderacao'},
-            {'source': ('community', 'UserModerationStatus'), 'name': 'Status de moderacao de usuarios'},
-            {'source': ('community', 'UserModerationEvent'), 'name': 'Eventos de moderacao de usuarios'},
-            {'source': ('community', 'ModerationConfig'), 'name': 'Configuracoes de moderacao'},
+            {'source': ('community', 'Report'), 'name': 'Fila de denúncias'},
+            {'source': ('community', 'ReportModerationAction'), 'name': 'Ações de moderação'},
+            {'source': ('community', 'UserModerationStatus'), 'name': 'Status de moderação de usuários'},
+            {'source': ('community', 'UserModerationEvent'), 'name': 'Eventos de moderação de usuários'},
+            {'source': ('community', 'ModerationConfig'), 'name': 'Configurações de moderação'},
         ),
     },
     {
-        'app_label': 'usuarios_assinaturas_notificacoes',
-        'name': 'Usuarios, assinaturas e notificacoes',
+        'app_label': 'banco_de_pecas',
+        'name': 'Banco de peças',
         'entries': (
-            {'source': ('accounts', 'Profile'), 'name': 'Perfis de usuarios'},
-            {'source': ('entitlements', 'Subscription'), 'name': 'Assinaturas'},
-            {'source': ('entitlements', 'Entitlement'), 'name': 'Entitlements'},
-            {'source': ('accounts', 'NotificationPreference'), 'name': 'Preferencias de notificacao'},
-            {'source': ('accounts', 'NotificationEvent'), 'name': 'Eventos de notificacao'},
-            {'source': ('accounts', 'NotificationDispatch'), 'name': 'Envios de notificacao'},
-            {'source': ('accounts', 'PushDevice'), 'name': 'Dispositivos push'},
+            {'source': ('templates_bank', 'TemplatePiece'), 'name': 'Peças jurídicas'},
+        ),
+    },
+    {
+        'app_label': 'usuarios_assinaturas',
+        'name': 'Usuários e assinaturas',
+        'entries': (
+            {'source': ('accounts', 'Profile'), 'name': 'Perfis de usuários'},
+        ),
+    },
+    {
+        'app_label': 'notificacoes',
+        'name': 'Notificações',
+        'entries': (
+            {'source': ('accounts', 'NotificationEvent'), 'name': 'Eventos de notificação'},
         ),
     },
     {
         'app_label': 'privacidade_compliance',
         'name': 'Privacidade e compliance',
         'entries': (
-            {'source': ('accounts', 'DataPrivacyRequest'), 'name': 'Solicitacoes de privacidade'},
-        ),
-    },
-    {
-        'app_label': 'cursos_eventos',
-        'name': 'Cursos e eventos',
-        'entries': (
-            {'source': ('courses', 'CoursePost'), 'name': 'Posts de curso'},
-            {'source': ('courses', 'CourseAsset'), 'name': 'Materiais de curso'},
-            {'source': ('courses', 'LiveEvent'), 'name': 'Lives e eventos'},
+            {'source': ('accounts', 'DataPrivacyRequest'), 'name': 'Solicitações de privacidade'},
         ),
     },
     {
         'app_label': 'acesso_sistema',
         'name': 'Acesso do sistema',
         'entries': (
-            {'source': ('auth', 'User'), 'name': 'Usuarios de acesso'},
+            {'source': ('auth', 'User'), 'name': 'Usuários de acesso'},
             {'source': ('auth', 'Group'), 'name': 'Grupos de acesso'},
             {'source': ('token_blacklist', 'OutstandingToken'), 'name': 'Tokens ativos'},
             {'source': ('token_blacklist', 'BlacklistedToken'), 'name': 'Tokens bloqueados'},
@@ -116,23 +122,33 @@ _NAV_GROUPS = (
 
 _FALLBACK_APP_NAME_OVERRIDES = {
     'accounts': 'Contas',
-    'annotations': 'Anotacoes',
+    'annotations': 'Anotações',
     'auth': 'Acesso',
-    'caselaw': 'Jurisprudencia',
+    'caselaw': 'Jurisprudência',
     'community': 'Comunidade',
     'courses': 'Cursos',
     'entitlements': 'Assinaturas',
     'library': 'Biblioteca',
-    'templates_bank': 'Banco de pecas',
-    'token_blacklist': 'Seguranca',
+    'templates_bank': 'Banco de peças',
+    'token_blacklist': 'Segurança',
 }
 
 _HIDDEN_FROM_MENU_MODELS = {
     # Fluxo de versoes fica centralizado dentro de "Catalogo de livros".
     ('library', 'BookVersion'),
+    ('library', 'BookChapter'),
+    # Fluxo de curso fica centralizado via "Posts do curso".
+    ('courses', 'CourseAsset'),
+    ('courses', 'LiveEvent'),
     # Fluxo de comunidade fica centralizado via "Categorias da comunidade".
     ('community', 'Post'),
     ('community', 'Comment'),
+    # Fluxo de usuario/notificacao fica centralizado via "Perfis de usuarios" e "Eventos de notificacao".
+    ('accounts', 'NotificationPreference'),
+    ('accounts', 'NotificationDispatch'),
+    ('accounts', 'PushDevice'),
+    ('entitlements', 'Subscription'),
+    ('entitlements', 'Entitlement'),
 }
 
 _ADMIN_MODEL_URL_NAME_RE = re.compile(
@@ -209,6 +225,19 @@ def _get_registered_model(app_label: str, model_name: str):
     return None
 
 
+def _coerce_navigation_path(path: list[dict] | None) -> list[dict] | None:
+    if not path:
+        return None
+
+    normalized = []
+    for item in path:
+        label = (item or {}).get('label')
+        if not label:
+            continue
+        normalized.append({'label': label, 'url': (item or {}).get('url')})
+    return normalized or None
+
+
 def _get_object_label(model, object_id: str | None) -> str | None:
     if not model or not object_id:
         return None
@@ -253,8 +282,15 @@ def get_admin_navigation_path(request) -> list[dict]:
     action = model_match.group('action')
     query_string = _navigation_query_string(request, action)
 
-    nav_entry = _pick_nav_entry(app_label, model_name, query_string)
     model = _get_registered_model(app_label, model_name)
+    model_admin = admin.site._registry.get(model) if model else None
+    custom_path_builder = getattr(model_admin, 'get_lv_navigation_path', None)
+    if callable(custom_path_builder):
+        custom_path = _coerce_navigation_path(custom_path_builder(request))
+        if custom_path:
+            return custom_path
+
+    nav_entry = _pick_nav_entry(app_label, model_name, query_string)
     changelist_url = None
     if nav_entry:
         group_source_app, group_source_model = nav_entry['group_source']
@@ -377,9 +413,10 @@ def install_admin_navigation():
     admin.AdminSite.get_app_list = _grouped_get_app_list
     admin.AdminSite._lv_grouped_navigation_installed = True
 
-    admin.site.site_header = 'Livro Vivo - Operacao administrativa'
-    admin.site.site_title = 'Livro Vivo Admin'
+    admin.site.site_header = 'Livro Vivo - Operação administrativa'
+    admin.site.site_title = 'Admin do Livro Vivo'
     admin.site.index_title = 'Jornadas operacionais'
 
 
+install_admin_labels()
 install_admin_navigation()

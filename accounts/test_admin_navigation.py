@@ -4,7 +4,8 @@ from django.test import Client, RequestFactory, TestCase
 from django.urls import reverse
 
 from config import admin_navigation  # noqa: F401
-from library.models import Book
+from courses.models import CourseAsset, CoursePost, PublicationStatus
+from library.models import Book, BookVersion
 
 
 class AdminNavigationTests(TestCase):
@@ -30,29 +31,39 @@ class AdminNavigationTests(TestCase):
 
         self.assertGreaterEqual(len(app_names), 5)
         self.assertEqual(
-            app_names[:5],
+            app_names[:6],
             [
                 'Painel operacional',
-                'Livros e publicacoes',
-                'Conteudo juridico',
+                'Biblioteca',
+                'Curso',
+                'Jurisprudência',
                 'Comunidade',
-                'Moderacao da comunidade',
+                'Moderação da comunidade',
             ],
         )
-        self.assertIn('Usuarios, assinaturas e notificacoes', app_names)
+        self.assertIn('Banco de peças', app_names)
+        self.assertIn('Usuários e assinaturas', app_names)
+        self.assertIn('Notificações', app_names)
         self.assertIn('Privacidade e compliance', app_names)
-        self.assertNotIn('Versoes do livro', model_names)
+        self.assertNotIn('Versões do livro', model_names)
         self.assertNotIn('Posts da comunidade', model_names)
-        self.assertNotIn('Comentarios da comunidade', model_names)
+        self.assertNotIn('Comentários da comunidade', model_names)
+        self.assertNotIn('Materiais de curso', model_names)
+        self.assertNotIn('Lives e eventos', model_names)
+        self.assertNotIn('Preferências de notificação', model_names)
+        self.assertNotIn('Envios de notificação', model_names)
+        self.assertNotIn('Dispositivos push', model_names)
+        self.assertNotIn('Assinaturas', model_names)
+        self.assertNotIn('Direitos de acesso', model_names)
 
     def test_operational_panel_shortcuts_use_prefiltered_links(self):
         app_list = self._get_app_list_for_user(self.superuser)
         self.assertEqual(app_list[0]['name'], 'Painel operacional')
 
         shortcuts = {item['name']: item['admin_url'] for item in app_list[0]['models']}
-        self.assertIn('status__exact=open', shortcuts['Fila de reports abertos'])
-        self.assertIn('status__exact=draft', shortcuts['Pecas juridicas em rascunho'])
-        self.assertIn('status__exact=requested', shortcuts['Solicitacoes de privacidade pendentes'])
+        self.assertIn('status__exact=open', shortcuts['Fila de denúncias abertas'])
+        self.assertIn('status__exact=draft', shortcuts['Peças jurídicas em rascunho'])
+        self.assertIn('status__exact=requested', shortcuts['Solicitações de privacidade pendentes'])
 
     def test_admin_index_renders_new_groups(self):
         self.client.force_login(self.superuser)
@@ -60,15 +71,19 @@ class AdminNavigationTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Painel operacional')
-        self.assertContains(response, 'Livros e publicacoes')
-        self.assertContains(response, 'Conteudo juridico')
+        self.assertContains(response, 'Biblioteca')
+        self.assertContains(response, 'Curso')
+        self.assertContains(response, 'Jurisprudência')
         self.assertContains(response, 'Comunidade')
-        self.assertContains(response, 'Moderacao da comunidade')
-        self.assertContains(response, 'Usuarios, assinaturas e notificacoes')
+        self.assertContains(response, 'Moderação da comunidade')
+        self.assertContains(response, 'Banco de peças')
+        self.assertContains(response, 'Usuários e assinaturas')
+        self.assertContains(response, 'Notificações')
         self.assertContains(response, 'Privacidade e compliance')
-        self.assertNotContains(response, 'Comunidade e moderacao')
-        self.assertNotContains(response, '>Versoes do livro<', html=False)
-        self.assertNotContains(response, '>Versoes do livro em rascunho<', html=False)
+        self.assertNotContains(response, 'Livros e publicacoes')
+        self.assertNotContains(response, 'Cursos e eventos')
+        self.assertNotContains(response, '>Versões do livro<', html=False)
+        self.assertNotContains(response, '>Versões do livro em rascunho<', html=False)
 
     def test_non_staff_user_keeps_empty_admin_navigation(self):
         User = get_user_model()
@@ -86,9 +101,9 @@ class AdminNavigationTests(TestCase):
         response = self.client.get(reverse('admin:library_book_changelist'))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Voce esta em:')
-        self.assertContains(response, 'Livros e publicacoes')
-        self.assertContains(response, 'Catalogo de livros')
+        self.assertContains(response, 'Você está em:')
+        self.assertContains(response, 'Biblioteca')
+        self.assertContains(response, 'Livros')
         path = response.context['lv_navigation_path']
         self.assertEqual(path[0]['url'], reverse('admin:library_book_changelist'))
         self.assertEqual(path[1]['url'], reverse('admin:library_book_changelist'))
@@ -98,9 +113,9 @@ class AdminNavigationTests(TestCase):
         response = self.client.get(f"{reverse('admin:community_report_changelist')}?status__exact=open")
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Voce esta em:')
+        self.assertContains(response, 'Você está em:')
         self.assertContains(response, 'Painel operacional')
-        self.assertContains(response, 'Fila de reports abertos')
+        self.assertContains(response, 'Fila de denúncias abertas')
         path = response.context['lv_navigation_path']
         self.assertIn('status__exact=open', path[0]['url'])
         self.assertIn('status__exact=open', path[1]['url'])
@@ -110,9 +125,9 @@ class AdminNavigationTests(TestCase):
         response = self.client.get(reverse('admin:community_report_changelist'))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Voce esta em:')
-        self.assertContains(response, 'Moderacao da comunidade')
-        self.assertContains(response, 'Fila de reports')
+        self.assertContains(response, 'Você está em:')
+        self.assertContains(response, 'Moderação da comunidade')
+        self.assertContains(response, 'Fila de denúncias')
         path = response.context['lv_navigation_path']
         self.assertEqual(path[0]['url'], reverse('admin:community_report_changelist'))
         self.assertEqual(path[1]['url'], reverse('admin:community_report_changelist'))
@@ -124,9 +139,9 @@ class AdminNavigationTests(TestCase):
         response = self.client.get(reverse('admin:library_book_change', args=[book.id]))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Voce esta em:')
-        self.assertContains(response, 'Livros e publicacoes')
-        self.assertContains(response, 'Catalogo de livros')
+        self.assertContains(response, 'Você está em:')
+        self.assertContains(response, 'Biblioteca')
+        self.assertContains(response, 'Livros')
         self.assertContains(response, 'Curso de Processo Civil')
         path = response.context['lv_navigation_path']
         self.assertEqual(path[0]['url'], reverse('admin:library_book_changelist'))
@@ -139,9 +154,9 @@ class AdminNavigationTests(TestCase):
         response = self.client.get(reverse('admin:library_book_history', args=[book.id]))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Voce esta em:')
-        self.assertContains(response, 'Livros e publicacoes')
-        self.assertContains(response, 'Catalogo de livros')
+        self.assertContains(response, 'Você está em:')
+        self.assertContains(response, 'Biblioteca')
+        self.assertContains(response, 'Livros')
         self.assertContains(response, 'Manual de Direito Penal')
         path = response.context['lv_navigation_path']
         self.assertEqual(path[0]['url'], reverse('admin:library_book_changelist'))
@@ -154,10 +169,81 @@ class AdminNavigationTests(TestCase):
         response = self.client.get(reverse('admin:library_book_delete', args=[book.id]))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Voce esta em:')
-        self.assertContains(response, 'Livros e publicacoes')
-        self.assertContains(response, 'Catalogo de livros')
+        self.assertContains(response, 'Você está em:')
+        self.assertContains(response, 'Biblioteca')
+        self.assertContains(response, 'Livros')
         self.assertContains(response, 'Direito Tributario Essencial')
         path = response.context['lv_navigation_path']
         self.assertEqual(path[0]['url'], reverse('admin:library_book_changelist'))
         self.assertEqual(path[1]['url'], reverse('admin:library_book_changelist'))
+
+    def test_book_version_add_redirects_back_to_book_change(self):
+        self.client.force_login(self.superuser)
+        book = Book.objects.create(title='Curso de Responsabilidade Civil')
+
+        response = self.client.post(
+            f"{reverse('admin:library_bookversion_add')}?book={book.id}",
+            {
+                'book': str(book.id),
+                'version': '2026.04.06',
+                'changelog': 'Versao inicial',
+                'status': 'draft',
+                'chapters-TOTAL_FORMS': '0',
+                'chapters-INITIAL_FORMS': '0',
+                'chapters-MIN_NUM_FORMS': '0',
+                'chapters-MAX_NUM_FORMS': '1000',
+                '_save': 'Salvar',
+            },
+        )
+
+        self.assertRedirects(response, reverse('admin:library_book_change', args=[book.id]))
+        self.assertTrue(BookVersion.objects.filter(book=book, version='2026.04.06').exists())
+
+    def test_book_chapter_add_redirects_back_to_version_change(self):
+        self.client.force_login(self.superuser)
+        book = Book.objects.create(title='Tratado de Contratos')
+        version = BookVersion.objects.create(book=book, version='2026.04.06', changelog='Nova base editorial')
+
+        response = self.client.post(
+            f"{reverse('admin:library_bookchapter_add')}?book_version={version.id}",
+            {
+                'book_version': str(version.id),
+                'order': '1',
+                'title': 'Introducao',
+                'slug': 'introducao',
+                'content_rich': '<p>Capitulo inicial</p>',
+                '_save': 'Salvar',
+            },
+        )
+
+        self.assertRedirects(response, reverse('admin:library_bookversion_change', args=[version.id]))
+
+    def test_course_asset_add_redirects_back_to_course_post_change(self):
+        self.client.force_login(self.superuser)
+        post = CoursePost.objects.create(
+            title='Post do curso',
+            slug='post-do-curso',
+            author_name='Equipe',
+            excerpt='Resumo',
+            content_rich='<p>Conteudo</p>',
+            post_type=CoursePost.PostType.LESSON,
+            tags=['curso'],
+            status=PublicationStatus.DRAFT,
+        )
+
+        response = self.client.post(
+            f"{reverse('admin:courses_courseasset_add')}?post={post.id}",
+            {
+                'post': str(post.id),
+                'title': 'Checklist da aula',
+                'description': 'Material complementar',
+                'asset_type': CourseAsset.AssetType.CHECKLIST,
+                'tags': '["curso"]',
+                'status': PublicationStatus.DRAFT,
+                'file_url': 'https://example.com/checklist.pdf',
+                '_save': 'Salvar',
+            },
+        )
+
+        self.assertRedirects(response, reverse('admin:courses_coursepost_change', args=[post.id]))
+        self.assertTrue(CourseAsset.objects.filter(post=post, title='Checklist da aula').exists())

@@ -54,7 +54,7 @@ class CoursePost(models.Model):
         ordering = ['-published_at', '-updated_at', '-created_at']
 
     def __str__(self) -> str:
-        return f'{self.title} ({self.status})'
+        return f'{self.title} ({self.get_status_display()})'
 
     def save(self, *args, **kwargs):
         previous_status = None
@@ -109,7 +109,7 @@ class CourseAsset(models.Model):
         ordering = ['-published_at', '-updated_at', '-created_at']
 
     def __str__(self) -> str:
-        return f'{self.title} ({self.asset_type})'
+        return f'{self.title} ({self.get_asset_type_display()})'
 
     def save(self, *args, **kwargs):
         previous_status = None
@@ -166,7 +166,7 @@ class LiveEvent(models.Model):
         ordering = ['-starts_at', '-updated_at', '-created_at']
 
     def __str__(self) -> str:
-        return f'{self.title} ({self.status})'
+        return f'{self.title} ({self.get_status_display()})'
 
     def save(self, *args, **kwargs):
         previous_status = None

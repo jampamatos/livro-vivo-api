@@ -183,7 +183,7 @@ class Comment(models.Model):
         ]
     
     def __str__(self) -> str:
-        return f"Comment #{self.pk} on Post #{self.post_id}"
+        return f'Comentário #{self.pk} no post #{self.post_id}'
 
 
 class CommentLike(models.Model):
@@ -413,8 +413,8 @@ class Report(models.Model):
         return True
     
     def __str__(self) -> str:
-        target = f"Post #{self.post_id}" if self.post else f"Comment #{self.comment_id}"
-        return f"Report #{self.pk} ({self.status}) - {target}"
+        target = f"Post #{self.post_id}" if self.post else f"Comentário #{self.comment_id}"
+        return f'Denúncia #{self.pk} ({self.get_status_display()}) - {target}'
 
 
 class ReportModerationAction(models.Model):
@@ -452,7 +452,7 @@ class ReportModerationAction(models.Model):
         ordering = ['-created_at']
 
     def __str__(self) -> str:
-        return f'ReportAction #{self.pk} {self.action_type} for Report #{self.report_id}'
+        return f'Ação de moderação #{self.pk} ({self.get_action_type_display()})'
 
 
 class ModerationConfig(models.Model):
@@ -527,7 +527,7 @@ class ModerationConfig(models.Model):
         )
 
     def __str__(self) -> str:
-        return 'Moderation config'
+        return 'Configuração de moderação'
 
 
 class UserModerationStatus(models.Model):
@@ -580,7 +580,7 @@ class UserModerationStatus(models.Model):
         return status
 
     def __str__(self) -> str:
-        return f'UserModerationStatus(user_id={self.user_id}, warnings={self.warnings_issued}, banned={self.is_banned})'
+        return f'Status de moderação de usuário #{self.user_id}'
 
     def denies_community_access(self) -> bool:
         return bool(self.is_banned)
@@ -624,4 +624,4 @@ class UserModerationEvent(models.Model):
         ordering = ['-created_at']
 
     def __str__(self) -> str:
-        return f'UserModerationEvent #{self.pk} {self.action_type} user={self.user_id}'
+        return f'Evento de moderação #{self.pk} ({self.get_action_type_display()})'
