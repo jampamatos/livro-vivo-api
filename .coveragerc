@@ -1,0 +1,23 @@
+[run]
+branch = True
+source =
+    accounts
+    annotations
+    caselaw
+    community
+    config
+    courses
+    entitlements
+    library
+    templates_bank
+omit =
+    */migrations/*
+    */tests.py
+    */test_*.py
+    manage.py
+
+[report]
+show_missing = True
+skip_covered = False
+precision = 2
+fail_under = 78
