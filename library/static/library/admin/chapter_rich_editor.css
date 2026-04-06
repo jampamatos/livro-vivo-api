@@ -1,8 +1,38 @@
 /* TinyMCE container tweaks inside Django Admin form rows. */
 form .aligned .tox-tinymce {
-  max-width: 920px;
+  width: 100% !important;
+  max-width: none;
   border-color: var(--border-color);
   border-radius: 4px;
+}
+
+form .aligned .field-content_rich .flex-container,
+form .aligned .field-description .flex-container {
+  align-items: flex-start;
+}
+
+form .aligned .field-content_rich .flex-container > :not(label),
+form .aligned .field-description .flex-container > :not(label) {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+}
+
+form .aligned .field-content_rich,
+form .aligned .field-description {
+  max-width: none;
+}
+
+form .aligned .field-content_rich textarea,
+form .aligned .field-description textarea {
+  width: 100%;
+  max-width: none;
+}
+
+form .aligned .tox .tox-toolbar-overlord,
+form .aligned .tox .tox-toolbar__primary,
+form .aligned .tox .tox-menubar {
+  background: var(--body-bg);
 }
 
 form .aligned .tox .tox-statusbar {

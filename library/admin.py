@@ -36,12 +36,14 @@ from .services import (
 
 
 BOOK_CHAPTER_WORDLIKE_MCE_ATTRS = {
-    'height': 520,
+    'height': 680,
+    'min_height': 680,
+    'width': '100%',
     'menubar': False,
     'toolbar_mode': 'sliding',
     'branding': False,
     'browser_spellcheck': True,
-    'plugins': 'lists link autoresize wordcount',
+    'plugins': 'lists link wordcount',
     'toolbar': 'undo redo | blocks | bold italic underline | bullist numlist | link removeformat',
     'block_formats': 'Parágrafo=p;Título 2=h2;Título 3=h3;Citação=blockquote',
     'valid_elements': 'p,br,strong,em,u,ul,ol,li,blockquote,h2,h3,a[href|title|target|rel]',
@@ -49,6 +51,7 @@ BOOK_CHAPTER_WORDLIKE_MCE_ATTRS = {
     'forced_root_block': 'p',
     'convert_urls': False,
     'elementpath': True,
+    'resize': False,
     'content_style': (
         'body {'
         ' font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;'
@@ -101,6 +104,8 @@ class BookChapterAdminForm(forms.ModelForm):
             'content_rich': TinyMCE(
                 attrs={
                     'rows': 18,
+                    'cols': 120,
+                    'style': 'width: 100%;',
                     'class': 'vLargeTextField',
                 },
                 mce_attrs=BOOK_CHAPTER_WORDLIKE_MCE_ATTRS,
