@@ -71,6 +71,7 @@ Variaveis principais:
 - `DEBUG`: `true` | `false`
 - `DJANGO_SECRET_KEY`: obrigatoria em stage/prod
 - `DATABASE_URL`: obrigatoria em stage/prod
+- `DJANGO_OFFLINE_MIGRATION_CHECK`: em dev, usa SQLite local para `makemigrations --check --dry-run` e evita warnings quando o banco externo nao esta de pe
 - `DJANGO_ALLOWED_HOSTS`: obrigatoria em stage/prod
 - `DJANGO_CORS_ALLOWED_ORIGINS`: obrigatoria em stage/prod
 - `DJANGO_CSRF_TRUSTED_ORIGINS`: obrigatoria em stage/prod
@@ -205,6 +206,12 @@ Threshold global atual: `>= 78%`.
 
 ```bash
 python manage.py makemigrations --check --dry-run
+```
+
+Em desenvolvimento, esse comando usa fallback local de SQLite por padrao. Para validar contra o banco configurado em `DATABASE_URL`, rode com:
+
+```bash
+DJANGO_OFFLINE_MIGRATION_CHECK=false python manage.py makemigrations --check --dry-run
 ```
 
 ### Check de deploy (simulacao)

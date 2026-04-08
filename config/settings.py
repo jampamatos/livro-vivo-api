@@ -20,6 +20,7 @@ import os
 import sys
 
 from .logging import build_logging_config
+from .runtime import is_check_only_migration_command
 from .storage import (
     DEFAULT_MEDIA_PRIVATE_CACHE_CONTROL,
     DEFAULT_MEDIA_PUBLIC_CACHE_CONTROL,
@@ -55,6 +56,11 @@ DJANGO_ENV = os.getenv("DJANGO_ENV", "development").strip().lower()
 IS_PRODUCTION = DJANGO_ENV in {"prod", "production"}
 IS_STAGE = DJANGO_ENV in {"stage", "staging"}
 IS_TESTING = "test" in sys.argv
+OFFLINE_MIGRATION_CHECK = (
+    not (IS_PRODUCTION or IS_STAGE)
+    and env_bool("DJANGO_OFFLINE_MIGRATION_CHECK", default=True)
+    and is_check_only_migration_command()
+)
 APP_VERSION = (os.getenv("APP_VERSION") or "dev").strip()
 
 # SECURITY WARNING: don't run with debug turned on in production/stage!
@@ -144,19 +150,27 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-database_url = os.getenv("DATABASE_URL")
+database_url = None if OFFLINE_MIGRATION_CHECK else os.getenv("DATABASE_URL")
 if (IS_PRODUCTION or IS_STAGE) and not database_url:
     raise ImproperlyConfigured(
         "DATABASE_URL is required when DJANGO_ENV is stage/production."
     )
 
-DATABASES = {
-    'default': dj_database_url.config(
-        default=database_url or f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
-        conn_max_age=60,
-        conn_health_checks=True,
-    )
-}
+if OFFLINE_MIGRATION_CHECK:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': str(BASE_DIR / 'db.sqlite3'),
+        }
+    }
+else:
+    DATABASES = {
+        'default': dj_database_url.config(
+            default=database_url or f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+            conn_max_age=60,
+            conn_health_checks=True,
+        )
+    }
 
 cache_timeout_seconds = int(os.getenv('DJANGO_CACHE_TIMEOUT_SECONDS', '300'))
 redis_url = (os.getenv('REDIS_URL') or '').strip()
