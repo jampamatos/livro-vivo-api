@@ -13,9 +13,16 @@ from rest_framework.views import APIView
 from caselaw.models import CaseLaw
 from community.models import Post
 from community.services import user_is_banned_from_community
+from courses.models import (
+    CourseAsset,
+    CoursePost,
+    LiveEvent,
+    PublicationStatus as CoursePublicationStatus,
+)
 from entitlements.models import Subscription
 from entitlements.services import entitled_book_ids, get_effective_tier, user_has_subscription
 from library.models import Book, BookChapter, BookVersion
+from templates_bank.models import PublicationStatus as TemplatePublicationStatus, TemplatePiece
 
 from .serializers import GlobalSearchResultSerializer
 
@@ -70,6 +77,10 @@ def _to_sort_timestamp(value) -> int:
     if isinstance(value, date):
         return value.toordinal()
     return 0
+
+
+def _user_has_professional_module_access(user) -> bool:
+    return user.is_staff or get_effective_tier(user) == Subscription.Tier.PROFESSIONAL
 
 
 def _search_library(*, query: str, query_lower: str, user) -> list[dict]:
@@ -163,7 +174,7 @@ def _search_library(*, query: str, query_lower: str, user) -> list[dict]:
 
 
 def _search_caselaw(*, query: str, query_lower: str, user) -> list[dict]:
-    if not user.is_staff and get_effective_tier(user) != Subscription.Tier.PROFESSIONAL:
+    if not _user_has_professional_module_access(user):
         return []
 
     queryset = (
@@ -199,7 +210,7 @@ def _search_caselaw(*, query: str, query_lower: str, user) -> list[dict]:
 
         results.append(
             {
-                '_sort': (-score, 1, -_to_sort_timestamp(item.decision_date), -item.id),
+                '_sort': (-score, 5, -_to_sort_timestamp(item.decision_date), -item.id),
                 'type': 'caselaw',
                 'source': 'caselaw',
                 'title': f'{court} {case_number}'.strip(),
@@ -216,6 +227,280 @@ def _search_caselaw(*, query: str, query_lower: str, user) -> list[dict]:
                     'caselaw_id': item.id,
                     'court': item.court,
                     'decision_date': item.decision_date.isoformat(),
+                },
+            }
+        )
+
+    return results
+
+
+def _search_course_posts(*, query: str, query_lower: str, user) -> list[dict]:
+    if not _user_has_professional_module_access(user):
+        return []
+
+    queryset = (
+        CoursePost.objects.annotate(tags_text=Cast('tags', TextField()))
+        .filter(
+            Q(title__icontains=query)
+            | Q(author_name__icontains=query)
+            | Q(excerpt__icontains=query)
+            | Q(content_plain__icontains=query)
+            | Q(tags_text__icontains=query)
+        )
+    )
+    if not user.is_staff:
+        queryset = queryset.filter(status=CoursePublicationStatus.PUBLISHED)
+
+    posts = queryset.order_by('-published_at', '-updated_at', '-created_at', '-id')[:MAX_RESULTS_PER_SOURCE]
+
+    results: list[dict] = []
+    for post in posts:
+        title = post.title or ''
+        author_name = (post.author_name or '').strip()
+        excerpt = post.excerpt or ''
+        content_plain = post.content_plain or ''
+        tags_text = ' '.join(post.tags or [])
+
+        score = 0
+        if query_lower in title.lower():
+            score += 3
+        if author_name and query_lower in author_name.lower():
+            score += 2
+        if query_lower in excerpt.lower():
+            score += 2
+        if query_lower in content_plain.lower():
+            score += 1
+        if tags_text and query_lower in tags_text.lower():
+            score += 1
+        if score == 0:
+            score = 1
+
+        subtitle_parts = [post.get_post_type_display()]
+        if author_name:
+            subtitle_parts.append(author_name)
+        elif post.published_at:
+            subtitle_parts.append(post.published_at.date().isoformat())
+
+        results.append(
+            {
+                '_sort': (-score, 1, -_to_sort_timestamp(post.published_at or post.updated_at), -post.id),
+                'type': 'course_post',
+                'source': 'course',
+                'title': title,
+                'subtitle': ' · '.join(subtitle_parts),
+                'snippet': _extract_snippet(excerpt or content_plain, query),
+                'target': {
+                    'route': 'course',
+                    'params': {
+                        'post_id': post.id,
+                        'q': query,
+                    },
+                },
+                'metadata': {
+                    'post_id': post.id,
+                    'post_type': post.post_type,
+                },
+            }
+        )
+
+    return results
+
+
+def _search_course_assets(*, query: str, query_lower: str, user) -> list[dict]:
+    if not _user_has_professional_module_access(user):
+        return []
+
+    queryset = (
+        CourseAsset.objects.select_related('post')
+        .annotate(tags_text=Cast('tags', TextField()))
+        .filter(
+            Q(title__icontains=query)
+            | Q(description__icontains=query)
+            | Q(tags_text__icontains=query)
+            | Q(post__title__icontains=query)
+        )
+    )
+    if not user.is_staff:
+        queryset = queryset.filter(status=CoursePublicationStatus.PUBLISHED)
+
+    assets = queryset.order_by('-published_at', '-updated_at', '-created_at', '-id')[:MAX_RESULTS_PER_SOURCE]
+
+    results: list[dict] = []
+    for asset in assets:
+        title = asset.title or ''
+        description = asset.description or ''
+        related_post_title = asset.post.title if asset.post_id else ''
+        tags_text = ' '.join(asset.tags or [])
+
+        score = 0
+        if query_lower in title.lower():
+            score += 3
+        if related_post_title and query_lower in related_post_title.lower():
+            score += 2
+        if query_lower in description.lower():
+            score += 1
+        if tags_text and query_lower in tags_text.lower():
+            score += 1
+        if score == 0:
+            score = 1
+
+        subtitle_parts = ['Material', asset.get_asset_type_display()]
+        if related_post_title:
+            subtitle_parts.append(related_post_title)
+
+        results.append(
+            {
+                '_sort': (-score, 2, -_to_sort_timestamp(asset.published_at or asset.updated_at), -asset.id),
+                'type': 'course_asset',
+                'source': 'course',
+                'title': title,
+                'subtitle': ' · '.join(subtitle_parts),
+                'snippet': _extract_snippet(description or related_post_title, query),
+                'target': {
+                    'route': 'course',
+                    'params': {
+                        'asset_id': asset.id,
+                        'post_id': asset.post_id,
+                        'q': query,
+                    },
+                },
+                'metadata': {
+                    'asset_id': asset.id,
+                    'post_id': asset.post_id,
+                    'asset_type': asset.asset_type,
+                },
+            }
+        )
+
+    return results
+
+
+def _search_course_lives(*, query: str, query_lower: str, user) -> list[dict]:
+    if not _user_has_professional_module_access(user):
+        return []
+
+    queryset = (
+        LiveEvent.objects.select_related('post')
+        .filter(
+            Q(title__icontains=query)
+            | Q(description__icontains=query)
+            | Q(post__title__icontains=query)
+        )
+    )
+    if not user.is_staff:
+        queryset = queryset.filter(
+            status__in=[LiveEvent.Status.SCHEDULED, LiveEvent.Status.LIVE, LiveEvent.Status.FINISHED]
+        )
+
+    live_events = queryset.order_by('-starts_at', '-updated_at', '-created_at', '-id')[:MAX_RESULTS_PER_SOURCE]
+
+    results: list[dict] = []
+    for live_event in live_events:
+        title = live_event.title or ''
+        description = live_event.description or ''
+        related_post_title = live_event.post.title if live_event.post_id else ''
+
+        score = 0
+        if query_lower in title.lower():
+            score += 3
+        if related_post_title and query_lower in related_post_title.lower():
+            score += 2
+        if query_lower in description.lower():
+            score += 1
+        if score == 0:
+            score = 1
+
+        subtitle_parts = [live_event.get_event_type_display(), live_event.get_status_display()]
+        if live_event.starts_at:
+            subtitle_parts.append(live_event.starts_at.date().isoformat())
+
+        results.append(
+            {
+                '_sort': (-score, 3, -_to_sort_timestamp(live_event.starts_at), -live_event.id),
+                'type': 'course_live',
+                'source': 'course',
+                'title': title,
+                'subtitle': ' · '.join(subtitle_parts),
+                'snippet': _extract_snippet(description or related_post_title, query),
+                'target': {
+                    'route': 'course',
+                    'params': {
+                        'live_id': live_event.id,
+                        'post_id': live_event.post_id,
+                        'q': query,
+                    },
+                },
+                'metadata': {
+                    'live_id': live_event.id,
+                    'post_id': live_event.post_id,
+                    'status': live_event.status,
+                },
+            }
+        )
+
+    return results
+
+
+def _search_templates_bank(*, query: str, query_lower: str, user) -> list[dict]:
+    if not _user_has_professional_module_access(user):
+        return []
+
+    queryset = (
+        TemplatePiece.objects.annotate(tags_text=Cast('tags', TextField()))
+        .filter(
+            Q(title__icontains=query)
+            | Q(description__icontains=query)
+            | Q(template_code__icontains=query)
+            | Q(changelog__icontains=query)
+            | Q(tags_text__icontains=query)
+        )
+    )
+    if not user.is_staff:
+        queryset = queryset.filter(status=TemplatePublicationStatus.PUBLISHED)
+
+    pieces = queryset.order_by('-updated_at', '-published_at', '-created_at', '-id')[:MAX_RESULTS_PER_SOURCE]
+
+    results: list[dict] = []
+    for piece in pieces:
+        title = piece.title or ''
+        description = piece.description or ''
+        template_code = piece.template_code or ''
+        changelog = piece.changelog or ''
+        tags_text = ' '.join(piece.tags or [])
+
+        score = 0
+        if query_lower in title.lower():
+            score += 3
+        if template_code and query_lower in template_code.lower():
+            score += 2
+        if query_lower in description.lower():
+            score += 1
+        if changelog and query_lower in changelog.lower():
+            score += 1
+        if tags_text and query_lower in tags_text.lower():
+            score += 1
+        if score == 0:
+            score = 1
+
+        results.append(
+            {
+                '_sort': (-score, 4, -_to_sort_timestamp(piece.updated_at), -piece.id),
+                'type': 'template_piece',
+                'source': 'templates_bank',
+                'title': title,
+                'subtitle': f'Banco de peças · {piece.get_category_display()} · v{piece.version}',
+                'snippet': _extract_snippet(description or changelog or template_code, query),
+                'target': {
+                    'route': 'templatesBank',
+                    'params': {
+                        'template_id': piece.id,
+                        'q': query,
+                    },
+                },
+                'metadata': {
+                    'template_id': piece.id,
+                    'template_code': piece.template_code,
+                    'category': piece.category,
                 },
             }
         )
@@ -253,7 +538,7 @@ def _search_community(*, query: str, query_lower: str, user) -> list[dict]:
 
         results.append(
             {
-                '_sort': (-score, 2, -_to_sort_timestamp(post.updated_at), -post.id),
+                '_sort': (-score, 6, -_to_sort_timestamp(post.updated_at), -post.id),
                 'type': 'community_post',
                 'source': 'community',
                 'title': title,
@@ -303,6 +588,10 @@ class GlobalSearchView(APIView):
 
         combined_results = [
             *_search_library(query=query, query_lower=query_lower, user=request.user),
+            *_search_course_posts(query=query, query_lower=query_lower, user=request.user),
+            *_search_course_assets(query=query, query_lower=query_lower, user=request.user),
+            *_search_course_lives(query=query, query_lower=query_lower, user=request.user),
+            *_search_templates_bank(query=query, query_lower=query_lower, user=request.user),
             *_search_caselaw(query=query, query_lower=query_lower, user=request.user),
             *_search_community(query=query, query_lower=query_lower, user=request.user),
         ]

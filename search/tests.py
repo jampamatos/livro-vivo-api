@@ -2,6 +2,7 @@ from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APITestCase
@@ -9,8 +10,10 @@ from rest_framework.throttling import ScopedRateThrottle
 
 from caselaw.models import CaseLaw
 from community.models import Category, Post
+from courses.models import CourseAsset, CoursePost, LiveEvent, PublicationStatus as CoursePublicationStatus
 from entitlements.models import Subscription
 from library.models import Book, BookChapter, BookVersion
+from templates_bank.models import PublicationStatus as TemplatePublicationStatus, TemplatePiece
 
 
 User = get_user_model()
@@ -39,6 +42,14 @@ class GlobalSearchApiTests(APITestCase):
         params = (row.get('target') or {}).get('params') or {}
         if row_type == 'library_chapter':
             return f'library:{params.get("chapter_id")}'
+        if row_type == 'course_post':
+            return f'course-post:{params.get("post_id")}'
+        if row_type == 'course_asset':
+            return f'course-asset:{params.get("asset_id")}'
+        if row_type == 'course_live':
+            return f'course-live:{params.get("live_id")}'
+        if row_type == 'template_piece':
+            return f'template:{params.get("template_id")}'
         if row_type == 'caselaw':
             return f'caselaw:{params.get("caselaw_id")}'
         if row_type == 'community_post':
@@ -69,6 +80,52 @@ class GlobalSearchApiTests(APITestCase):
             content_rich='<p>Dano por extravio de bagagem em voo internacional.</p>',
         )
 
+        course_post = CoursePost.objects.create(
+            title='Bagagem no curso',
+            slug='bagagem-no-curso',
+            author_name='Equipe do curso',
+            excerpt='Visão prática sobre bagagem.',
+            content_rich='<p>Bagagem e extravio no material do curso.</p>',
+            post_type=CoursePost.PostType.BLOG,
+            status=CoursePublicationStatus.PUBLISHED,
+            published_at=timezone.now(),
+        )
+        CourseAsset.objects.create(
+            post=course_post,
+            title='Checklist de bagagem',
+            description='Material rápido de bagagem para alunos.',
+            asset_type=CourseAsset.AssetType.CHECKLIST,
+            file_url='https://example.com/assets/checklist-bagagem.pdf',
+            status=CoursePublicationStatus.PUBLISHED,
+            published_at=timezone.now(),
+        )
+        LiveEvent.objects.create(
+            post=course_post,
+            title='Live sobre bagagem',
+            description='Tira-dúvidas ao vivo sobre bagagem.',
+            event_type=LiveEvent.EventType.LIVE_CLASS,
+            status=LiveEvent.Status.SCHEDULED,
+            starts_at=timezone.now(),
+        )
+
+        TemplatePiece.objects.create(
+            title='Modelo de petição de bagagem',
+            slug='modelo-peticao-bagagem',
+            template_code='bagagem-peticao',
+            version='1.0.0',
+            changelog='Versão inicial sobre bagagem.',
+            description='Peça para litígios de bagagem.',
+            category=TemplatePiece.Category.PETITION,
+            tags=['bagagem'],
+            file_upload=SimpleUploadedFile(
+                'bagagem.docx',
+                b'conteudo do arquivo de bagagem',
+                content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            ),
+            status=TemplatePublicationStatus.PUBLISHED,
+            published_at=timezone.now(),
+        )
+
         CaseLaw.objects.create(
             court='STJ',
             case_number='REsp 1000/DF',
@@ -95,6 +152,10 @@ class GlobalSearchApiTests(APITestCase):
 
         result_types = {row['type'] for row in response.data['results']}
         self.assertIn('library_chapter', result_types)
+        self.assertIn('course_post', result_types)
+        self.assertIn('course_asset', result_types)
+        self.assertIn('course_live', result_types)
+        self.assertIn('template_piece', result_types)
         self.assertIn('caselaw', result_types)
         self.assertIn('community_post', result_types)
 
@@ -106,6 +167,16 @@ class GlobalSearchApiTests(APITestCase):
         self.assertEqual(library_target_params['q'], 'bagagem')
         self.assertIn('match_start', library_target_params)
         self.assertIn('match_end', library_target_params)
+
+        course_post_rows = [row for row in response.data['results'] if row['type'] == 'course_post']
+        self.assertGreaterEqual(len(course_post_rows), 1)
+        self.assertEqual(course_post_rows[0]['target']['route'], 'course')
+        self.assertEqual(course_post_rows[0]['target']['params']['post_id'], course_post.id)
+
+        template_rows = [row for row in response.data['results'] if row['type'] == 'template_piece']
+        self.assertGreaterEqual(len(template_rows), 1)
+        self.assertEqual(template_rows[0]['target']['route'], 'templatesBank')
+        self.assertEqual(template_rows[0]['target']['params']['q'], 'bagagem')
 
         for row in response.data['results']:
             self.assertIn('target', row)
@@ -148,6 +219,30 @@ class GlobalSearchApiTests(APITestCase):
         self._create_subscription(user, tier=Subscription.Tier.ESSENTIAL)
         self.client.force_authenticate(user=user)
 
+        CoursePost.objects.create(
+            title='Bagagem no curso essencial',
+            slug='bagagem-no-curso-essencial',
+            author_name='Equipe',
+            excerpt='Conteúdo do curso.',
+            content_rich='<p>Bagagem no curso.</p>',
+            status=CoursePublicationStatus.PUBLISHED,
+            published_at=timezone.now(),
+        )
+        TemplatePiece.objects.create(
+            title='Modelo de bagagem essencial',
+            slug='modelo-bagagem-essencial',
+            template_code='bagagem-essencial',
+            version='1.0.0',
+            description='Peça sobre bagagem.',
+            category=TemplatePiece.Category.PETITION,
+            file_upload=SimpleUploadedFile(
+                'bagagem-essencial.docx',
+                b'arquivo essencial',
+                content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            ),
+            status=TemplatePublicationStatus.PUBLISHED,
+            published_at=timezone.now(),
+        )
         CaseLaw.objects.create(
             court='STJ',
             case_number='REsp 2222/DF',
@@ -161,7 +256,12 @@ class GlobalSearchApiTests(APITestCase):
         response = self.client.get(reverse('global-search'), {'q': 'bagagem'})
 
         self.assertEqual(response.status_code, 200)
-        self.assertNotIn('caselaw', {row['type'] for row in response.data['results']})
+        result_types = {row['type'] for row in response.data['results']}
+        self.assertNotIn('caselaw', result_types)
+        self.assertNotIn('course_post', result_types)
+        self.assertNotIn('course_asset', result_types)
+        self.assertNotIn('course_live', result_types)
+        self.assertNotIn('template_piece', result_types)
 
     def test_global_search_allows_staff_without_subscription(self):
         staff = User.objects.create_superuser(
