@@ -182,6 +182,7 @@ class PushDevice(models.Model):
         related_name='push_devices',
     )
     platform = models.CharField(max_length=16, choices=Platform.choices)
+    installation_id = models.CharField(max_length=64, null=True, blank=True, unique=True)
     expo_push_token = models.CharField(max_length=255, unique=True)
     is_active = models.BooleanField(default=True)
     last_seen_at = models.DateTimeField(auto_now=True)

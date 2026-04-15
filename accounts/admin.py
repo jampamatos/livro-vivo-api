@@ -541,7 +541,7 @@ class PushDeviceAdmin(HierarchicalAdminMixin, admin.ModelAdmin):
     lv_request_initial_fields = {'user': ('user', 'user__id__exact')}
     list_display = ('user', 'platform', 'is_active', 'disabled_reason', 'last_seen_at', 'updated_at')
     list_filter = ('platform', 'is_active', 'updated_at')
-    search_fields = ('user__email', 'user__username', 'expo_push_token')
+    search_fields = ('user__email', 'user__username', 'installation_id', 'expo_push_token')
     readonly_fields = ('created_at', 'updated_at', 'last_seen_at')
     fieldsets = (
         (
@@ -550,6 +550,7 @@ class PushDeviceAdmin(HierarchicalAdminMixin, admin.ModelAdmin):
                 'fields': (
                     'user',
                     'platform',
+                    'installation_id',
                     'expo_push_token',
                     'is_active',
                     'disabled_reason',

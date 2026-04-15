@@ -334,7 +334,7 @@ Regra pratica:
 - `POST /me/notifications/<dispatch_id>/ack/`
 - `POST /me/notifications/in-app/consume-latest/`
 - `GET/PATCH /me/notification-preferences/`
-- `GET/POST/DELETE /me/push-devices/`
+- `GET/POST/DELETE /me/push-devices/` com `installation_id` estavel por instalacao para atualizar token push sem criar device duplicado a cada rotacao e expirar backlog push antigo no registro do device atual
 
 ### Biblioteca
 

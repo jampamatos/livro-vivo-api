@@ -267,6 +267,7 @@ def install_admin_labels() -> None:
         {
             'user': 'Usuário',
             'platform': 'Plataforma',
+            'installation_id': 'Identidade da instalação',
             'expo_push_token': 'Token Expo',
             'is_active': 'Ativo',
             'last_seen_at': 'Última atividade',
