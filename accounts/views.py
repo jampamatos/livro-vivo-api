@@ -1,6 +1,7 @@
 import logging
 
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError
 from django.utils import timezone
 
 from rest_framework import status
@@ -56,7 +57,11 @@ class RegisterView(APIView):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        user = serializer.save()
+        try:
+            user = serializer.save()
+        except IntegrityError:
+            logger.warning("auth_register_failed", extra={"reason": "registration_conflict"})
+            raise ValidationError({"detail": "Nao foi possivel concluir o cadastro com os dados informados."})
         profile, _ = Profile.objects.get_or_create(user=user)
         tokens = issue_tokens_for_user(user)
         logger.info("auth_register_success", extra={"user_id": user.id})

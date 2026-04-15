@@ -10,7 +10,7 @@ from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connections
-from django.test import Client, RequestFactory, TestCase
+from django.test import Client, RequestFactory, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -41,7 +41,7 @@ from .models import (
     Profile,
     PushDevice,
 )
-from .services import dispatch_pending_push_notifications
+from .services import dispatch_pending_push_notifications, enqueue_notification_event
 from .signals import cleanup_legacy_user_token_rows
 from .view_helpers import authenticate_user_by_email, serialize_user_payload
 from entitlements.models import Entitlement, Subscription
@@ -77,7 +77,7 @@ class AccountsAPITests(TestCase):
         refresh = RefreshToken(response.data['refresh'])
         self.assertEqual(int(refresh['user_id']), user.id)
 
-    def test_register_rejects_duplicate_email(self):
+    def test_register_duplicate_email_returns_generic_error(self):
         User.objects.create_user(
             username='test@example.com',
             email='test@example.com',
@@ -91,7 +91,11 @@ class AccountsAPITests(TestCase):
         response = self.client.post(reverse('auth-register'), payload, format='json')
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn('email', response.data)
+        self.assertNotIn('email', response.data)
+        self.assertEqual(
+            response.data['detail'],
+            'Nao foi possivel concluir o cadastro com os dados informados.',
+        )
 
     def test_register_rejects_weak_password(self):
         response = self.client.post(
@@ -432,7 +436,28 @@ class AccountsAPITests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn('avatar_url', response.data)
-        self.assertIn('HTTP ou HTTPS', str(response.data['avatar_url'][0]))
+        self.assertIn('HTTPS', str(response.data['avatar_url'][0]))
+
+    def test_me_patch_rejects_insecure_remote_http_avatar_url(self):
+        user = User.objects.create_user(
+            username='patch-avatar-url-http@example.com',
+            email='patch-avatar-url-http@example.com',
+            password='StrongPass123',
+        )
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.patch(
+            reverse('me'),
+            {
+                'avatar_url': 'http://example.com/avatar.jpg',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('avatar_url', response.data)
+        self.assertIn('HTTPS fora de ambiente local', str(response.data['avatar_url'][0]))
 
     def test_me_patch_accepts_avatar_upload_and_returns_absolute_url(self):
         user = User.objects.create_user(
@@ -2084,6 +2109,50 @@ class NotificationTriggerTests(TestCase):
 
 
 class NotificationDeliveryTests(TestCase):
+    def test_enqueue_notification_event_does_not_autodispatch_push_by_default(self):
+        user = User.objects.create_user(
+            username='pendingpush@example.com',
+            email='pendingpush@example.com',
+            password='StrongPass123',
+        )
+
+        with mock.patch('accounts.services.dispatch_pending_push_notifications') as dispatch_mock:
+            event = enqueue_notification_event(
+                event_type=NotificationEvent.EventType.COMMUNITY_INTERACTION,
+                dedup_key='community-comment-created:no-autodispatch',
+                title='Interacao na comunidade',
+                recipient_user_ids=[user.id],
+            )
+
+        self.assertIsNotNone(event)
+        dispatch_mock.assert_not_called()
+        self.assertEqual(
+            NotificationDispatch.objects.filter(
+                event=event,
+                channel=NotificationDispatch.Channel.PUSH,
+                status=NotificationDispatch.Status.PENDING,
+            ).count(),
+            1,
+        )
+
+    @override_settings(PUSH_AUTODISPATCH_ENABLED=True)
+    def test_enqueue_notification_event_can_opt_in_to_autodispatch(self):
+        user = User.objects.create_user(
+            username='autodispatch@example.com',
+            email='autodispatch@example.com',
+            password='StrongPass123',
+        )
+
+        with mock.patch('accounts.services.dispatch_pending_push_notifications') as dispatch_mock:
+            enqueue_notification_event(
+                event_type=NotificationEvent.EventType.COMMUNITY_INTERACTION,
+                dedup_key='community-comment-created:autodispatch-enabled',
+                title='Interacao na comunidade',
+                recipient_user_ids=[user.id],
+            )
+
+        dispatch_mock.assert_called_once_with(limit=200)
+
     def test_dispatch_pending_push_notifications_marks_success_and_failure(self):
         user = User.objects.create_user(
             username='push@example.com',

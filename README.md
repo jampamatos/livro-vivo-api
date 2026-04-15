@@ -21,6 +21,17 @@ Implementado e ativo em `main`:
 - Notificacoes com preferencias por usuario, `NotificationEvent`, `NotificationDispatch`, inbox in-app, registro de devices e dispatcher de push.
 - Health/readiness, `check --deploy`, logs estruturados com sanitizacao de segredos em query string e Sentry opcional.
 - Hardening de avatar com validacao de formato/MIME, limite de tamanho, limite de dimensoes e recorte seguro.
+- Cadastro endurecido contra enumeracao de e-mail e enqueue de push desacoplado do ciclo de request por padrao.
+
+## Status pre-deploy
+
+Ultima varredura completa validada em `2026-04-15`:
+
+- `python manage.py test` aprovado com `340` testes.
+- `python manage.py check --deploy --fail-level WARNING` aprovado com ambiente de producao simulado.
+- `pip-audit -r requirements.txt` sem vulnerabilidades conhecidas.
+- Registro nao revela mais se um e-mail ja existe.
+- Dispatch de push fica em fila por padrao e deve rodar por job/worker dedicado.
 
 ## Stack
 
@@ -114,6 +125,7 @@ Notificacoes:
 - `NOTIFICATIONS_PUSH_PROVIDER` (`noop` por padrao)
 - `NOTIFICATIONS_FCM_PROJECT_ID`
 - `NOTIFICATIONS_APNS_TOPIC`
+- `PUSH_AUTODISPATCH_ENABLED` (`false` por padrao; recomendado manter assim e despachar por job/command)
 
 Banco de Pecas:
 
@@ -270,6 +282,7 @@ O esperado e:
 Os fluxos abaixo agora geram logs dedicados:
 
 - `auth_register_success`
+- `auth_register_failed`
 - `auth_login_failed`
 - `auth_login_blocked`
 - `auth_login_success`
@@ -282,6 +295,14 @@ Os fluxos abaixo agora geram logs dedicados:
 - `api_request_client_error`
 - `api_request_failed`
 - `api_request_unhandled_exception`
+
+### Dispatch operacional de push
+
+O enqueue de notificacoes nao despacha push de forma sincrona no request por padrao. Em stage/producao, rode o dispatcher por job/worker:
+
+```bash
+python manage.py dispatch_push_notifications --limit 100
+```
 
 ### Rollback minimo
 

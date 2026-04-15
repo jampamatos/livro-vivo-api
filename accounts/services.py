@@ -489,7 +489,7 @@ def enqueue_notification_event(
         },
     )
 
-    if pending_count and getattr(settings, 'PUSH_AUTODISPATCH_ENABLED', True):
+    if pending_count and getattr(settings, 'PUSH_AUTODISPATCH_ENABLED', False):
         try:
             dispatch_pending_push_notifications(limit=200)
         except Exception:

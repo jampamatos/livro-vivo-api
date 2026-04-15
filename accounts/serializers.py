@@ -21,6 +21,7 @@ ALLOWED_AVATAR_FORMATS = {
     'PNG': ('image/png', 'png'),
     'WEBP': ('image/webp', 'webp'),
 }
+INSECURE_AVATAR_HOST_ALLOWLIST = {'localhost', '127.0.0.1', '::1', 'testserver'}
 
 
 def _avatar_max_upload_bytes() -> int:
@@ -121,10 +122,7 @@ class RegisterSerializer(serializers.Serializer):
     profession = serializers.CharField(required=False, allow_blank=True)
 
     def validate_email(self, value: str) -> str:
-        email = value.strip().lower()
-        if User.objects.filter(email__iexact=email).exists():
-            raise serializers.ValidationError("Email já cadastrado.")
-        return email
+        return value.strip().lower()
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -177,9 +175,13 @@ class MeUpdateSerializer(serializers.Serializer):
         if not normalized:
             return ''
 
-        scheme = (urlparse(normalized).scheme or '').lower()
+        parsed = urlparse(normalized)
+        scheme = (parsed.scheme or '').lower()
+        host = (parsed.hostname or '').strip().lower()
         if scheme not in {'http', 'https'}:
-            raise serializers.ValidationError("avatar_url deve usar HTTP ou HTTPS.")
+            raise serializers.ValidationError("avatar_url deve usar HTTPS ou um host HTTP local permitido.")
+        if scheme == 'http' and host not in INSECURE_AVATAR_HOST_ALLOWLIST:
+            raise serializers.ValidationError("avatar_url deve usar HTTPS fora de ambiente local.")
         return normalized
 
     def validate_avatar(self, value):
