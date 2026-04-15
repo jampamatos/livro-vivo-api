@@ -312,6 +312,7 @@ class PushDeviceSerializer(serializers.ModelSerializer):
         fields = (
             'id',
             'platform',
+            'installation_id',
             'expo_push_token',
             'is_active',
             'disabled_reason',
@@ -323,7 +324,14 @@ class PushDeviceSerializer(serializers.ModelSerializer):
 
 class PushDeviceRegisterSerializer(serializers.Serializer):
     platform = serializers.ChoiceField(choices=PushDevice.Platform.choices)
+    installation_id = serializers.CharField(max_length=64)
     expo_push_token = serializers.CharField(max_length=255)
+
+    def validate_installation_id(self, value: str) -> str:
+        installation_id = value.strip()
+        if not installation_id:
+            raise serializers.ValidationError("installation_id é obrigatório.")
+        return installation_id
 
     def validate_expo_push_token(self, value: str) -> str:
         token = value.strip()
@@ -335,10 +343,17 @@ class PushDeviceRegisterSerializer(serializers.Serializer):
 
 
 class PushDeviceUnregisterSerializer(serializers.Serializer):
-    expo_push_token = serializers.CharField(max_length=255)
+    installation_id = serializers.CharField(max_length=64, required=False, allow_blank=True)
+    expo_push_token = serializers.CharField(max_length=255, required=False, allow_blank=True)
+
+    def validate_installation_id(self, value: str) -> str:
+        return value.strip()
 
     def validate_expo_push_token(self, value: str) -> str:
-        token = value.strip()
-        if not token:
-            raise serializers.ValidationError("expo_push_token é obrigatório.")
-        return token
+        return value.strip()
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if attrs.get('expo_push_token') or attrs.get('installation_id'):
+            return attrs
+        raise serializers.ValidationError("expo_push_token ou installation_id é obrigatório.")

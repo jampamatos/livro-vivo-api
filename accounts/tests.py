@@ -1333,6 +1333,7 @@ class AccountsAPITests(TestCase):
             reverse('me-push-devices'),
             {
                 'platform': PushDevice.Platform.ANDROID,
+                'installation_id': 'lv-installation-123',
                 'expo_push_token': 'ExponentPushToken[test-device-token]',
             },
             format='json',
@@ -1340,7 +1341,7 @@ class AccountsAPITests(TestCase):
         list_response = self.client.get(reverse('me-push-devices'))
         unregister_response = self.client.delete(
             reverse('me-push-devices'),
-            {'expo_push_token': 'ExponentPushToken[test-device-token]'},
+            {'installation_id': 'lv-installation-123'},
             format='json',
         )
 
@@ -1348,13 +1349,125 @@ class AccountsAPITests(TestCase):
         self.assertEqual(list_response.status_code, 200)
         self.assertEqual(len(list_response.data), 1)
         self.assertEqual(list_response.data[0]['platform'], PushDevice.Platform.ANDROID)
+        self.assertEqual(list_response.data[0]['installation_id'], 'lv-installation-123')
         self.assertEqual(unregister_response.status_code, 204)
 
         device = PushDevice.objects.get(expo_push_token='ExponentPushToken[test-device-token]')
         self.assertFalse(device.is_active)
         self.assertEqual(device.disabled_reason, 'unregistered_by_user')
 
-    def test_me_push_devices_rejects_token_linked_to_another_account(self):
+    def test_me_push_devices_updates_existing_row_when_token_rotates_for_same_installation(self):
+        owner = User.objects.create_user(
+            username='push-owner@example.com',
+            email='push-owner@example.com',
+            password='StrongPass123',
+        )
+        existing_device = PushDevice.objects.create(
+            user=owner,
+            platform=PushDevice.Platform.ANDROID,
+            installation_id='lv-installation-rotate',
+            expo_push_token='ExponentPushToken[shared-device-old]',
+            is_active=True,
+        )
+
+        access = str(RefreshToken.for_user(owner).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.post(
+            reverse('me-push-devices'),
+            {
+                'platform': PushDevice.Platform.ANDROID,
+                'installation_id': 'lv-installation-rotate',
+                'expo_push_token': 'ExponentPushToken[shared-device-new]',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        existing_device.refresh_from_db()
+        self.assertEqual(existing_device.expo_push_token, 'ExponentPushToken[shared-device-new]')
+        self.assertEqual(existing_device.installation_id, 'lv-installation-rotate')
+        self.assertEqual(PushDevice.objects.filter(user=owner).count(), 1)
+
+    def test_me_push_devices_registration_skips_older_pending_push_backlog(self):
+        user = User.objects.create_user(
+            username='push-backlog@example.com',
+            email='push-backlog@example.com',
+            password='StrongPass123',
+        )
+        dispatch = NotificationDispatch.objects.create(
+            event=NotificationEvent.objects.create(
+                event_type=NotificationEvent.EventType.COMMUNITY_INTERACTION,
+                dedup_key='community-comment-created:stale-backlog',
+                title='Interação antiga',
+            ),
+            user=user,
+            channel=NotificationDispatch.Channel.PUSH,
+            status=NotificationDispatch.Status.PENDING,
+        )
+        stale_created_at = timezone.now() - timedelta(days=1)
+        NotificationDispatch.objects.filter(id=dispatch.id).update(created_at=stale_created_at)
+
+        access = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.post(
+            reverse('me-push-devices'),
+            {
+                'platform': PushDevice.Platform.ANDROID,
+                'installation_id': 'lv-installation-backlog',
+                'expo_push_token': 'ExponentPushToken[backlog-device]',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        dispatch.refresh_from_db()
+        self.assertEqual(dispatch.status, NotificationDispatch.Status.SKIPPED)
+        self.assertEqual(dispatch.reason, 'push_stale_before_current_device')
+
+    def test_me_push_devices_same_installation_can_rebind_device_to_new_account(self):
+        owner = User.objects.create_user(
+            username='push-owner@example.com',
+            email='push-owner@example.com',
+            password='StrongPass123',
+        )
+        other_user = User.objects.create_user(
+            username='push-other@example.com',
+            email='push-other@example.com',
+            password='StrongPass123',
+        )
+        device = PushDevice.objects.create(
+            user=owner,
+            platform=PushDevice.Platform.ANDROID,
+            installation_id='lv-installation-rebind',
+            expo_push_token='ExponentPushToken[shared-device]',
+            is_active=True,
+        )
+
+        access = str(RefreshToken.for_user(other_user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        response = self.client.post(
+            reverse('me-push-devices'),
+            {
+                'platform': PushDevice.Platform.IOS,
+                'installation_id': 'lv-installation-rebind',
+                'expo_push_token': 'ExponentPushToken[shared-device-new-account]',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        device.refresh_from_db()
+        self.assertEqual(device.user_id, other_user.id)
+        self.assertEqual(device.platform, PushDevice.Platform.IOS)
+        self.assertEqual(device.expo_push_token, 'ExponentPushToken[shared-device-new-account]')
+
+    def test_me_push_devices_rejects_token_linked_to_another_identified_installation(self):
         owner = User.objects.create_user(
             username='push-owner@example.com',
             email='push-owner@example.com',
@@ -1368,6 +1481,7 @@ class AccountsAPITests(TestCase):
         PushDevice.objects.create(
             user=owner,
             platform=PushDevice.Platform.ANDROID,
+            installation_id='lv-installation-owner',
             expo_push_token='ExponentPushToken[shared-device]',
             is_active=True,
         )
@@ -1379,6 +1493,7 @@ class AccountsAPITests(TestCase):
             reverse('me-push-devices'),
             {
                 'platform': PushDevice.Platform.IOS,
+                'installation_id': 'lv-installation-other',
                 'expo_push_token': 'ExponentPushToken[shared-device]',
             },
             format='json',

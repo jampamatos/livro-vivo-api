@@ -1,7 +1,8 @@
 import logging
 
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from rest_framework import status
@@ -481,21 +482,53 @@ class MePushDevicesView(APIView):
         serializer.is_valid(raise_exception=True)
 
         token = serializer.validated_data['expo_push_token']
-        existing_device = PushDevice.objects.filter(expo_push_token=token).first()
-        if existing_device and existing_device.user_id != request.user.id:
-            raise ValidationError(
-                {'expo_push_token': 'Este dispositivo já está vinculado a outra conta.'}
+        installation_id = serializer.validated_data['installation_id']
+
+        with transaction.atomic():
+            installation_device = (
+                PushDevice.objects.select_for_update()
+                .filter(installation_id=installation_id)
+                .first()
+            )
+            token_device = (
+                PushDevice.objects.select_for_update()
+                .filter(expo_push_token=token)
+                .first()
             )
 
-        device, _ = PushDevice.objects.update_or_create(
-            expo_push_token=token,
-            defaults={
-                'user': request.user,
-                'platform': serializer.validated_data['platform'],
-                'is_active': True,
-                'disabled_reason': '',
-            },
-        )
+            if token_device and token_device.user_id != request.user.id:
+                token_installation_id = (token_device.installation_id or '').strip()
+                if token_installation_id and token_installation_id != installation_id:
+                    raise ValidationError(
+                        {'expo_push_token': 'Este dispositivo já está vinculado a outra conta.'}
+                    )
+
+            device = installation_device or token_device
+            if device is None:
+                device = PushDevice(installation_id=installation_id)
+            else:
+                device.installation_id = installation_id
+
+            if token_device and device.pk and token_device.pk != device.pk:
+                token_device.delete()
+
+            device.user = request.user
+            device.platform = serializer.validated_data['platform']
+            device.expo_push_token = token
+            device.is_active = True
+            device.disabled_reason = ''
+            device.save()
+
+            NotificationDispatch.objects.filter(
+                user=request.user,
+                channel=NotificationDispatch.Channel.PUSH,
+                status=NotificationDispatch.Status.PENDING,
+                acknowledged_at__isnull=True,
+                created_at__lt=device.last_seen_at,
+            ).update(
+                status=NotificationDispatch.Status.SKIPPED,
+                reason='push_stale_before_current_device',
+            )
 
         response_serializer = PushDeviceSerializer(device)
         return Response(response_serializer.data, status=status.HTTP_200_OK)
@@ -504,10 +537,18 @@ class MePushDevicesView(APIView):
         serializer = PushDeviceUnregisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        updated = PushDevice.objects.filter(
-            user=request.user,
-            expo_push_token=serializer.validated_data['expo_push_token'],
-        ).update(is_active=False, disabled_reason='unregistered_by_user')
+        filters = Q()
+        expo_push_token = serializer.validated_data.get('expo_push_token') or ''
+        installation_id = serializer.validated_data.get('installation_id') or ''
+        if expo_push_token:
+            filters |= Q(expo_push_token=expo_push_token)
+        if installation_id:
+            filters |= Q(installation_id=installation_id)
+
+        updated = PushDevice.objects.filter(user=request.user).filter(filters).update(
+            is_active=False,
+            disabled_reason='unregistered_by_user',
+        )
 
         if not updated:
             raise NotFound('Dispositivo não encontrado.')

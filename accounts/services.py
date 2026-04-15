@@ -87,11 +87,13 @@ def _scrub_push_devices_for_erasure(*, user, anonymized_suffix: str) -> int:
     for device in PushDevice.objects.filter(user=user).order_by('id'):
         device.is_active = False
         device.disabled_reason = 'lgpd_erasure_request'
+        device.installation_id = None
         device.expo_push_token = f'erased-device-{user.pk}-{device.pk}-{anonymized_suffix}'
         device.save(
             update_fields=[
                 'is_active',
                 'disabled_reason',
+                'installation_id',
                 'expo_push_token',
                 'last_seen_at',
                 'updated_at',
