@@ -489,7 +489,7 @@ def enqueue_notification_event(
         },
     )
 
-    if pending_count and getattr(settings, 'PUSH_AUTODISPATCH_ENABLED', False):
+    if pending_count and getattr(settings, 'PUSH_AUTODISPATCH_ENABLED', True):
         try:
             dispatch_pending_push_notifications(limit=200)
         except Exception:
@@ -534,11 +534,16 @@ def _send_expo_push_messages(messages: list[dict]) -> list[dict]:
 
 
 def dispatch_pending_push_notifications(*, limit: int = 100) -> dict[str, int]:
+    active_device_user_ids = PushDevice.objects.filter(is_active=True).exclude(
+        expo_push_token=''
+    ).values_list('user_id', flat=True).distinct()
+
     pending_dispatches = list(
         NotificationDispatch.objects.filter(
             channel=NotificationDispatch.Channel.PUSH,
             status=NotificationDispatch.Status.PENDING,
             acknowledged_at__isnull=True,
+            user_id__in=active_device_user_ids,
         )
         .select_related('event', 'user')
         .order_by('created_at')[:limit]

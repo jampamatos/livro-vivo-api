@@ -125,7 +125,7 @@ Notificacoes:
 - `NOTIFICATIONS_PUSH_PROVIDER` (`noop` por padrao)
 - `NOTIFICATIONS_FCM_PROJECT_ID`
 - `NOTIFICATIONS_APNS_TOPIC`
-- `PUSH_AUTODISPATCH_ENABLED` (`false` por padrao; recomendado manter assim e despachar por job/command)
+- `PUSH_AUTODISPATCH_ENABLED` (`true` por padrão; defina `false` se preferir despachar push por job/command)
 
 Banco de Pecas:
 

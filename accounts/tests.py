@@ -2109,7 +2109,7 @@ class NotificationTriggerTests(TestCase):
 
 
 class NotificationDeliveryTests(TestCase):
-    def test_enqueue_notification_event_does_not_autodispatch_push_by_default(self):
+    def test_enqueue_notification_event_autodispatches_push_by_default(self):
         user = User.objects.create_user(
             username='pendingpush@example.com',
             email='pendingpush@example.com',
@@ -2125,7 +2125,7 @@ class NotificationDeliveryTests(TestCase):
             )
 
         self.assertIsNotNone(event)
-        dispatch_mock.assert_not_called()
+        dispatch_mock.assert_called_once_with(limit=200)
         self.assertEqual(
             NotificationDispatch.objects.filter(
                 event=event,
@@ -2135,8 +2135,8 @@ class NotificationDeliveryTests(TestCase):
             1,
         )
 
-    @override_settings(PUSH_AUTODISPATCH_ENABLED=True)
-    def test_enqueue_notification_event_can_opt_in_to_autodispatch(self):
+    @override_settings(PUSH_AUTODISPATCH_ENABLED=False)
+    def test_enqueue_notification_event_can_opt_out_of_autodispatch(self):
         user = User.objects.create_user(
             username='autodispatch@example.com',
             email='autodispatch@example.com',
@@ -2151,7 +2151,7 @@ class NotificationDeliveryTests(TestCase):
                 recipient_user_ids=[user.id],
             )
 
-        dispatch_mock.assert_called_once_with(limit=200)
+        dispatch_mock.assert_not_called()
 
     def test_dispatch_pending_push_notifications_marks_success_and_failure(self):
         user = User.objects.create_user(
@@ -2254,6 +2254,59 @@ class NotificationDeliveryTests(TestCase):
         self.assertEqual(summary['failed'], 1)
         self.assertEqual(dispatch.status, NotificationDispatch.Status.FAILED)
         self.assertEqual(dispatch.reason, 'MessageRateExceeded')
+
+    def test_dispatch_pending_push_notifications_skips_older_pending_rows_without_active_devices(self):
+        stale_user = User.objects.create_user(
+            username='stalepush@example.com',
+            email='stalepush@example.com',
+            password='StrongPass123',
+        )
+        target_user = User.objects.create_user(
+            username='freshpush@example.com',
+            email='freshpush@example.com',
+            password='StrongPass123',
+        )
+        PushDevice.objects.create(
+            user=target_user,
+            platform=PushDevice.Platform.ANDROID,
+            expo_push_token='ExponentPushToken[fresh-device]',
+        )
+
+        for index in range(3):
+            NotificationDispatch.objects.create(
+                event=NotificationEvent.objects.create(
+                    event_type=NotificationEvent.EventType.COMMUNITY_INTERACTION,
+                    dedup_key=f'community-comment-created:stale-{index}',
+                    title=f'Evento antigo {index}',
+                ),
+                user=stale_user,
+                status=NotificationDispatch.Status.PENDING,
+            )
+
+        fresh_dispatch = NotificationDispatch.objects.create(
+            event=NotificationEvent.objects.create(
+                event_type=NotificationEvent.EventType.CONTENT_PUBLISHED,
+                dedup_key='content-published:fresh-device',
+                title='Evento atual',
+            ),
+            user=target_user,
+            status=NotificationDispatch.Status.PENDING,
+        )
+
+        with mock.patch(
+            'accounts.services._send_expo_push_messages',
+            return_value=[{'status': 'ok', 'id': 'ticket-fresh'}],
+        ) as send_mock:
+            summary = dispatch_pending_push_notifications(limit=1)
+
+        fresh_dispatch.refresh_from_db()
+
+        self.assertEqual(summary['queued'], 1)
+        self.assertEqual(summary['sent'], 1)
+        self.assertEqual(summary['failed'], 0)
+        self.assertEqual(summary['devices'], 1)
+        self.assertEqual(fresh_dispatch.status, NotificationDispatch.Status.SENT)
+        send_mock.assert_called_once()
 
 
 class AccountsAdminTests(TestCase):
