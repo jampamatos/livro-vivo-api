@@ -10,6 +10,7 @@ from django.db.models import Q
 
 ALLOWED_CHAPTER_TAGS = {
     'p',
+    'aside',
     'br',
     'strong',
     'em',
@@ -278,7 +279,7 @@ class BookChapter(models.Model):
         if not value:
             return ''
         text = re.sub(r'<br\s*/?>', '\n', value, flags=re.IGNORECASE)
-        text = re.sub(r'</(p|h1|h2|h3|h4|h5|h6|li|blockquote)>', '\n', text, flags=re.IGNORECASE)
+        text = re.sub(r'</(p|aside|h1|h2|h3|h4|h5|h6|li|blockquote)>', '\n', text, flags=re.IGNORECASE)
         text = re.sub(r'<[^>]+>', ' ', text)
         text = unescape(text)
         text = text.replace('\xa0', ' ')

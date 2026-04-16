@@ -45,8 +45,13 @@ BOOK_CHAPTER_WORDLIKE_MCE_ATTRS = {
     'browser_spellcheck': True,
     'plugins': 'lists link wordcount',
     'toolbar': 'undo redo | blocks | bold italic underline superscript subscript | bullist numlist | link removeformat',
-    'block_formats': 'Parágrafo=p;Título 2=h2;Título 3=h3;Citação=blockquote',
-    'valid_elements': 'p,br,strong,em,u,sup,sub,ul,ol,li,blockquote,h2,h3,a[href|title|target|rel]',
+    'block_formats': 'Parágrafo=p;Título 2=h2;Título 3=h3;Citação=blockquote;Nota de rodapé=footnote',
+    'formats': {
+        'footnote': {
+            'block': 'aside',
+        },
+    },
+    'valid_elements': 'p,aside,br,strong,em,u,sup,sub,ul,ol,li,blockquote,h2,h3,a[href|title|target|rel]',
     'invalid_elements': 'script,style,img,iframe,video,audio,table,pre,code',
     'forced_root_block': 'p',
     'convert_urls': False,
@@ -58,6 +63,8 @@ BOOK_CHAPTER_WORDLIKE_MCE_ATTRS = {
         ' font-size: 16px; line-height: 1.65; margin: 1rem; color: #111827; background: #ffffff;'
         '}'
         'p { margin: 0 0 0.9rem; }'
+        'aside { margin: 1.2rem 0 0.9rem; padding: 0.8rem 0 0; border-top: 1px solid #cbd5e1;'
+        ' font-size: 0.92rem; line-height: 1.55; color: #475569; }'
         'h2 { font-size: 1.6rem; line-height: 1.2; margin: 1.4rem 0 0.8rem; }'
         'h3 { font-size: 1.3rem; line-height: 1.25; margin: 1.2rem 0 0.6rem; }'
         'ul,ol { margin: 0 0 1rem; padding-left: 1.5rem; }'

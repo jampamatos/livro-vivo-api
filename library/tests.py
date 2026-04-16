@@ -233,6 +233,20 @@ class LibraryModelTests(LibraryBaseTestCase):
         self.assertEqual(chapter.content_rich, '<ul><li>Item 1</li><li>Item 2</li></ul>')
         self.assertEqual(chapter.content_plain, 'Item 1 Item 2')
 
+    def test_book_chapter_sanitizer_keeps_aside_footnotes(self):
+        book = Book.objects.create(title='Book', status=Book.Status.PUBLISHED)
+        version = BookVersion.objects.create(book=book, version='2024.01', status=BookVersion.Status.PUBLISHED)
+        chapter = BookChapter.objects.create(
+            book_version=version,
+            order=1,
+            title='Notas',
+            slug='notas',
+            content_rich='<p>Texto-base</p><aside>Nota <sup>1</sup> de rodapé.</aside>',
+        )
+
+        self.assertEqual(chapter.content_rich, '<p>Texto-base</p><aside>Nota <sup>1</sup> de rodapé.</aside>')
+        self.assertEqual(chapter.content_plain, 'Texto-base Nota 1 de rodapé.')
+
 
 class LibraryServicesTests(LibraryBaseTestCase):
     def test_create_preloaded_book_version_clones_chapters_and_changelog(self):
@@ -758,8 +772,10 @@ class LibraryAdminTests(TestCase):
         self.assertContains(response, 'style="width: 100%;"')
         self.assertContains(response, 'lists link wordcount')
         self.assertNotContains(response, 'lists link autoresize wordcount')
+        self.assertContains(response, 'Nota de rodap\\u00e9=footnote')
+        self.assertContains(response, '&quot;formats&quot;: {&quot;footnote&quot;: {&quot;block&quot;: &quot;aside&quot;}}')
         self.assertContains(response, 'Tags permitidas:')
-        self.assertContains(response, 'Tags permitidas: a, blockquote, br')
+        self.assertContains(response, 'Tags permitidas: a, aside, blockquote, br')
         self.assertContains(response, 'sub, sup')
         self.assertContains(response, 'lv-rich-editor-preview')
 

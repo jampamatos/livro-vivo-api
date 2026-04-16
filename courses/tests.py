@@ -326,6 +326,8 @@ class CoursesAdminTests(TestCase):
         self.assertContains(response, 'style="width: 100%;"')
         self.assertContains(response, 'lists link wordcount')
         self.assertNotContains(response, 'lists link autoresize wordcount')
+        self.assertContains(response, 'Nota de rodap\\u00e9=footnote')
+        self.assertContains(response, '&quot;formats&quot;: {&quot;footnote&quot;: {&quot;block&quot;: &quot;aside&quot;}}')
         self.assertContains(response, 'Tags permitidas:')
         self.assertContains(response, 'sub, sup')
         self.assertContains(response, 'lv-rich-editor-preview')
@@ -346,6 +348,7 @@ class CoursesAdminTests(TestCase):
                     '<h2 onclick="alert(1)">Título</h2>'
                     '<p>Texto <strong>formatado</strong><sup>1</sup> com H<sub>2</sub>O e '
                     '<a href="https://example.com" target="_blank">link</a>.</p>'
+                    '<aside>Nota editorial.</aside>'
                     '<script>alert("xss")</script>'
                 ),
                 '_save': 'Save',
@@ -361,9 +364,11 @@ class CoursesAdminTests(TestCase):
         self.assertIn('<sup>1</sup>', self.post.content_rich)
         self.assertIn('<sub>2</sub>', self.post.content_rich)
         self.assertIn('href="https://example.com"', self.post.content_rich)
+        self.assertIn('<aside>Nota editorial.</aside>', self.post.content_rich)
         self.assertNotIn('<script', self.post.content_rich)
         self.assertNotIn('onclick', self.post.content_rich)
         self.assertIn('Título Texto formatado 1 com H 2 O e link', self.post.content_plain)
+        self.assertIn('Nota editorial.', self.post.content_plain)
 
     def test_live_event_admin_change_form_loads_rich_editor_assets(self):
         response = self.client.get(reverse('admin:courses_liveevent_change', args=[self.live_event.id]))
@@ -373,6 +378,8 @@ class CoursesAdminTests(TestCase):
         self.assertContains(response, 'tinymce/tinymce.min.js')
         self.assertContains(response, 'django_tinymce/init_tinymce.js')
         self.assertContains(response, 'undo redo | blocks | bold italic underline superscript subscript')
+        self.assertContains(response, 'Nota de rodap\\u00e9=footnote')
+        self.assertContains(response, '&quot;formats&quot;: {&quot;footnote&quot;: {&quot;block&quot;: &quot;aside&quot;}}')
         self.assertContains(response, 'Tags permitidas:')
         self.assertContains(response, 'sub, sup')
         self.assertContains(response, 'lv-rich-editor-preview')
