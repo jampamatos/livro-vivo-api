@@ -117,6 +117,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'config.middleware.RequestContextMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -259,6 +260,10 @@ NOTIFICATIONS_PUSH_PROVIDER = (os.getenv('NOTIFICATIONS_PUSH_PROVIDER') or 'noop
 NOTIFICATIONS_FCM_PROJECT_ID = (os.getenv('NOTIFICATIONS_FCM_PROJECT_ID') or '').strip()
 NOTIFICATIONS_APNS_TOPIC = (os.getenv('NOTIFICATIONS_APNS_TOPIC') or '').strip()
 PUSH_AUTODISPATCH_ENABLED = env_bool('PUSH_AUTODISPATCH_ENABLED', default=True)
+EXPO_PUSH_API_URL = (
+    os.getenv('EXPO_PUSH_API_URL') or 'https://exp.host/--/api/v2/push/send'
+).strip()
+EXPO_PUSH_ACCESS_TOKEN = (os.getenv('EXPO_PUSH_ACCESS_TOKEN') or '').strip()
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -292,7 +297,13 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATICFILES_BACKEND = (
+    'whitenoise.storage.CompressedManifestStaticFilesStorage'
+    if (IS_PRODUCTION or IS_STAGE)
+    else 'django.contrib.staticfiles.storage.StaticFilesStorage'
+)
 MEDIA_STORAGE_PROVIDER = (os.getenv('DJANGO_STORAGE_PROVIDER') or 'filesystem').strip().lower()
 MEDIA_URL = normalize_media_url(os.getenv('DJANGO_MEDIA_URL', '/media/'))
 MEDIA_ROOT = resolve_media_root(base_dir=BASE_DIR, raw_value=os.getenv('DJANGO_MEDIA_ROOT'))
@@ -304,7 +315,7 @@ MEDIA_PRIVATE_CACHE_CONTROL = (
 ).strip()
 STORAGES = build_storage_settings(
     provider=MEDIA_STORAGE_PROVIDER,
-    staticfiles_backend='django.contrib.staticfiles.storage.StaticFilesStorage',
+    staticfiles_backend=STATICFILES_BACKEND,
     media_public_cache_control=MEDIA_PUBLIC_CACHE_CONTROL,
     media_private_cache_control=MEDIA_PRIVATE_CACHE_CONTROL,
     s3_bucket_name=(os.getenv('DJANGO_STORAGE_S3_BUCKET_NAME') or '').strip(),
@@ -330,6 +341,10 @@ AVATAR_ALLOWED_MIME_TYPES = tuple(
     )
     if item.strip()
 )
+WHITENOISE_MAX_AGE = 31536000 if (IS_PRODUCTION or IS_STAGE) else 0
+WHITENOISE_KEEP_ONLY_HASHED_FILES = True
+WHITENOISE_USE_FINDERS = DEBUG
+WHITENOISE_AUTOREFRESH = DEBUG
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

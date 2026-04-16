@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 
 from rest_framework import serializers
@@ -9,6 +10,10 @@ class TemplatePieceSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         data = super().to_representation(instance)
         request = self.context.get('request')
+        if instance.file_upload and getattr(settings, 'MEDIA_STORAGE_PROVIDER', 'filesystem') == 'filesystem':
+            data['file_url'] = None
+            data['file_source'] = 'upload'
+            return data
         file_reference = instance.resolve_file_reference(request=request)
         data['file_url'] = file_reference['url']
         data['file_source'] = file_reference['source']

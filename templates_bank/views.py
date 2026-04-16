@@ -3,6 +3,7 @@ from urllib.parse import urlencode
 
 from django.conf import settings
 from django.core import signing
+from django.http import FileResponse, Http404
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -39,6 +40,32 @@ def _download_token_ttl_seconds() -> int:
     return max(value, 1)
 
 
+def _validate_download_token(*, piece, request, token: str) -> None:
+    if not token:
+        raise ValidationError({'token': 'token é obrigatório.'})
+
+    ttl_seconds = _download_token_ttl_seconds()
+
+    try:
+        payload = signing.loads(token, salt=DOWNLOAD_TOKEN_SALT, max_age=ttl_seconds)
+    except signing.SignatureExpired as exc:
+        raise PermissionDenied('Token de download expirado.') from exc
+    except signing.BadSignature as exc:
+        raise PermissionDenied('Token de download inválido.') from exc
+
+    if payload.get('piece_id') != piece.id:
+        raise PermissionDenied('Token não corresponde à peça solicitada.')
+
+    if payload.get('uid') != request.user.id:
+        raise PermissionDenied('Token não pertence ao usuário autenticado.')
+
+
+def _protected_filesystem_download_url(*, piece, request, token: str) -> str:
+    download_path = reverse('template-piece-download-file', kwargs={'pk': piece.id})
+    query = urlencode({'token': token})
+    return request.build_absolute_uri(f'{download_path}?{query}')
+
+
 class TemplatePieceViewSet(viewsets.ModelViewSet):
     serializer_class = TemplatePieceSerializer
     queryset = TemplatePiece.objects.all()
@@ -49,7 +76,7 @@ class TemplatePieceViewSet(viewsets.ModelViewSet):
     ordering = ['template_code', '-created_at', '-updated_at']
 
     def get_permissions(self):
-        if self.action in ('list', 'retrieve', 'download_token', 'download'):
+        if self.action in ('list', 'retrieve', 'download_token', 'download', 'download_file'):
             return [IsAuthenticated(), IsProfessionalSubscriberOrStaff()]
         return [IsAuthenticated(), IsAdminUser()]
 
@@ -112,25 +139,14 @@ class TemplatePieceViewSet(viewsets.ModelViewSet):
     def download(self, request, pk=None):
         piece = self.get_object()
         token = (request.query_params.get('token') or '').strip()
-        if not token:
-            raise ValidationError({'token': 'token é obrigatório.'})
-
-        ttl_seconds = _download_token_ttl_seconds()
-
-        try:
-            payload = signing.loads(token, salt=DOWNLOAD_TOKEN_SALT, max_age=ttl_seconds)
-        except signing.SignatureExpired as exc:
-            raise PermissionDenied('Token de download expirado.') from exc
-        except signing.BadSignature as exc:
-            raise PermissionDenied('Token de download inválido.') from exc
-
-        if payload.get('piece_id') != piece.id:
-            raise PermissionDenied('Token não corresponde à peça solicitada.')
-
-        if payload.get('uid') != request.user.id:
-            raise PermissionDenied('Token não pertence ao usuário autenticado.')
+        _validate_download_token(piece=piece, request=request, token=token)
 
         file_reference = piece.resolve_file_reference(request=request)
+        if piece.file_upload and getattr(settings, 'MEDIA_STORAGE_PROVIDER', 'filesystem') == 'filesystem':
+            file_reference = {
+                'url': _protected_filesystem_download_url(piece=piece, request=request, token=token),
+                'source': 'upload',
+            }
         return Response(
             {
                 'id': piece.id,
@@ -145,3 +161,28 @@ class TemplatePieceViewSet(viewsets.ModelViewSet):
                 'file_source': file_reference['source'],
             }
         )
+
+    @action(detail=True, methods=['get'], url_path='download-file')
+    def download_file(self, request, pk=None):
+        piece = self.get_object()
+        token = (request.query_params.get('token') or '').strip()
+        _validate_download_token(piece=piece, request=request, token=token)
+
+        if not piece.file_upload or getattr(settings, 'MEDIA_STORAGE_PROVIDER', 'filesystem') != 'filesystem':
+            raise Http404('Arquivo local protegido indisponível para esta peça.')
+
+        file_handle = piece.file_upload.open('rb')
+        response = FileResponse(
+            file_handle,
+            as_attachment=True,
+            filename=piece.file_name or None,
+            content_type=piece.file_mime_type or 'application/octet-stream',
+        )
+        response['Cache-Control'] = getattr(
+            settings,
+            'MEDIA_PRIVATE_CACHE_CONTROL',
+            'private, max-age=300, no-store',
+        )
+        if piece.file_size_bytes:
+            response['Content-Length'] = str(piece.file_size_bytes)
+        return response

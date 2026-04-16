@@ -12,8 +12,10 @@ media/
 .env
 .env.*
 !.env.example
+!.env.beta.example
 
 # Other
 .markdownlint.json
 .coverage
 htmlcov/
+staticfiles/
