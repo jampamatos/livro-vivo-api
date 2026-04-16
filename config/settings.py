@@ -342,7 +342,9 @@ AVATAR_ALLOWED_MIME_TYPES = tuple(
     if item.strip()
 )
 WHITENOISE_MAX_AGE = 31536000 if (IS_PRODUCTION or IS_STAGE) else 0
-WHITENOISE_KEEP_ONLY_HASHED_FILES = True
+# TinyMCE resolves skins/plugins/themes via relative URLs at runtime.
+# Keep the unhashed originals alongside the hashed assets in stage/prod.
+WHITENOISE_KEEP_ONLY_HASHED_FILES = False
 WHITENOISE_USE_FINDERS = DEBUG
 WHITENOISE_AUTOREFRESH = DEBUG
 
