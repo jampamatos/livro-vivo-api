@@ -21,7 +21,7 @@ Implementado e ativo em `main`:
 - Notificacoes com preferencias por usuario, `NotificationEvent`, `NotificationDispatch`, inbox in-app, registro de devices e dispatcher de push.
 - Health/readiness, `check --deploy`, logs estruturados com sanitizacao de segredos em query string e Sentry opcional.
 - Hardening de avatar com validacao de formato/MIME, limite de tamanho, limite de dimensoes e recorte seguro.
-- Cadastro endurecido contra enumeracao de e-mail e enqueue de push desacoplado do ciclo de request por padrao.
+- Cadastro endurecido contra enumeracao de e-mail, registro estavel de dispositivo push por `installation_id` e limpeza de backlog antigo no registro do device atual.
 
 ## Status pre-deploy
 
@@ -31,7 +31,7 @@ Ultima varredura completa validada em `2026-04-15`:
 - `python manage.py check --deploy --fail-level WARNING` aprovado com ambiente de producao simulado.
 - `pip-audit -r requirements.txt` sem vulnerabilidades conhecidas.
 - Registro nao revela mais se um e-mail ja existe.
-- Dispatch de push fica em fila por padrao e deve rodar por job/worker dedicado.
+- Push autodispatch segue habilitado por padrao, com dispatcher manual recomendado como redundancia operacional.
 
 ## Stack
 
@@ -45,6 +45,7 @@ Ultima varredura completa validada em `2026-04-15`:
 - `django-tinymce`
 - `django-storages` + `boto3`
 - `sentry-sdk` (opcional)
+- `gunicorn` + `whitenoise` para runtime HTTP de producao
 
 ## Setup local
 
@@ -126,6 +127,11 @@ Notificacoes:
 - `NOTIFICATIONS_FCM_PROJECT_ID`
 - `NOTIFICATIONS_APNS_TOPIC`
 - `PUSH_AUTODISPATCH_ENABLED` (`true` por padrão; defina `false` se preferir despachar push por job/command)
+- `EXPO_PUSH_API_URL`
+- `EXPO_PUSH_ACCESS_TOKEN`
+- `GUNICORN_BIND`
+- `GUNICORN_WORKERS`
+- `GUNICORN_TIMEOUT`
 
 Banco de Pecas:
 
@@ -169,6 +175,12 @@ Politica minima recomendada:
 - avatar: `public, max-age=86400, stale-while-revalidate=604800`
 - uploads protegidos: `private, max-age=300, no-store`
 
+No beta barato com storage local em VPS:
+
+- `avatars` continuam publicos em `/media/avatars/...`;
+- uploads do Banco de Pecas nao sao expostos como URL publica de filesystem;
+- o download autenticado passa por endpoint assinado do backend.
+
 Migracao recomendada para object storage:
 
 1. configurar bucket e credenciais S3 compativeis;
@@ -196,6 +208,92 @@ DJANGO_LOG_PROFILE=dev
 DJANGO_LOG_INCLUDE_REQUESTS=false
 python manage.py runserver
 ```
+
+## Deploy beta barato no VPS
+
+Esta API esta preparada para o beta `web-first` com:
+
+- `Dockerfile`
+- `docker-compose.yml`
+- `deploy/Caddyfile`
+- `gunicorn` como servidor WSGI
+- `whitenoise` para estaticos/admin
+
+Topologia oficial do beta:
+
+- `caddy`: TLS/reverse proxy
+- `api`: Django + gunicorn
+- `postgres`: banco principal
+- `redis`: cache/throttle/filas leves
+- volume local para `media/`
+
+### 1) Preparar ambiente no VPS
+
+No servidor:
+
+```bash
+git clone <repo-da-api> /opt/livro-vivo-api
+cd /opt/livro-vivo-api
+cp .env.beta.example .env
+```
+
+Edite `.env` com os valores reais, em especial:
+
+- `DJANGO_SECRET_KEY`
+- `POSTGRES_PASSWORD`
+- `DATABASE_URL`
+- `DJANGO_ALLOWED_HOSTS`
+- `DJANGO_CORS_ALLOWED_ORIGINS`
+- `DJANGO_CSRF_TRUSTED_ORIGINS`
+- `CADDY_SITE_ADDRESS`
+- `EXPO_PUSH_ACCESS_TOKEN` se usar token de acesso da Expo
+
+### 2) Subir a stack
+
+```bash
+docker compose up -d --build
+```
+
+### 3) Criar superuser
+
+```bash
+docker compose exec api python manage.py createsuperuser
+```
+
+### 4) Checklist de smoke no VPS
+
+```bash
+curl -I http://127.0.0.1/health/
+curl -I http://127.0.0.1/readyz/
+docker compose ps
+docker compose logs api --tail 100
+```
+
+Esperado:
+
+- `health/` responde `200`
+- `readyz/` responde `200`
+- `caddy`, `api`, `postgres` e `redis` estao `running` ou `healthy`
+
+### 5) Deploy continuo da `main`
+
+O repositório inclui `.github/workflows/deploy.yml`.
+
+Fluxo oficial:
+
+1. PR aprovado
+2. merge na `main`
+3. `API CI` fecha verde
+4. workflow `API Deploy` conecta por SSH no VPS
+5. servidor executa `docker compose up -d --build`
+
+Secrets necessarios no GitHub:
+
+- `VPS_HOST`
+- `VPS_PORT`
+- `VPS_USER`
+- `VPS_SSH_KEY`
+- `DEPLOY_PATH`
 
 ## Qualidade local
 
@@ -231,7 +329,7 @@ DJANGO_OFFLINE_MIGRATION_CHECK=false python manage.py makemigrations --check --d
 ```bash
 DJANGO_ENV=production \
 DEBUG=false \
-DJANGO_SECRET_KEY=ci-production-secret-key-with-minimum-length-1234567890 \
+DJANGO_SECRET_KEY="$(openssl rand -hex 32)" \
 DJANGO_ALLOWED_HOSTS=api.example.com \
 DJANGO_CORS_ALLOWED_ORIGINS=https://app.example.com \
 DJANGO_CSRF_TRUSTED_ORIGINS=https://app.example.com \
@@ -298,7 +396,7 @@ Os fluxos abaixo agora geram logs dedicados:
 
 ### Dispatch operacional de push
 
-O enqueue de notificacoes nao despacha push de forma sincrona no request por padrao. Em stage/producao, rode o dispatcher por job/worker:
+O enqueue de notificacoes tenta autodispatch no request por padrao. Em stage/producao, mantenha tambem um dispatcher recorrente como redundancia operacional:
 
 ```bash
 python manage.py dispatch_push_notifications --limit 100

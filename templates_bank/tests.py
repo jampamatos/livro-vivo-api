@@ -4,6 +4,7 @@ import tempfile
 import time
 from datetime import timedelta
 from unittest.mock import patch
+from urllib.parse import urlsplit
 
 from django.contrib.admin.sites import site
 from django.contrib.auth import get_user_model
@@ -320,12 +321,52 @@ class TemplatesBankApiTests(TestCase):
                 response = self.client.get(f'/templates-bank/templates/{upload_piece.id}/download/', {'token': token})
 
                 self.assertEqual(response.status_code, 200)
-                self.assertTrue(response.data['file_url'].startswith('http://testserver/media/templates_bank/uploads/'))
+                self.assertIn('/templates-bank/templates/', response.data['file_url'])
+                self.assertIn('/download-file/', response.data['file_url'])
                 self.assertEqual(response.data['file_name'], 'modelo-upload-api.docx')
                 self.assertEqual(response.data['file_source'], 'upload')
                 self.assertNotIn('file_storage_alias', response.data)
                 self.assertNotIn('file_storage_backend', response.data)
                 self.assertNotIn('file_storage_key', response.data)
+
+                signed_url = urlsplit(response.data['file_url'])
+                download_response = self.client.get(
+                    signed_url.path,
+                    data={'token': token},
+                )
+                self.assertEqual(download_response.status_code, 200)
+                self.assertEqual(
+                    download_response['Content-Disposition'],
+                    'attachment; filename="modelo-upload-api.docx"',
+                )
+                self.assertEqual(
+                    download_response['Cache-Control'],
+                    'private, max-age=300, no-store',
+                )
+
+    def test_retrieve_hides_direct_file_url_for_local_uploaded_file(self):
+        with tempfile.TemporaryDirectory(prefix='templates-bank-api-media-') as media_root:
+            with self.settings(MEDIA_ROOT=media_root):
+                upload_piece = TemplatePiece.objects.create(
+                    title='Modelo Upload Listagem',
+                    slug='modelo-upload-listagem',
+                    template_code='modelo-upload-listagem',
+                    version='1.0.0',
+                    category=TemplatePiece.Category.OTHER,
+                    file_upload=SimpleUploadedFile(
+                        'modelo-upload-listagem.docx',
+                        b'conteudo da listagem',
+                        content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    ),
+                    status=PublicationStatus.PUBLISHED,
+                )
+
+                self._auth(self.professional_token)
+                response = self.client.get(f'/templates-bank/templates/{upload_piece.id}/')
+
+                self.assertEqual(response.status_code, 200)
+                self.assertIsNone(response.data['file_url'])
+                self.assertEqual(response.data['file_source'], 'upload')
 
     def test_templates_bank_endpoints_are_throttled(self):
         cache.clear()
