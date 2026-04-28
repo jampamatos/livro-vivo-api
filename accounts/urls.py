@@ -1,14 +1,18 @@
 from django.urls import path
 
 from .views import (
+    AuthProvidersView,
     MeDataErasureRequestView,
     MeDataExportView,
+    MeLinkedAccountDeleteView,
+    MeLinkedAccountsView,
     MeLegalAcceptancesAcceptView,
     MeLegalAcceptancesView,
     MeLegalDocumentsRequiredView,
     LoginView,
     LogoutView,
     MePasswordChangeView,
+    MePasswordSetView,
     MeNotificationAcknowledgeView,
     MeInAppNotificationConsumeLatestView,
     MeNotificationsView,
@@ -18,21 +22,31 @@ from .views import (
     MeView,
     RefreshView,
     RegisterView,
+    SocialAuthCallbackView,
+    SocialAuthCompleteView,
+    SocialAuthStartView,
 )
 
 
 urlpatterns = [
+    path('auth/providers/', AuthProvidersView.as_view(), name='auth-providers'),
     path('auth/register/', RegisterView.as_view(), name='auth-register'),
     path('auth/login/', LoginView.as_view(), name='auth-login'),
     path('auth/refresh/', RefreshView.as_view(), name='auth-refresh'),
     path('auth/refresh', RefreshView.as_view()),
     path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
+    path('auth/social/<str:provider>/start/', SocialAuthStartView.as_view(), name='auth-social-start'),
+    path('auth/social/<str:provider>/callback/', SocialAuthCallbackView.as_view(), name='auth-social-callback'),
+    path('auth/social/complete/', SocialAuthCompleteView.as_view(), name='auth-social-complete'),
 
     path('me/', MeView.as_view(), name='me'),
     path('me/legal-documents/required/', MeLegalDocumentsRequiredView.as_view(), name='me-legal-documents-required'),
     path('me/legal-acceptances/', MeLegalAcceptancesView.as_view(), name='me-legal-acceptances'),
     path('me/legal-acceptances/accept/', MeLegalAcceptancesAcceptView.as_view(), name='me-legal-acceptances-accept'),
     path('me/change-password/', MePasswordChangeView.as_view(), name='me-change-password'),
+    path('me/set-password/', MePasswordSetView.as_view(), name='me-set-password'),
+    path('me/linked-accounts/', MeLinkedAccountsView.as_view(), name='me-linked-accounts'),
+    path('me/linked-accounts/<str:provider>/', MeLinkedAccountDeleteView.as_view(), name='me-linked-account-delete'),
     path('me/data-export/', MeDataExportView.as_view(), name='me-data-export'),
     path('me/data-erasure/', MeDataErasureRequestView.as_view(), name='me-data-erasure'),
     path('me/entitlements/', MeEntitlementsView.as_view(), name='me-entitlements'),

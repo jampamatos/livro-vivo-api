@@ -3,6 +3,8 @@ import logging
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.db.models import Q
+from django.http import HttpResponseRedirect
+from django.urls import reverse
 from django.utils import timezone
 
 from rest_framework import status
@@ -19,7 +21,7 @@ from rest_framework.views import APIView
 from entitlements.models import Entitlement
 from entitlements.services import get_effective_tier, get_subscription_snapshot
 
-from .models import NotificationDispatch, NotificationPreference, Profile, PushDevice
+from .models import ExternalIdentity, NotificationDispatch, NotificationPreference, Profile, PushDevice
 from .legal import (
     accept_required_legal_documents,
     build_legal_status,
@@ -32,6 +34,7 @@ from .permissions import HasAcceptedRequiredLegalDocuments
 from .serializers import (
     LegalAcceptanceSubmitSerializer,
     MePasswordChangeSerializer,
+    MePasswordSetSerializer,
     MeUpdateSerializer,
     NotificationDispatchSerializer,
     NotificationPreferenceSerializer,
@@ -39,8 +42,29 @@ from .serializers import (
     PushDeviceSerializer,
     PushDeviceUnregisterSerializer,
     RegisterSerializer,
+    SocialAuthCompleteSerializer,
+    SocialAuthStartSerializer,
 )
 from .services import create_user_data_export_package, request_user_data_erasure
+from .social import (
+    SocialAuthConfigurationError,
+    SocialCallbackResolution,
+    SocialIntent,
+    SocialProviderAuthError,
+    SocialResultCode,
+    append_result_token_to_redirect_uri,
+    build_provider_authorization_url,
+    build_social_result_token,
+    build_social_state_token,
+    exchange_provider_code_for_identity,
+    get_social_provider_config,
+    list_linked_accounts,
+    list_social_providers,
+    resolve_social_auth_callback,
+    serialize_social_complete_link_payload,
+    unlink_external_identity,
+    load_social_state_token,
+)
 from .view_helpers import (
     authenticate_user_by_email,
     delete_stored_file,
@@ -49,6 +73,7 @@ from .view_helpers import (
 )
 from community.services import (
     get_banned_login_message,
+    pull_pending_login_notice,
     get_user_moderation_summary,
     sync_user_activity_with_moderation,
 )
@@ -70,6 +95,56 @@ def _serialize_me_payload(user, profile, *, request=None) -> dict:
         'has_usable_password': user.has_usable_password(),
         **_serialize_auth_context(user, request=request),
     }
+
+
+def _issue_authenticated_session_response(
+    user,
+    *,
+    request,
+    success_event: str,
+    blocked_event: str,
+    source: str,
+    extra_payload: dict | None = None,
+):
+    sync_user_activity_with_moderation(user)
+    user.refresh_from_db(fields=['is_active'])
+    message = get_banned_login_message(user)
+    if message:
+        logger.warning(
+            blocked_event,
+            extra={"reason": "account_banned", "user_id": user.id, "source": source},
+        )
+        return Response(
+            {"detail": message, "code": "account_banned"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    if not user.is_active:
+        logger.warning(
+            blocked_event,
+            extra={"reason": "inactive_account", "user_id": user.id, "source": source},
+        )
+        return Response(
+            {"detail": "Esta conta está inativa."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    tokens = issue_tokens_for_user(user)
+    profile, _ = Profile.objects.get_or_create(user=user)
+    moderation_notice = pull_pending_login_notice(user)
+    payload = {
+        **tokens,
+        'user': serialize_user_payload(user, profile, request=request),
+        **_serialize_auth_context(user, request=request),
+    }
+    if extra_payload:
+        payload.update(extra_payload)
+    if moderation_notice:
+        payload['moderation_notice'] = moderation_notice
+    logger.info(
+        success_event,
+        extra={"user_id": user.id, "source": source, "has_moderation_notice": bool(moderation_notice)},
+    )
+    return Response(payload, status=status.HTTP_200_OK)
 
 
 class RegisterView(APIView):
@@ -122,47 +197,214 @@ class LoginView(APIView):
         if not user:
             logger.warning("auth_login_failed", extra={"reason": "invalid_credentials"})
             return Response({"detail": "Credenciais inválidas."}, status=status.HTTP_401_UNAUTHORIZED)
-
-        sync_user_activity_with_moderation(user)
-        user.refresh_from_db(fields=['is_active'])
-        message = get_banned_login_message(user)
-        if message:
-            logger.warning("auth_login_blocked", extra={"reason": "account_banned", "user_id": user.id})
-            return Response(
-                {"detail": message, "code": "account_banned"},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        if not user.is_active:
-            logger.warning("auth_login_blocked", extra={"reason": "inactive_account", "user_id": user.id})
-            return Response(
-                {"detail": "Esta conta está inativa."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        tokens = issue_tokens_for_user(user)
-        profile, _ = Profile.objects.get_or_create(user=user)
-        from community.services import pull_pending_login_notice
-
-        moderation_notice = pull_pending_login_notice(user)
-        payload = {
-            **tokens,
-            'user': serialize_user_payload(user, profile, request=request),
-            **_serialize_auth_context(user, request=request),
-        }
-        if moderation_notice:
-            payload['moderation_notice'] = moderation_notice
-        logger.info(
-            "auth_login_success",
-            extra={"user_id": user.id, "has_moderation_notice": bool(moderation_notice)},
+        return _issue_authenticated_session_response(
+            user,
+            request=request,
+            success_event='auth_login_success',
+            blocked_event='auth_login_blocked',
+            source='password',
         )
-
-        return Response(payload, status=status.HTTP_200_OK)
 
 
 class RefreshView(TokenRefreshView):
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'auth_refresh'
+
+
+class AuthProvidersView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response({'providers': list_social_providers()}, status=status.HTTP_200_OK)
+
+
+class SocialAuthStartView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth_login'
+
+    def post(self, request, provider: str):
+        serializer = SocialAuthStartSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        intent = serializer.validated_data['intent']
+        if intent == SocialIntent.LINK and not request.user.is_authenticated:
+            return Response(
+                {'detail': 'Autentique-se antes de vincular um provider social.'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        try:
+            config = get_social_provider_config(provider)
+            state_token = build_social_state_token(
+                provider=config.provider,
+                intent=intent,
+                redirect_uri=serializer.validated_data['redirect_uri'],
+                user_id=request.user.id if intent == SocialIntent.LINK else None,
+            )
+            callback_url = request.build_absolute_uri(
+                reverse('auth-social-callback', kwargs={'provider': config.provider})
+            )
+            authorization_url = build_provider_authorization_url(
+                config=config,
+                state_token=state_token,
+                callback_url=callback_url,
+            )
+        except SocialAuthConfigurationError as exc:
+            raise ValidationError({'detail': str(exc)}) from exc
+
+        return Response(
+            {
+                'provider': config.provider,
+                'intent': intent,
+                'authorization_url': authorization_url,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class SocialAuthCallbackView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, provider: str):
+        state_token = (request.query_params.get('state') or '').strip()
+        if not state_token:
+            return Response({'detail': 'state é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            state_payload = load_social_state_token(state_token)
+        except Exception:
+            return Response({'detail': 'state inválido ou expirado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        state_provider = (state_payload.get('provider') or '').strip().lower()
+        if state_provider != (provider or '').strip().lower():
+            return Response(
+                {'detail': 'Provider do callback não confere com o state.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        redirect_uri = state_payload['redirect_uri']
+        error_code = (request.query_params.get('error') or '').strip()
+        error_description = (request.query_params.get('error_description') or '').strip()
+
+        if error_code:
+            result_token = build_social_result_token(
+                SocialCallbackResolution(
+                    result_code=SocialResultCode.PROVIDER_AUTH_FAILED,
+                    provider=state_provider,
+                    message=error_description or f'Provider retornou erro: {error_code}.',
+                )
+            )
+            return HttpResponseRedirect(
+                append_result_token_to_redirect_uri(redirect_uri, result_token=result_token)
+            )
+
+        code = (request.query_params.get('code') or '').strip()
+        if not code:
+            result_token = build_social_result_token(
+                SocialCallbackResolution(
+                    result_code=SocialResultCode.PROVIDER_AUTH_FAILED,
+                    provider=state_provider,
+                    message='Provider não retornou authorization code.',
+                )
+            )
+            return HttpResponseRedirect(
+                append_result_token_to_redirect_uri(redirect_uri, result_token=result_token)
+            )
+
+        callback_url = request.build_absolute_uri(
+            reverse('auth-social-callback', kwargs={'provider': state_provider})
+        )
+        try:
+            identity = exchange_provider_code_for_identity(
+                provider=state_provider,
+                code=code,
+                callback_url=callback_url,
+            )
+            resolution = resolve_social_auth_callback(
+                provider=state_provider,
+                intent=state_payload['intent'],
+                identity=identity,
+                user_id=state_payload.get('user_id'),
+            )
+        except SocialProviderAuthError as exc:
+            resolution = SocialCallbackResolution(
+                result_code=SocialResultCode.PROVIDER_AUTH_FAILED,
+                provider=state_provider,
+                message=str(exc),
+            )
+        except SocialAuthConfigurationError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        result_token = build_social_result_token(resolution)
+        return HttpResponseRedirect(
+            append_result_token_to_redirect_uri(redirect_uri, result_token=result_token)
+        )
+
+
+class SocialAuthCompleteView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = SocialAuthCompleteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        result_payload = serializer.validated_data['result_payload']
+        result_code = result_payload['result_code']
+        provider = result_payload['provider']
+        user_id = result_payload.get('user_id')
+        email = result_payload.get('email', '')
+        message = result_payload.get('message', '')
+
+        if result_code in {SocialResultCode.LOGIN_SUCCESS, SocialResultCode.REGISTER_SUCCESS}:
+            user = User.objects.filter(id=user_id).first()
+            if user is None:
+                return Response(
+                    {'detail': 'Usuário do fluxo social não encontrado.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            return _issue_authenticated_session_response(
+                user,
+                request=request,
+                success_event='auth_social_complete_success',
+                blocked_event='auth_social_complete_blocked',
+                source=provider,
+                extra_payload={
+                    'result_code': result_code,
+                    'provider': provider,
+                },
+            )
+
+        if result_code == SocialResultCode.LINK_SUCCESS:
+            if not request.user.is_authenticated:
+                return Response(
+                    {'detail': 'Autentique-se antes de concluir o vínculo do provider social.'},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+            if request.user.id != user_id:
+                return Response(
+                    {'detail': 'O vínculo retornado não pertence à sessão autenticada atual.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            return Response(
+                {
+                    'result_code': result_code,
+                    'provider': provider,
+                    **serialize_social_complete_link_payload(user=request.user, request=request),
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        return Response(
+            {
+                'result_code': result_code,
+                'provider': provider,
+                'email': email,
+                'message': message,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
@@ -316,6 +558,67 @@ class MePasswordChangeView(APIView):
         logger.info('me_password_changed', extra={'user_id': user.id})
 
         return Response({'detail': 'Senha atualizada com sucesso.'}, status=status.HTTP_200_OK)
+
+
+class MePasswordSetView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if user.has_usable_password():
+            return Response(
+                {
+                    'detail': 'Esta conta já possui senha definida.',
+                    'code': 'password_already_set',
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        serializer = MePasswordSetSerializer(data=request.data, context={'user': user})
+        serializer.is_valid(raise_exception=True)
+
+        user.set_password(serializer.validated_data['new_password'])
+        user.save(update_fields=['password'])
+        logger.info('me_password_set', extra={'user_id': user.id})
+
+        return Response(
+            {
+                'detail': 'Senha definida com sucesso.',
+                **serialize_social_complete_link_payload(user=user, request=request),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class MeLinkedAccountsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(list_linked_accounts(request.user), status=status.HTTP_200_OK)
+
+
+class MeLinkedAccountDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, provider: str):
+        try:
+            payload = unlink_external_identity(user=request.user, provider=provider)
+        except ExternalIdentity.DoesNotExist as exc:
+            raise NotFound('Vínculo externo não encontrado.') from exc
+        except ValueError as exc:
+            return Response(
+                {
+                    'detail': str(exc),
+                    'code': 'last_auth_method_removal_not_allowed',
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        logger.info(
+            'me_linked_account_removed',
+            extra={'user_id': request.user.id, 'provider': (provider or '').strip().lower()},
+        )
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 class MeDataExportView(APIView):

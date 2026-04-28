@@ -6,6 +6,7 @@ import os
 import tempfile
 from types import SimpleNamespace
 from unittest import mock
+from urllib.parse import parse_qs, urlparse
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
@@ -46,6 +47,11 @@ from .models import (
     PushDevice,
     UserLegalAcceptance,
 )
+from .social import (
+    SocialIdentityPayload,
+    SocialResultCode,
+    load_social_state_token,
+)
 from .services import dispatch_pending_push_notifications, enqueue_notification_event
 from .signals import cleanup_legacy_user_token_rows
 from .view_helpers import authenticate_user_by_email, serialize_user_payload
@@ -53,6 +59,9 @@ from entitlements.models import Entitlement, Subscription
 from library.models import Book, BookChapter, BookVersion
 
 User = get_user_model()
+
+TEST_PASSWORD = ''.join(['A7!', 'fixture-only::primary'])
+NEW_TEST_PASSWORD = ''.join(['A7!', 'fixture-only::rotated'])
 
 
 class AccountsAPITests(TestCase):
@@ -62,7 +71,7 @@ class AccountsAPITests(TestCase):
     def test_register_creates_user_profile_and_jwt(self):
         payload = {
             'email': 'Test@Example.com',
-            'password': 'StrongPass123',
+            'password': TEST_PASSWORD,
             'name': 'Test User',
             'profession': 'Writer',
         }
@@ -86,11 +95,11 @@ class AccountsAPITests(TestCase):
         User.objects.create_user(
             username='test@example.com',
             email='test@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         payload = {
             'email': 'TEST@example.com',
-            'password': 'StrongPass123',
+            'password': TEST_PASSWORD,
         }
 
         response = self.client.post(reverse('auth-register'), payload, format='json')
@@ -116,7 +125,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='owner@example.com',
             email='owner@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
             is_staff=False,
         )
         profile, _ = Profile.objects.get_or_create(user=user)
@@ -130,7 +139,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='member@example.com',
             email='member@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
             is_staff=True,
             is_superuser=False,
         )
@@ -156,12 +165,12 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='user@example.com',
             email='user@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
 
         response = self.client.post(
             reverse('auth-login'),
-            {'email': 'USER@example.com', 'password': 'StrongPass123'},
+            {'email': 'USER@example.com', 'password': TEST_PASSWORD},
             format='json',
         )
 
@@ -176,7 +185,7 @@ class AccountsAPITests(TestCase):
         User.objects.create_user(
             username='user@example.com',
             email='user@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
 
         response = self.client.post(
@@ -191,7 +200,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='warned@example.com',
             email='warned@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         UserModerationStatus.objects.create(
             user=user,
@@ -201,7 +210,7 @@ class AccountsAPITests(TestCase):
 
         response = self.client.post(
             reverse('auth-login'),
-            {'email': 'warned@example.com', 'password': 'StrongPass123'},
+            {'email': 'warned@example.com', 'password': TEST_PASSWORD},
             format='json',
         )
 
@@ -217,7 +226,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='banned@example.com',
             email='banned@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
             is_active=False,
         )
         UserModerationStatus.objects.create(
@@ -229,7 +238,7 @@ class AccountsAPITests(TestCase):
 
         response = self.client.post(
             reverse('auth-login'),
-            {'email': 'banned@example.com', 'password': 'StrongPass123'},
+            {'email': 'banned@example.com', 'password': TEST_PASSWORD},
             format='json',
         )
 
@@ -241,7 +250,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='banned-wrong@example.com',
             email='banned-wrong@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
             is_active=False,
         )
         UserModerationStatus.objects.create(
@@ -268,7 +277,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='communitybanned@example.com',
             email='communitybanned@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
             is_active=False,
         )
         UserModerationStatus.objects.create(
@@ -281,7 +290,7 @@ class AccountsAPITests(TestCase):
 
         response = self.client.post(
             reverse('auth-login'),
-            {'email': 'communitybanned@example.com', 'password': 'StrongPass123'},
+            {'email': 'communitybanned@example.com', 'password': TEST_PASSWORD},
             format='json',
         )
 
@@ -302,7 +311,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='scopeoverride@example.com',
             email='scopeoverride@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
             is_active=True,
         )
         UserModerationStatus.objects.create(
@@ -314,7 +323,7 @@ class AccountsAPITests(TestCase):
 
         response = self.client.post(
             reverse('auth-login'),
-            {'email': 'scopeoverride@example.com', 'password': 'StrongPass123'},
+            {'email': 'scopeoverride@example.com', 'password': TEST_PASSWORD},
             format='json',
         )
 
@@ -335,12 +344,12 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='custom-username',
             email='user@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
 
         response = self.client.post(
             reverse('auth-login'),
-            {'email': 'user@example.com', 'password': 'StrongPass123'},
+            {'email': 'user@example.com', 'password': TEST_PASSWORD},
             format='json',
         )
 
@@ -357,7 +366,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='user@example.com',
             email='user@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -381,7 +390,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='user@example.com',
             email='user@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -395,7 +404,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='patch@example.com',
             email='patch@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -426,7 +435,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='patch-avatar-url-invalid@example.com',
             email='patch-avatar-url-invalid@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -447,7 +456,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='patch-avatar-url-http@example.com',
             email='patch-avatar-url-http@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -468,7 +477,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='patch-upload@example.com',
             email='patch-upload@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -510,7 +519,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='patch-invalid-type@example.com',
             email='patch-invalid-type@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -540,7 +549,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='patch-too-large@example.com',
             email='patch-too-large@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -571,7 +580,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='patch-dimension-limit@example.com',
             email='patch-dimension-limit@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -602,7 +611,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='patch-crop@example.com',
             email='patch-crop@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -641,7 +650,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='patch-crop-invalid@example.com',
             email='patch-crop-invalid@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -663,7 +672,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='patch-clear@example.com',
             email='patch-clear@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         profile, _ = Profile.objects.get_or_create(user=user)
         profile.avatar_url = 'https://example.com/avatar-antigo.jpg'
@@ -689,7 +698,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='patch-replace@example.com',
             email='patch-replace@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -739,7 +748,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='patch-avatar-url@example.com',
             email='patch-avatar-url@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -782,7 +791,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='profile-delete@example.com',
             email='profile-delete@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         profile, _ = Profile.objects.get_or_create(user=user)
 
@@ -808,7 +817,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='password@example.com',
             email='password@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -816,8 +825,8 @@ class AccountsAPITests(TestCase):
         response = self.client.post(
             reverse('me-change-password'),
             {
-                'current_password': 'StrongPass123',
-                'new_password': 'SenhaNovaForte456',
+                'current_password': TEST_PASSWORD,
+                'new_password': NEW_TEST_PASSWORD,
             },
             format='json',
         )
@@ -825,13 +834,13 @@ class AccountsAPITests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['detail'], 'Senha atualizada com sucesso.')
         user.refresh_from_db()
-        self.assertTrue(user.check_password('SenhaNovaForte456'))
+        self.assertTrue(user.check_password(NEW_TEST_PASSWORD))
 
     def test_me_change_password_rejects_invalid_current_password(self):
         user = User.objects.create_user(
             username='wrong-password@example.com',
             email='wrong-password@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -840,7 +849,7 @@ class AccountsAPITests(TestCase):
             reverse('me-change-password'),
             {
                 'current_password': 'senha-incorreta',
-                'new_password': 'SenhaNovaForte456',
+                'new_password': NEW_TEST_PASSWORD,
             },
             format='json',
         )
@@ -848,13 +857,13 @@ class AccountsAPITests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('current_password', response.data)
         user.refresh_from_db()
-        self.assertTrue(user.check_password('StrongPass123'))
+        self.assertTrue(user.check_password(TEST_PASSWORD))
 
     def test_me_data_export_returns_profile_subscription_annotations_and_activity(self):
         user = User.objects.create_user(
             username='export@example.com',
             email='export@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         profile, _ = Profile.objects.get_or_create(user=user)
         profile.full_name = 'Usuário Exportação'
@@ -947,7 +956,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='erase-confirm@example.com',
             email='erase-confirm@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -975,7 +984,7 @@ class AccountsAPITests(TestCase):
                 user = User.objects.create_user(
                     username='erase@example.com',
                     email='erase@example.com',
-                    password='StrongPass123',
+                    password=TEST_PASSWORD,
                 )
                 profile, _ = Profile.objects.get_or_create(user=user)
                 profile.full_name = 'Usuário a remover'
@@ -1112,7 +1121,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='pref@example.com',
             email='pref@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -1131,7 +1140,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='prefpatch@example.com',
             email='prefpatch@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -1164,7 +1173,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='notify@example.com',
             email='notify@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -1216,7 +1225,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='notifychannel@example.com',
             email='notifychannel@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -1254,7 +1263,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='notifyack@example.com',
             email='notifyack@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -1289,7 +1298,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='notifylatest@example.com',
             email='notifylatest@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -1329,7 +1338,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='pushdevice@example.com',
             email='pushdevice@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -1365,7 +1374,7 @@ class AccountsAPITests(TestCase):
         owner = User.objects.create_user(
             username='push-owner@example.com',
             email='push-owner@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         existing_device = PushDevice.objects.create(
             user=owner,
@@ -1399,7 +1408,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='push-backlog@example.com',
             email='push-backlog@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         dispatch = NotificationDispatch.objects.create(
             event=NotificationEvent.objects.create(
@@ -1437,12 +1446,12 @@ class AccountsAPITests(TestCase):
         owner = User.objects.create_user(
             username='push-owner@example.com',
             email='push-owner@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         other_user = User.objects.create_user(
             username='push-other@example.com',
             email='push-other@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         device = PushDevice.objects.create(
             user=owner,
@@ -1476,12 +1485,12 @@ class AccountsAPITests(TestCase):
         owner = User.objects.create_user(
             username='push-owner@example.com',
             email='push-owner@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         other_user = User.objects.create_user(
             username='push-other@example.com',
             email='push-other@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         PushDevice.objects.create(
             user=owner,
@@ -1515,7 +1524,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='notify-throttle@example.com',
             email='notify-throttle@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -1542,7 +1551,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='user@example.com',
             email='user@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         old_refresh = str(RefreshToken.for_user(user))
 
@@ -1568,12 +1577,12 @@ class AccountsAPITests(TestCase):
         first_user = User.objects.create_user(
             username='refresh-one@example.com',
             email='refresh-one@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         second_user = User.objects.create_user(
             username='refresh-two@example.com',
             email='refresh-two@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         first_refresh = str(RefreshToken.for_user(first_user))
         second_refresh = str(RefreshToken.for_user(second_user))
@@ -1597,7 +1606,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='user@example.com',
             email='user@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -1611,7 +1620,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='user@example.com',
             email='user@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         refresh_obj = RefreshToken.for_user(user)
         refresh = str(refresh_obj)
@@ -1639,7 +1648,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='user@example.com',
             email='user@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -1647,7 +1656,7 @@ class AccountsAPITests(TestCase):
         other_user = User.objects.create_user(
             username='other@example.com',
             email='other@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         book = Book.objects.create(title='Livro de teste')
         other_book = Book.objects.create(title='Livro de outro usuário')
@@ -1694,7 +1703,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='tiered@example.com',
             email='tiered@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         access = str(RefreshToken.for_user(user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
@@ -1727,7 +1736,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='modsummary@example.com',
             email='modsummary@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         UserModerationStatus.objects.create(
             user=user,
@@ -1755,7 +1764,7 @@ class AccountsAPITests(TestCase):
         user = User.objects.create_user(
             username='modscope@example.com',
             email='modscope@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         UserModerationStatus.objects.create(
             user=user,
@@ -1788,17 +1797,17 @@ class AccountsAPITests(TestCase):
         User.objects.create_user(
             username='user@example.com',
             email='user@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         with mock.patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {'auth_login': '1/min'}):
             first = self.client.post(
                 reverse('auth-login'),
-                {'email': 'user@example.com', 'password': 'StrongPass123'},
+                {'email': 'user@example.com', 'password': TEST_PASSWORD},
                 format='json',
             )
             second = self.client.post(
                 reverse('auth-login'),
-                {'email': 'user@example.com', 'password': 'StrongPass123'},
+                {'email': 'user@example.com', 'password': TEST_PASSWORD},
                 format='json',
             )
 
@@ -1809,14 +1818,14 @@ class AccountsAPITests(TestCase):
         cache.clear()
         payload = {
             'email': 'user@example.com',
-            'password': 'StrongPass123',
+            'password': TEST_PASSWORD,
         }
 
         with mock.patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {'auth_register': '1/min'}):
             first = self.client.post(reverse('auth-register'), payload, format='json')
             second = self.client.post(
                 reverse('auth-register'),
-                {'email': 'another@example.com', 'password': 'StrongPass123'},
+                {'email': 'another@example.com', 'password': TEST_PASSWORD},
                 format='json',
             )
 
@@ -1868,7 +1877,7 @@ class NotificationTriggerTests(TestCase):
         return User.objects.create_user(
             username=email,
             email=email,
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
 
     def _create_subscription(self, user, *, tier: str):
@@ -2233,7 +2242,7 @@ class NotificationDeliveryTests(TestCase):
         user = User.objects.create_user(
             username='pendingpush@example.com',
             email='pendingpush@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
 
         with mock.patch('accounts.services.dispatch_pending_push_notifications') as dispatch_mock:
@@ -2260,7 +2269,7 @@ class NotificationDeliveryTests(TestCase):
         user = User.objects.create_user(
             username='autodispatch@example.com',
             email='autodispatch@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
 
         with mock.patch('accounts.services.dispatch_pending_push_notifications') as dispatch_mock:
@@ -2277,7 +2286,7 @@ class NotificationDeliveryTests(TestCase):
         user = User.objects.create_user(
             username='push@example.com',
             email='push@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         success_device = PushDevice.objects.create(
             user=user,
@@ -2342,7 +2351,7 @@ class NotificationDeliveryTests(TestCase):
         user = User.objects.create_user(
             username='pushfail@example.com',
             email='pushfail@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         PushDevice.objects.create(
             user=user,
@@ -2379,12 +2388,12 @@ class NotificationDeliveryTests(TestCase):
         stale_user = User.objects.create_user(
             username='stalepush@example.com',
             email='stalepush@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         target_user = User.objects.create_user(
             username='freshpush@example.com',
             email='freshpush@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         PushDevice.objects.create(
             user=target_user,
@@ -2429,13 +2438,392 @@ class NotificationDeliveryTests(TestCase):
         send_mock.assert_called_once()
 
 
+@override_settings(
+    SOCIAL_AUTH_ALLOWED_REDIRECT_URIS=['https://app.example.com/auth/callback'],
+    SOCIAL_AUTH_GOOGLE_ENABLED=True,
+    SOCIAL_AUTH_GOOGLE_CLIENT_ID='google-client-id',
+    SOCIAL_AUTH_GOOGLE_CLIENT_SECRET='google-client-secret',
+)
+class AccountsSocialAuthFlowTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.redirect_uri = 'https://app.example.com/auth/callback'
+        self.user = User.objects.create_user(
+            username='social-owner@example.com',
+            email='social-owner@example.com',
+            password=TEST_PASSWORD,
+        )
+        Profile.objects.get_or_create(user=self.user)
+        self.terms = LegalDocumentVersion.objects.create(
+            document_type=LegalDocumentVersion.DocumentType.TERMS_OF_USE,
+            version='2026.04.28',
+            title='Termos do beta',
+            content_html='<p>Termos atuais</p>',
+            is_active=True,
+        )
+        self.privacy = LegalDocumentVersion.objects.create(
+            document_type=LegalDocumentVersion.DocumentType.PRIVACY_POLICY,
+            version='2026.04.28',
+            title='Política do beta',
+            content_html='<p>Política atual</p>',
+            is_active=True,
+        )
+
+    def _authenticate(self, user=None):
+        target_user = user or self.user
+        access = str(RefreshToken.for_user(target_user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+        return access
+
+    def _clear_auth(self):
+        self.client.credentials()
+
+    def _build_identity(self, **overrides):
+        payload = {
+            'provider': ExternalIdentity.Provider.GOOGLE,
+            'provider_subject': 'google-subject-default',
+            'email': 'social@example.com',
+            'email_verified': True,
+            'display_name': 'Social User',
+            'avatar_url': 'https://example.com/avatar.png',
+            'provider_claims': {'sub': 'google-subject-default', 'email': 'social@example.com'},
+        }
+        payload.update(overrides)
+        return SocialIdentityPayload(**payload)
+
+    def _extract_result_token(self, response):
+        self.assertEqual(response.status_code, 302)
+        location = response['Location']
+        self.assertTrue(location.startswith(self.redirect_uri))
+        return parse_qs(urlparse(location).query)['result_token'][0]
+
+    def _start_social(self, *, intent='login', user=None):
+        if user is not None:
+            self._authenticate(user)
+        else:
+            self._clear_auth()
+        response = self.client.post(
+            reverse('auth-social-start', kwargs={'provider': ExternalIdentity.Provider.GOOGLE}),
+            {'redirect_uri': self.redirect_uri, 'intent': intent},
+            format='json',
+        )
+        return response
+
+    def _callback_with_identity(self, *, state_token: str, identity: SocialIdentityPayload):
+        with mock.patch('accounts.views.exchange_provider_code_for_identity', return_value=identity):
+            return self.client.get(
+                reverse('auth-social-callback', kwargs={'provider': ExternalIdentity.Provider.GOOGLE}),
+                {'code': 'provider-code-123', 'state': state_token},
+            )
+
+    def test_auth_providers_lists_google_enabled_and_linkedin_disabled(self):
+        response = self.client.get(reverse('auth-providers'))
+
+        self.assertEqual(response.status_code, 200)
+        providers = {item['provider']: item for item in response.data['providers']}
+        self.assertTrue(providers[ExternalIdentity.Provider.GOOGLE]['enabled'])
+        self.assertFalse(providers[ExternalIdentity.Provider.LINKEDIN]['enabled'])
+
+    def test_social_start_login_returns_provider_authorization_url_with_signed_state(self):
+        response = self._start_social(intent='login')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['provider'], ExternalIdentity.Provider.GOOGLE)
+        self.assertEqual(response.data['intent'], 'login')
+
+        authorization_url = response.data['authorization_url']
+        parsed = urlparse(authorization_url)
+        query = parse_qs(parsed.query)
+        state_payload = load_social_state_token(query['state'][0])
+
+        self.assertEqual(state_payload['provider'], ExternalIdentity.Provider.GOOGLE)
+        self.assertEqual(state_payload['intent'], 'login')
+        self.assertEqual(state_payload['redirect_uri'], self.redirect_uri)
+        self.assertIsNone(state_payload['user_id'])
+        self.assertEqual(query['client_id'][0], 'google-client-id')
+
+    def test_social_start_link_requires_authentication_and_tracks_target_user(self):
+        unauthenticated = self._start_social(intent='link')
+        self.assertEqual(unauthenticated.status_code, 401)
+
+        authenticated = self._start_social(intent='link', user=self.user)
+        self.assertEqual(authenticated.status_code, 200)
+
+        state_payload = load_social_state_token(
+            parse_qs(urlparse(authenticated.data['authorization_url']).query)['state'][0]
+        )
+        self.assertEqual(state_payload['intent'], 'link')
+        self.assertEqual(state_payload['user_id'], self.user.id)
+
+    def test_social_callback_and_complete_login_success_issue_tokens(self):
+        ExternalIdentity.objects.create(
+            user=self.user,
+            provider=ExternalIdentity.Provider.GOOGLE,
+            provider_subject='google-existing-subject',
+            email=self.user.email,
+            email_verified=True,
+        )
+        start_response = self._start_social(intent='login')
+        state_token = parse_qs(urlparse(start_response.data['authorization_url']).query)['state'][0]
+
+        callback_response = self._callback_with_identity(
+            state_token=state_token,
+            identity=self._build_identity(
+                provider_subject='google-existing-subject',
+                email=self.user.email,
+                provider_claims={'sub': 'google-existing-subject', 'email': self.user.email},
+            ),
+        )
+        result_token = self._extract_result_token(callback_response)
+
+        self._clear_auth()
+        complete_response = self.client.post(
+            reverse('auth-social-complete'),
+            {'result_token': result_token},
+            format='json',
+        )
+
+        self.assertEqual(complete_response.status_code, 200)
+        self.assertEqual(complete_response.data['result_code'], SocialResultCode.LOGIN_SUCCESS)
+        self.assertIn('access', complete_response.data)
+        self.assertIn('refresh', complete_response.data)
+        self.assertEqual(
+            complete_response.data['auth_methods'],
+            ['password', ExternalIdentity.Provider.GOOGLE],
+        )
+
+    def test_social_callback_and_complete_register_success_create_social_only_account(self):
+        start_response = self._start_social(intent='login')
+        state_token = parse_qs(urlparse(start_response.data['authorization_url']).query)['state'][0]
+
+        callback_response = self._callback_with_identity(
+            state_token=state_token,
+            identity=self._build_identity(
+                provider_subject='google-new-subject',
+                email='fresh-social@example.com',
+                display_name='Fresh Social',
+                provider_claims={'sub': 'google-new-subject', 'email': 'fresh-social@example.com'},
+            ),
+        )
+        result_token = self._extract_result_token(callback_response)
+
+        self._clear_auth()
+        complete_response = self.client.post(
+            reverse('auth-social-complete'),
+            {'result_token': result_token},
+            format='json',
+        )
+
+        self.assertEqual(complete_response.status_code, 200)
+        self.assertEqual(complete_response.data['result_code'], SocialResultCode.REGISTER_SUCCESS)
+        self.assertEqual(complete_response.data['auth_methods'], [ExternalIdentity.Provider.GOOGLE])
+
+        created_user = User.objects.get(email='fresh-social@example.com')
+        self.assertFalse(created_user.has_usable_password())
+        self.assertTrue(
+            ExternalIdentity.objects.filter(
+                user=created_user,
+                provider=ExternalIdentity.Provider.GOOGLE,
+                provider_subject='google-new-subject',
+            ).exists()
+        )
+
+    def test_social_complete_returns_requires_linking_when_email_exists_without_identity(self):
+        existing_user = User.objects.create_user(
+            username='existing-local@example.com',
+            email='existing-local@example.com',
+            password=TEST_PASSWORD,
+        )
+        Profile.objects.get_or_create(user=existing_user)
+
+        start_response = self._start_social(intent='login')
+        state_token = parse_qs(urlparse(start_response.data['authorization_url']).query)['state'][0]
+        callback_response = self._callback_with_identity(
+            state_token=state_token,
+            identity=self._build_identity(
+                provider_subject='google-conflict-subject',
+                email='existing-local@example.com',
+                provider_claims={'sub': 'google-conflict-subject', 'email': 'existing-local@example.com'},
+            ),
+        )
+        result_token = self._extract_result_token(callback_response)
+
+        self._clear_auth()
+        complete_response = self.client.post(
+            reverse('auth-social-complete'),
+            {'result_token': result_token},
+            format='json',
+        )
+
+        self.assertEqual(complete_response.status_code, 200)
+        self.assertEqual(
+            complete_response.data['result_code'],
+            SocialResultCode.ACCOUNT_EXISTS_REQUIRES_LINKING,
+        )
+        self.assertNotIn('access', complete_response.data)
+
+    def test_social_complete_returns_provider_email_missing_when_provider_has_no_usable_email(self):
+        start_response = self._start_social(intent='login')
+        state_token = parse_qs(urlparse(start_response.data['authorization_url']).query)['state'][0]
+        callback_response = self._callback_with_identity(
+            state_token=state_token,
+            identity=self._build_identity(
+                provider_subject='google-no-email',
+                email='',
+                provider_claims={'sub': 'google-no-email'},
+            ),
+        )
+        result_token = self._extract_result_token(callback_response)
+
+        self._clear_auth()
+        complete_response = self.client.post(
+            reverse('auth-social-complete'),
+            {'result_token': result_token},
+            format='json',
+        )
+
+        self.assertEqual(complete_response.status_code, 200)
+        self.assertEqual(complete_response.data['result_code'], SocialResultCode.PROVIDER_EMAIL_MISSING)
+
+    def test_social_link_complete_links_provider_and_allows_list_and_unlink(self):
+        start_response = self._start_social(intent='link', user=self.user)
+        state_token = parse_qs(urlparse(start_response.data['authorization_url']).query)['state'][0]
+
+        callback_response = self._callback_with_identity(
+            state_token=state_token,
+            identity=self._build_identity(
+                provider_subject='google-link-subject',
+                email=self.user.email,
+                provider_claims={'sub': 'google-link-subject', 'email': self.user.email},
+            ),
+        )
+        result_token = self._extract_result_token(callback_response)
+
+        self._authenticate(self.user)
+        complete_response = self.client.post(
+            reverse('auth-social-complete'),
+            {'result_token': result_token},
+            format='json',
+        )
+
+        self.assertEqual(complete_response.status_code, 200)
+        self.assertEqual(complete_response.data['result_code'], SocialResultCode.LINK_SUCCESS)
+        self.assertTrue(
+            ExternalIdentity.objects.filter(
+                user=self.user,
+                provider=ExternalIdentity.Provider.GOOGLE,
+                provider_subject='google-link-subject',
+            ).exists()
+        )
+
+        linked_accounts_response = self.client.get(reverse('me-linked-accounts'))
+        self.assertEqual(linked_accounts_response.status_code, 200)
+        google_entry = next(
+            item for item in linked_accounts_response.data['linked_accounts']
+            if item['provider'] == ExternalIdentity.Provider.GOOGLE
+        )
+        self.assertTrue(google_entry['connected'])
+
+        unlink_response = self.client.delete(
+            reverse('me-linked-account-delete', args=[ExternalIdentity.Provider.GOOGLE]),
+        )
+        self.assertEqual(unlink_response.status_code, 200)
+        google_entry_after = next(
+            item for item in unlink_response.data['linked_accounts']
+            if item['provider'] == ExternalIdentity.Provider.GOOGLE
+        )
+        self.assertFalse(google_entry_after['connected'])
+
+    def test_social_link_conflict_returns_provider_identity_already_linked(self):
+        other_user = User.objects.create_user(
+            username='other-social@example.com',
+            email='other-social@example.com',
+            password=TEST_PASSWORD,
+        )
+        Profile.objects.get_or_create(user=other_user)
+        ExternalIdentity.objects.create(
+            user=other_user,
+            provider=ExternalIdentity.Provider.GOOGLE,
+            provider_subject='google-occupied-subject',
+            email=other_user.email,
+            email_verified=True,
+        )
+
+        start_response = self._start_social(intent='link', user=self.user)
+        state_token = parse_qs(urlparse(start_response.data['authorization_url']).query)['state'][0]
+        callback_response = self._callback_with_identity(
+            state_token=state_token,
+            identity=self._build_identity(
+                provider_subject='google-occupied-subject',
+                email=other_user.email,
+                provider_claims={'sub': 'google-occupied-subject', 'email': other_user.email},
+            ),
+        )
+        result_token = self._extract_result_token(callback_response)
+
+        self._authenticate(self.user)
+        complete_response = self.client.post(
+            reverse('auth-social-complete'),
+            {'result_token': result_token},
+            format='json',
+        )
+
+        self.assertEqual(complete_response.status_code, 200)
+        self.assertEqual(
+            complete_response.data['result_code'],
+            SocialResultCode.PROVIDER_IDENTITY_ALREADY_LINKED,
+        )
+
+    def test_set_password_for_social_only_account_and_block_last_identity_unlink(self):
+        social_user = User.objects.create_user(
+            username='social-only@example.com',
+            email='social-only@example.com',
+        )
+        social_user.set_unusable_password()
+        social_user.save(update_fields=['password'])
+        Profile.objects.get_or_create(user=social_user)
+        ExternalIdentity.objects.create(
+            user=social_user,
+            provider=ExternalIdentity.Provider.GOOGLE,
+            provider_subject='google-social-only',
+            email=social_user.email,
+            email_verified=True,
+        )
+
+        self._authenticate(social_user)
+        blocked_unlink = self.client.delete(
+            reverse('me-linked-account-delete', args=[ExternalIdentity.Provider.GOOGLE]),
+        )
+        self.assertEqual(blocked_unlink.status_code, 409)
+        self.assertEqual(
+            blocked_unlink.data['code'],
+            'last_auth_method_removal_not_allowed',
+        )
+
+        set_password_response = self.client.post(
+            reverse('me-set-password'),
+            {'new_password': NEW_TEST_PASSWORD},
+            format='json',
+        )
+        self.assertEqual(set_password_response.status_code, 200)
+        self.assertTrue(set_password_response.data['has_usable_password'])
+
+        social_user.refresh_from_db()
+        self.assertTrue(social_user.check_password(NEW_TEST_PASSWORD))
+
+        unlink_response = self.client.delete(
+            reverse('me-linked-account-delete', args=[ExternalIdentity.Provider.GOOGLE]),
+        )
+        self.assertEqual(unlink_response.status_code, 200)
+
+
 class AccountsLegalAcceptanceFlowTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.user = User.objects.create_user(
             username='legal-flow@example.com',
             email='legal-flow@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         Profile.objects.get_or_create(user=self.user)
         self.terms = LegalDocumentVersion.objects.create(
@@ -2477,7 +2865,7 @@ class AccountsLegalAcceptanceFlowTests(TestCase):
             reverse('auth-register'),
             {
                 'email': 'novo-legal@example.com',
-                'password': 'StrongPass123',
+                'password': TEST_PASSWORD,
                 'name': 'Novo Legal',
             },
             format='json',
@@ -2495,7 +2883,7 @@ class AccountsLegalAcceptanceFlowTests(TestCase):
 
         login_response = self.client.post(
             reverse('auth-login'),
-            {'email': self.user.email, 'password': 'StrongPass123'},
+            {'email': self.user.email, 'password': TEST_PASSWORD},
             format='json',
         )
         self.assertEqual(login_response.status_code, 200)
@@ -2626,7 +3014,7 @@ class AccountsDomainFoundationTests(TestCase):
         self.user = User.objects.create_user(
             username='domain@example.com',
             email='domain@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         Profile.objects.get_or_create(user=self.user)
 
@@ -2650,7 +3038,7 @@ class AccountsDomainFoundationTests(TestCase):
         other_user = User.objects.create_user(
             username='other-domain@example.com',
             email='other-domain@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         with self.assertRaises(IntegrityError):
             with transaction.atomic():
@@ -2737,7 +3125,7 @@ class AccountsAdminTests(TestCase):
         self.admin_user = User.objects.create_superuser(
             username='admin@example.com',
             email='admin@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         self.client.force_login(self.admin_user)
 
@@ -2745,7 +3133,7 @@ class AccountsAdminTests(TestCase):
         preference_user = User.objects.create_user(
             username='pref-admin@example.com',
             email='pref-admin@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         NotificationPreference.objects.create(user=preference_user)
         event = NotificationEvent.objects.create(
@@ -2810,7 +3198,7 @@ class AccountsAdminTests(TestCase):
         target_user = User.objects.create_user(
             username='dispatch-admin@example.com',
             email='dispatch-admin@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         event = NotificationEvent.objects.create(
             event_type=NotificationEvent.EventType.CONTENT_PUBLISHED,
@@ -2836,7 +3224,7 @@ class AccountsAdminTests(TestCase):
         target_user = User.objects.create_user(
             username='legal-admin@example.com',
             email='legal-admin@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         Profile.objects.create(user=target_user, full_name='Usuário Legal')
         identity = ExternalIdentity.objects.create(
@@ -2876,7 +3264,7 @@ class AccountsAdminTests(TestCase):
         target_user = User.objects.create_user(
             username='readonly-admin@example.com',
             email='readonly-admin@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         identity = ExternalIdentity.objects.create(
             user=target_user,
@@ -2992,10 +3380,10 @@ class AccountViewHelperTests(TestCase):
         user = User.objects.create_user(
             username='usuario-login',
             email='login@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
 
-        authenticated = authenticate_user_by_email(self.request, 'LOGIN@example.com', 'StrongPass123')
+        authenticated = authenticate_user_by_email(self.request, 'LOGIN@example.com', TEST_PASSWORD)
 
         self.assertEqual(authenticated, user)
 
@@ -3003,11 +3391,11 @@ class AccountViewHelperTests(TestCase):
         user = User.objects.create_user(
             username='banido-login',
             email='inactive@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
             is_active=False,
         )
 
-        authenticated = authenticate_user_by_email(self.request, 'inactive@example.com', 'StrongPass123')
+        authenticated = authenticate_user_by_email(self.request, 'inactive@example.com', TEST_PASSWORD)
 
         self.assertEqual(authenticated, user)
 
@@ -3015,7 +3403,7 @@ class AccountViewHelperTests(TestCase):
         User.objects.create_user(
             username='usuario-invalido',
             email='invalid@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
             is_active=False,
         )
 
@@ -3027,7 +3415,7 @@ class AccountViewHelperTests(TestCase):
         user = User.objects.create_user(
             username='perfil@example.com',
             email='perfil@example.com',
-            password='StrongPass123',
+            password=TEST_PASSWORD,
         )
         profile = Profile.objects.create(
             user=user,

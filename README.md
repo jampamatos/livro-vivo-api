@@ -140,6 +140,40 @@ Banco de Pecas:
 - `TEMPLATES_BANK_REMOTE_FILE_FETCH_TIMEOUT_SECONDS`
 - `TEMPLATES_BANK_REMOTE_FILE_MAX_BYTES`
 
+Auth social:
+
+- `SOCIAL_AUTH_ALLOWED_REDIRECT_URIS`
+- `SOCIAL_AUTH_STATE_MAX_AGE_SECONDS`
+- `SOCIAL_AUTH_RESULT_TOKEN_MAX_AGE_SECONDS`
+- `SOCIAL_AUTH_HTTP_TIMEOUT_SECONDS`
+- `SOCIAL_AUTH_GOOGLE_ENABLED`
+- `SOCIAL_AUTH_GOOGLE_CLIENT_ID`
+- `SOCIAL_AUTH_GOOGLE_CLIENT_SECRET`
+- `SOCIAL_AUTH_GOOGLE_AUTHORIZATION_URL`
+- `SOCIAL_AUTH_GOOGLE_TOKEN_URL`
+- `SOCIAL_AUTH_GOOGLE_USERINFO_URL`
+- `SOCIAL_AUTH_GOOGLE_SCOPES`
+- `SOCIAL_AUTH_LINKEDIN_ENABLED`
+- `SOCIAL_AUTH_LINKEDIN_CLIENT_ID`
+- `SOCIAL_AUTH_LINKEDIN_CLIENT_SECRET`
+- `SOCIAL_AUTH_LINKEDIN_AUTHORIZATION_URL`
+- `SOCIAL_AUTH_LINKEDIN_TOKEN_URL`
+- `SOCIAL_AUTH_LINKEDIN_USERINFO_URL`
+- `SOCIAL_AUTH_LINKEDIN_SCOPES`
+
+Notas:
+
+- nesta fase, `Google` é o unico provider operacional
+- `LinkedIn` ja esta modelado, mas segue desabilitado por padrao
+- `SOCIAL_AUTH_ALLOWED_REDIRECT_URIS` deve incluir o callback web e o scheme mobile
+- o fluxo usa:
+  - `POST /auth/social/<provider>/start/`
+  - `GET /auth/social/<provider>/callback/`
+  - `POST /auth/social/complete/`
+  - `GET /me/linked-accounts/`
+  - `DELETE /me/linked-accounts/<provider>/`
+  - `POST /me/set-password/`
+
 ## Storage de midia e anexos
 
 O backend agora suporta storage configuravel por alias:
