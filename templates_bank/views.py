@@ -15,6 +15,7 @@ from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 
+from accounts.permissions import HasAcceptedRequiredLegalDocuments
 from .models import PublicationStatus, TemplatePiece
 from .permissions import IsProfessionalSubscriberOrStaff
 from .serializers import TemplatePieceSerializer
@@ -88,8 +89,12 @@ class TemplatePieceViewSet(viewsets.ModelViewSet):
         if self.action == 'download_file':
             return [AllowAny()]
         if self.action in ('list', 'retrieve', 'download_token', 'download'):
-            return [IsAuthenticated(), IsProfessionalSubscriberOrStaff()]
-        return [IsAuthenticated(), IsAdminUser()]
+            return [
+                IsAuthenticated(),
+                HasAcceptedRequiredLegalDocuments(),
+                IsProfessionalSubscriberOrStaff(),
+            ]
+        return [IsAuthenticated(), HasAcceptedRequiredLegalDocuments(), IsAdminUser()]
 
     def get_queryset(self):
         qs = super().get_queryset()

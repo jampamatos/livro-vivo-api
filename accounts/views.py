@@ -20,7 +20,17 @@ from entitlements.models import Entitlement
 from entitlements.services import get_effective_tier, get_subscription_snapshot
 
 from .models import NotificationDispatch, NotificationPreference, Profile, PushDevice
+from .legal import (
+    accept_required_legal_documents,
+    build_legal_status,
+    get_auth_methods,
+    get_request_ip,
+    list_required_legal_documents_for_user,
+    list_user_legal_acceptances,
+)
+from .permissions import HasAcceptedRequiredLegalDocuments
 from .serializers import (
+    LegalAcceptanceSubmitSerializer,
     MePasswordChangeSerializer,
     MeUpdateSerializer,
     NotificationDispatchSerializer,
@@ -47,6 +57,21 @@ User = get_user_model()
 logger = logging.getLogger("livro_vivo.api")
 
 
+def _serialize_auth_context(user, *, request=None) -> dict:
+    return {
+        'auth_methods': get_auth_methods(user),
+        'legal_status': build_legal_status(user, request=request),
+    }
+
+
+def _serialize_me_payload(user, profile, *, request=None) -> dict:
+    return {
+        **serialize_user_payload(user, profile, request=request),
+        'has_usable_password': user.has_usable_password(),
+        **_serialize_auth_context(user, request=request),
+    }
+
+
 class RegisterView(APIView):
     """Cadastro de usuário com criação de sessão JWT e perfil."""
 
@@ -71,6 +96,7 @@ class RegisterView(APIView):
             {
                 **tokens,
                 'user': serialize_user_payload(user, profile, request=request),
+                **_serialize_auth_context(user, request=request),
             },
             status=status.HTTP_201_CREATED,
         )
@@ -114,10 +140,15 @@ class LoginView(APIView):
             )
 
         tokens = issue_tokens_for_user(user)
+        profile, _ = Profile.objects.get_or_create(user=user)
         from community.services import pull_pending_login_notice
 
         moderation_notice = pull_pending_login_notice(user)
-        payload = {**tokens}
+        payload = {
+            **tokens,
+            'user': serialize_user_payload(user, profile, request=request),
+            **_serialize_auth_context(user, request=request),
+        }
         if moderation_notice:
             payload['moderation_notice'] = moderation_notice
         logger.info(
@@ -158,11 +189,16 @@ class MeView(APIView):
 
     parser_classes = [JSONParser, FormParser, MultiPartParser]
 
+    def get_permissions(self):
+        if self.request.method.upper() == 'PATCH':
+            return [IsAuthenticated(), HasAcceptedRequiredLegalDocuments()]
+        return [IsAuthenticated()]
+
     def get(self, request):
         user = request.user
         profile, _ = Profile.objects.get_or_create(user=user)
 
-        return Response(serialize_user_payload(user, profile, request=request))
+        return Response(_serialize_me_payload(user, profile, request=request))
 
     def patch(self, request):
         user = request.user
@@ -223,7 +259,48 @@ class MeView(APIView):
                 },
             )
 
-        return Response(serialize_user_payload(user, profile, request=request), status=status.HTTP_200_OK)
+        return Response(_serialize_me_payload(user, profile, request=request), status=status.HTTP_200_OK)
+
+
+class MeLegalDocumentsRequiredView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response({'documents': list_required_legal_documents_for_user(request.user)})
+
+
+class MeLegalAcceptancesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response({'acceptances': list_user_legal_acceptances(request.user)})
+
+
+class MeLegalAcceptancesAcceptView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = LegalAcceptanceSubmitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        acceptances = accept_required_legal_documents(
+            user=request.user,
+            document_ids=serializer.validated_data['document_ids'],
+            source=serializer.validated_data['source'],
+            app_platform=serializer.validated_data['app_platform'],
+            app_version=serializer.validated_data.get('app_version', ''),
+            ip_address=get_request_ip(request),
+            user_agent=(request.META.get('HTTP_USER_AGENT') or '').strip(),
+        )
+        setattr(request, '_lv_legal_status_cache', None)
+
+        return Response(
+            {
+                'accepted_document_ids': [acceptance.document_id for acceptance in acceptances],
+                'legal_status': build_legal_status(request.user, request=request),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class MePasswordChangeView(APIView):
@@ -277,6 +354,8 @@ class MeDataErasureRequestView(APIView):
 class MeEntitlementsView(APIView):
     """Lista entitlements do usuário."""
 
+    permission_classes = [IsAuthenticated, HasAcceptedRequiredLegalDocuments]
+
     def get(self, request):
         effective_tier = get_effective_tier(request.user)
         subscription_snapshot = get_subscription_snapshot(request.user)
@@ -329,7 +408,7 @@ class MeEntitlementsView(APIView):
 class MeNotificationPreferencesView(APIView):
     """Leitura/atualização das preferências de notificação do usuário."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasAcceptedRequiredLegalDocuments]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'notifications_sensitive'
 
@@ -354,7 +433,7 @@ class MeNotificationPreferencesView(APIView):
 class MeNotificationsView(APIView):
     """Lista notificações do usuário para banner/inbox no app."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasAcceptedRequiredLegalDocuments]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'notifications_sensitive'
 
@@ -431,7 +510,7 @@ class MeNotificationAcknowledgeView(APIView):
 class MeInAppNotificationConsumeLatestView(APIView):
     """Entrega só o último banner pendente e colapsa o backlog mais antigo."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasAcceptedRequiredLegalDocuments]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'notifications_sensitive'
 
@@ -468,7 +547,7 @@ class MeInAppNotificationConsumeLatestView(APIView):
 class MePushDevicesView(APIView):
     """Registro e desativação de dispositivos para push via Expo."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasAcceptedRequiredLegalDocuments]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'notifications_sensitive'
 

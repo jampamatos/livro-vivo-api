@@ -1,5 +1,6 @@
 from rest_framework import viewsets
 
+from accounts.permissions import HasAcceptedRequiredLegalDocuments
 from entitlements.services import entitled_book_ids, user_has_subscription
 from .models import Annotation
 from .permissions import HasActiveBookEntitlementForAnnotation
@@ -15,7 +16,7 @@ class AnnotationViewSet(viewsets.ModelViewSet):
       - chapter_slug
     """
     serializer_class = AnnotationSerializer
-    permission_classes = [HasActiveBookEntitlementForAnnotation]
+    permission_classes = [HasAcceptedRequiredLegalDocuments, HasActiveBookEntitlementForAnnotation]
 
     def get_queryset(self):
         """

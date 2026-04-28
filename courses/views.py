@@ -5,6 +5,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 
+from accounts.permissions import HasAcceptedRequiredLegalDocuments
 from .models import CourseAsset, CoursePost, LiveEvent, PublicationStatus
 from .permissions import IsProfessionalSubscriberOrStaff
 from .serializers import CourseAssetSerializer, CoursePostSerializer, LiveEventSerializer
@@ -30,8 +31,12 @@ class ProfessionalReadStaffWriteViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [IsAuthenticated(), IsProfessionalSubscriberOrStaff()]
-        return [IsAuthenticated(), IsAdminUser()]
+            return [
+                IsAuthenticated(),
+                HasAcceptedRequiredLegalDocuments(),
+                IsProfessionalSubscriberOrStaff(),
+            ]
+        return [IsAuthenticated(), HasAcceptedRequiredLegalDocuments(), IsAdminUser()]
 
 
 class CoursePostViewSet(ProfessionalReadStaffWriteViewSet):

@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.viewsets import ModelViewSet
 
+from accounts.permissions import HasAcceptedRequiredLegalDocuments
 from .models import Category, Comment, CommentLike, Post, PostFollow, PostLike, Report, ReportModerationAction
 from .pagination import CommunityPagination
 from .permissions import (
@@ -49,7 +50,7 @@ User = get_user_model()
 class CategoryViewSet(ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
-    permission_classes = [IsNotCommunityBanned, IsStaffOrReadOnlyAuthed]
+    permission_classes = [HasAcceptedRequiredLegalDocuments, IsNotCommunityBanned, IsStaffOrReadOnlyAuthed]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'community_api'
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
@@ -59,7 +60,7 @@ class CategoryViewSet(ModelViewSet):
 
 class PostViewSet(ModelViewSet):
     serializer_class = PostSerializer
-    permission_classes = [IsAuthenticated, IsNotCommunityBanned, IsOwnerOrStaff]
+    permission_classes = [IsAuthenticated, HasAcceptedRequiredLegalDocuments, IsNotCommunityBanned, IsOwnerOrStaff]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'community_api'
     pagination_class = CommunityPagination
@@ -81,7 +82,7 @@ class PostViewSet(ModelViewSet):
         detail=True,
         methods=['post'],
         url_path='follow',
-        permission_classes=[IsAuthenticated, IsNotCommunityBanned],
+        permission_classes=[IsAuthenticated, HasAcceptedRequiredLegalDocuments, IsNotCommunityBanned],
     )
     def follow(self, request, pk=None):
         post = self.get_object()
@@ -94,7 +95,7 @@ class PostViewSet(ModelViewSet):
         detail=True,
         methods=['post'],
         url_path='unfollow',
-        permission_classes=[IsAuthenticated, IsNotCommunityBanned],
+        permission_classes=[IsAuthenticated, HasAcceptedRequiredLegalDocuments, IsNotCommunityBanned],
     )
     def unfollow(self, request, pk=None):
         post = self.get_object()
@@ -107,7 +108,7 @@ class PostViewSet(ModelViewSet):
         detail=True,
         methods=['post'],
         url_path='like',
-        permission_classes=[IsAuthenticated, IsNotCommunityBanned],
+        permission_classes=[IsAuthenticated, HasAcceptedRequiredLegalDocuments, IsNotCommunityBanned],
     )
     def like(self, request, pk=None):
         post = self.get_object()
@@ -120,7 +121,7 @@ class PostViewSet(ModelViewSet):
         detail=True,
         methods=['post'],
         url_path='unlike',
-        permission_classes=[IsAuthenticated, IsNotCommunityBanned],
+        permission_classes=[IsAuthenticated, HasAcceptedRequiredLegalDocuments, IsNotCommunityBanned],
     )
     def unlike(self, request, pk=None):
         post = self.get_object()
@@ -133,7 +134,7 @@ class PostViewSet(ModelViewSet):
         detail=True,
         methods=['get'],
         url_path='mention-candidates',
-        permission_classes=[IsAuthenticated, IsNotCommunityBanned],
+        permission_classes=[IsAuthenticated, HasAcceptedRequiredLegalDocuments, IsNotCommunityBanned],
     )
     def mention_candidates(self, request, pk=None):
         post = self.get_object()
@@ -149,7 +150,7 @@ class PostViewSet(ModelViewSet):
 
 class CommentViewSet(ModelViewSet):
     serializer_class = CommentSerializer
-    permission_classes = [IsAuthenticated, IsNotCommunityBanned, IsOwnerOrStaff]
+    permission_classes = [IsAuthenticated, HasAcceptedRequiredLegalDocuments, IsNotCommunityBanned, IsOwnerOrStaff]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'community_api'
     pagination_class = CommunityPagination
@@ -174,7 +175,7 @@ class CommentViewSet(ModelViewSet):
         detail=True,
         methods=['post'],
         url_path='like',
-        permission_classes=[IsAuthenticated, IsNotCommunityBanned],
+        permission_classes=[IsAuthenticated, HasAcceptedRequiredLegalDocuments, IsNotCommunityBanned],
     )
     def like(self, request, pk=None):
         comment = self.get_object()
@@ -187,7 +188,7 @@ class CommentViewSet(ModelViewSet):
         detail=True,
         methods=['post'],
         url_path='unlike',
-        permission_classes=[IsAuthenticated, IsNotCommunityBanned],
+        permission_classes=[IsAuthenticated, HasAcceptedRequiredLegalDocuments, IsNotCommunityBanned],
     )
     def unlike(self, request, pk=None):
         comment = self.get_object()
@@ -214,8 +215,8 @@ class ReportViewSet(ModelViewSet):
 
     def get_permissions(self):
         if self.action == "create":
-            return [IsAuthenticated(), IsNotCommunityBanned()]
-        return [IsAuthenticated(), IsModeratorOrAbove()]
+            return [IsAuthenticated(), HasAcceptedRequiredLegalDocuments(), IsNotCommunityBanned()]
+        return [IsAuthenticated(), HasAcceptedRequiredLegalDocuments(), IsModeratorOrAbove()]
 
     def perform_create(self, serializer):
         serializer.save(
