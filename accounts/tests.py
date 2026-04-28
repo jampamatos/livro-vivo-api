@@ -2429,6 +2429,198 @@ class NotificationDeliveryTests(TestCase):
         send_mock.assert_called_once()
 
 
+class AccountsLegalAcceptanceFlowTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username='legal-flow@example.com',
+            email='legal-flow@example.com',
+            password='StrongPass123',
+        )
+        Profile.objects.get_or_create(user=self.user)
+        self.terms = LegalDocumentVersion.objects.create(
+            document_type=LegalDocumentVersion.DocumentType.TERMS_OF_USE,
+            version='2026.04.28',
+            title='Termos do beta',
+            content_html='<p>Termos atuais</p>',
+            is_active=True,
+        )
+        self.privacy = LegalDocumentVersion.objects.create(
+            document_type=LegalDocumentVersion.DocumentType.PRIVACY_POLICY,
+            version='2026.04.28',
+            title='Política do beta',
+            content_html='<p>Política atual</p>',
+            is_active=True,
+        )
+
+    def _authenticate(self, user=None):
+        target_user = user or self.user
+        access = str(RefreshToken.for_user(target_user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+        return access
+
+    def _accept_all_documents(self):
+        self._authenticate()
+        return self.client.post(
+            reverse('me-legal-acceptances-accept'),
+            {
+                'document_ids': [self.terms.id, self.privacy.id],
+                'source': UserLegalAcceptance.Source.LOGIN_GATE,
+                'app_platform': UserLegalAcceptance.AppPlatform.WEB,
+                'app_version': 'beta-web',
+            },
+            format='json',
+        )
+
+    def test_login_and_register_include_auth_methods_and_legal_status(self):
+        register_response = self.client.post(
+            reverse('auth-register'),
+            {
+                'email': 'novo-legal@example.com',
+                'password': 'StrongPass123',
+                'name': 'Novo Legal',
+            },
+            format='json',
+        )
+        self.assertEqual(register_response.status_code, 201)
+        self.assertEqual(register_response.data['auth_methods'], ['password'])
+        self.assertTrue(register_response.data['legal_status']['requires_acceptance'])
+        self.assertEqual(
+            register_response.data['legal_status']['pending_document_types'],
+            [
+                LegalDocumentVersion.DocumentType.TERMS_OF_USE,
+                LegalDocumentVersion.DocumentType.PRIVACY_POLICY,
+            ],
+        )
+
+        login_response = self.client.post(
+            reverse('auth-login'),
+            {'email': self.user.email, 'password': 'StrongPass123'},
+            format='json',
+        )
+        self.assertEqual(login_response.status_code, 200)
+        self.assertEqual(login_response.data['auth_methods'], ['password'])
+        self.assertTrue(login_response.data['legal_status']['requires_acceptance'])
+        self.assertIn('user', login_response.data)
+
+    def test_me_returns_account_state_and_linked_auth_methods(self):
+        self.user.set_unusable_password()
+        self.user.save(update_fields=['password'])
+        ExternalIdentity.objects.create(
+            user=self.user,
+            provider=ExternalIdentity.Provider.GOOGLE,
+            provider_subject='google-legal-flow',
+            email=self.user.email,
+            email_verified=True,
+        )
+        self._authenticate()
+
+        response = self.client.get(reverse('me'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data['has_usable_password'])
+        self.assertEqual(response.data['auth_methods'], [ExternalIdentity.Provider.GOOGLE])
+        self.assertTrue(response.data['legal_status']['requires_acceptance'])
+        self.assertEqual(len(response.data['legal_status']['current_documents']), 2)
+
+    def test_required_legal_documents_endpoint_returns_current_documents_with_content(self):
+        self._authenticate()
+
+        response = self.client.get(reverse('me-legal-documents-required'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data['documents']), 2)
+        self.assertEqual(
+            response.data['documents'][0]['document_type'],
+            LegalDocumentVersion.DocumentType.TERMS_OF_USE,
+        )
+        self.assertIn('content_html', response.data['documents'][0])
+        self.assertFalse(response.data['documents'][0]['accepted'])
+
+    def test_accept_endpoint_creates_acceptances_and_is_idempotent(self):
+        first_response = self._accept_all_documents()
+        second_response = self._accept_all_documents()
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertFalse(first_response.data['legal_status']['requires_acceptance'])
+        self.assertFalse(second_response.data['legal_status']['requires_acceptance'])
+        self.assertEqual(
+            UserLegalAcceptance.objects.filter(user=self.user).count(),
+            2,
+        )
+
+    def test_accept_endpoint_rejects_stale_or_partial_document_set(self):
+        self._authenticate()
+
+        response = self.client.post(
+            reverse('me-legal-acceptances-accept'),
+            {'document_ids': [self.terms.id]},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data['code'], 'legal_documents_changed')
+        self.assertEqual(len(response.data['required_documents']), 2)
+
+    def test_legal_acceptances_endpoint_lists_audit_history(self):
+        self._accept_all_documents()
+
+        response = self.client.get(reverse('me-legal-acceptances'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data['acceptances']), 2)
+        self.assertEqual(
+            {item['document_type'] for item in response.data['acceptances']},
+            {
+                LegalDocumentVersion.DocumentType.TERMS_OF_USE,
+                LegalDocumentVersion.DocumentType.PRIVACY_POLICY,
+            },
+        )
+
+    def test_business_endpoints_require_current_legal_acceptance(self):
+        self._authenticate()
+        blocked_routes = [
+            reverse('me-entitlements'),
+            reverse('book-list'),
+            reverse('global-search') + '?q=livro',
+            reverse('template-piece-list'),
+            reverse('course-post-list'),
+            reverse('caselaw-list'),
+            reverse('community-post-list'),
+            reverse('annotation-list'),
+        ]
+
+        for route in blocked_routes:
+            response = self.client.get(route)
+            self.assertEqual(response.status_code, 409, route)
+            self.assertEqual(response.data['code'], 'legal_acceptance_required')
+            self.assertEqual(len(response.data['required_documents']), 2)
+
+    def test_me_get_is_allowed_but_me_patch_is_blocked_before_acceptance(self):
+        self._authenticate()
+
+        get_response = self.client.get(reverse('me'))
+        patch_response = self.client.patch(
+            reverse('me'),
+            {'name': 'Novo Nome'},
+            format='json',
+        )
+
+        self.assertEqual(get_response.status_code, 200)
+        self.assertEqual(patch_response.status_code, 409)
+        self.assertEqual(patch_response.data['code'], 'legal_acceptance_required')
+
+    def test_business_endpoints_stop_returning_legal_block_after_acceptance(self):
+        self._accept_all_documents()
+
+        global_search_response = self.client.get(reverse('global-search') + '?q=livro')
+        templates_response = self.client.get(reverse('template-piece-list'))
+
+        self.assertNotEqual(global_search_response.status_code, 409)
+        self.assertNotEqual(templates_response.status_code, 409)
+
+
 class AccountsDomainFoundationTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(

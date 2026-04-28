@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
+from accounts.permissions import HasAcceptedRequiredLegalDocuments
 from entitlements.services import entitled_book_ids, user_has_subscription
 from .models import (
     CHAPTER_SEARCH_CONFIG,
@@ -115,7 +116,7 @@ def _make_snippet_from_offsets(text: str, start: int, end: int, context: int = 1
 class BookListView(APIView):
     """Lista livros visíveis ao usuário."""
 
-    permission_classes = [HasActiveBookEntitlement]
+    permission_classes = [HasAcceptedRequiredLegalDocuments, HasActiveBookEntitlement]
 
     def get(self, request):
         qs = Book.objects.all().order_by('-updated_at')
@@ -144,7 +145,7 @@ class BookListView(APIView):
 class BookVersionListView(APIView):
     """Lista versões de um livro visível."""
 
-    permission_classes = [HasActiveBookEntitlement]
+    permission_classes = [HasAcceptedRequiredLegalDocuments, HasActiveBookEntitlement]
 
     def get(self, request, book_id: int):
         book = get_object_or_404(Book, pk=book_id)
@@ -180,7 +181,7 @@ def _get_current_visible_version_for_user(*, user, book: Book) -> BookVersion:
 class CurrentBookVersionView(APIView):
     """Retorna a versão atual (chapter-first) de um livro."""
 
-    permission_classes = [HasActiveBookEntitlement]
+    permission_classes = [HasAcceptedRequiredLegalDocuments, HasActiveBookEntitlement]
 
     def get(self, request, book_id: int):
         book = _get_visible_book_for_user(user=request.user, book_id=book_id)
@@ -195,7 +196,7 @@ class CurrentBookVersionView(APIView):
 class CurrentBookChapterSummaryView(APIView):
     """Retorna sumário de capítulos da versão atual (chapter-first)."""
 
-    permission_classes = [HasActiveBookEntitlement]
+    permission_classes = [HasAcceptedRequiredLegalDocuments, HasActiveBookEntitlement]
 
     def get(self, request, book_id: int):
         book = _get_visible_book_for_user(user=request.user, book_id=book_id)
@@ -214,7 +215,7 @@ class CurrentBookChapterSummaryView(APIView):
 class CurrentBookChapterBySlugView(APIView):
     """Retorna um capítulo da versão atual por slug (chapter-first)."""
 
-    permission_classes = [HasActiveBookEntitlement]
+    permission_classes = [HasAcceptedRequiredLegalDocuments, HasActiveBookEntitlement]
 
     def get(self, request, book_id: int, chapter_slug: str):
         book = _get_visible_book_for_user(user=request.user, book_id=book_id)
@@ -254,7 +255,7 @@ class CurrentBookChapterBySlugView(APIView):
 class SearchView(APIView):
     """Busca por capítulos com FTS em Postgres e fallback para SQLite."""
 
-    permission_classes = [HasActiveBookEntitlement]
+    permission_classes = [HasAcceptedRequiredLegalDocuments, HasActiveBookEntitlement]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'library_search'
 

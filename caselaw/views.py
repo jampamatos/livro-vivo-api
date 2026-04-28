@@ -7,6 +7,7 @@ from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from accounts.permissions import HasAcceptedRequiredLegalDocuments
 from .models import CaseLaw
 from .serializers import CaseLawSerializer
 
@@ -31,7 +32,7 @@ class CaseLawViewSet(viewsets.ReadOnlyModelViewSet):
     """
 
     serializer_class = CaseLawSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasAcceptedRequiredLegalDocuments]
     pagination_class = CaseLawPagination
 
     queryset = CaseLaw.objects.all()

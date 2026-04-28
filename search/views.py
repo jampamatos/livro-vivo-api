@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
+from accounts.permissions import HasAcceptedRequiredLegalDocuments
 from caselaw.models import CaseLaw
 from community.models import Post
 from community.services import user_is_banned_from_community
@@ -561,7 +562,7 @@ def _search_community(*, query: str, query_lower: str, user) -> list[dict]:
 
 
 class GlobalSearchView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasAcceptedRequiredLegalDocuments]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'global_search'
 

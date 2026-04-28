@@ -12,7 +12,13 @@ from django.utils.text import slugify
 from rest_framework import serializers
 from PIL import Image, UnidentifiedImageError
 
-from .models import NotificationDispatch, NotificationPreference, Profile, PushDevice
+from .models import (
+    NotificationDispatch,
+    NotificationPreference,
+    Profile,
+    PushDevice,
+    UserLegalAcceptance,
+)
 
 User = get_user_model()
 
@@ -357,3 +363,24 @@ class PushDeviceUnregisterSerializer(serializers.Serializer):
         if attrs.get('expo_push_token') or attrs.get('installation_id'):
             return attrs
         raise serializers.ValidationError("expo_push_token ou installation_id é obrigatório.")
+
+
+class LegalAcceptanceSubmitSerializer(serializers.Serializer):
+    document_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=False,
+    )
+    source = serializers.ChoiceField(
+        choices=UserLegalAcceptance.Source.choices,
+        default=UserLegalAcceptance.Source.LOGIN_GATE,
+    )
+    app_platform = serializers.ChoiceField(
+        choices=UserLegalAcceptance.AppPlatform.choices,
+        default=UserLegalAcceptance.AppPlatform.WEB,
+    )
+    app_version = serializers.CharField(required=False, allow_blank=True, max_length=64)
+
+    def validate_document_ids(self, value: list[int]) -> list[int]:
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError('document_ids contém valores duplicados.')
+        return value
