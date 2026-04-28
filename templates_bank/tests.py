@@ -330,6 +330,7 @@ class TemplatesBankApiTests(TestCase):
                 self.assertNotIn('file_storage_key', response.data)
 
                 signed_url = urlsplit(response.data['file_url'])
+                self.client.credentials()
                 download_response = self.client.get(
                     signed_url.path,
                     data={'token': token},
@@ -343,6 +344,36 @@ class TemplatesBankApiTests(TestCase):
                     download_response['Cache-Control'],
                     'private, max-age=300, no-store',
                 )
+
+    def test_download_file_blocks_authenticated_request_for_other_user_even_with_valid_token(self):
+        with tempfile.TemporaryDirectory(prefix='templates-bank-api-media-') as media_root:
+            with self.settings(MEDIA_ROOT=media_root):
+                upload_piece = TemplatePiece.objects.create(
+                    title='Modelo Upload Token Vinculado',
+                    slug='modelo-upload-token-vinculado',
+                    template_code='modelo-upload-token-vinculado',
+                    version='1.0.0',
+                    category=TemplatePiece.Category.OTHER,
+                    file_upload=SimpleUploadedFile(
+                        'modelo-upload-token-vinculado.docx',
+                        b'conteudo protegido por token assinado',
+                        content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    ),
+                    status=PublicationStatus.PUBLISHED,
+                )
+
+                self._auth(self.professional_token)
+                token_response = self.client.get(f'/templates-bank/templates/{upload_piece.id}/download-token/')
+                token = token_response.data['token']
+                response = self.client.get(f'/templates-bank/templates/{upload_piece.id}/download/', {'token': token})
+                signed_url = urlsplit(response.data['file_url'])
+
+                self._auth(self.essential_token)
+                download_response = self.client.get(
+                    signed_url.path,
+                    data={'token': token},
+                )
+                self.assertEqual(download_response.status_code, 403)
 
     def test_retrieve_hides_direct_file_url_for_local_uploaded_file(self):
         with tempfile.TemporaryDirectory(prefix='templates-bank-api-media-') as media_root:
