@@ -1,5 +1,11 @@
+from __future__ import annotations
+
+import hashlib
+
 from django.conf import settings
-from django.db import models
+from django.core.exceptions import ValidationError
+from django.db import models, router, transaction
+from django.utils import timezone
 
 from config.storage import get_avatar_storage
 
@@ -76,6 +82,203 @@ class DataPrivacyRequest(models.Model):
 
     def __str__(self) -> str:
         return f'Solicitação de privacidade #{self.pk or "nova"} ({self.get_status_display()})'
+
+
+class ExternalIdentity(models.Model):
+    """Identidade externa vinculada a um usuário local."""
+
+    class Provider(models.TextChoices):
+        GOOGLE = 'google', 'Google'
+        LINKEDIN = 'linkedin', 'LinkedIn'
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='external_identities',
+    )
+    provider = models.CharField(max_length=32, choices=Provider.choices)
+    provider_subject = models.CharField(max_length=255)
+    email = models.EmailField(blank=True, default='')
+    email_verified = models.BooleanField(default=False)
+    display_name = models.CharField(max_length=255, blank=True, default='')
+    avatar_url = models.URLField(max_length=500, blank=True, default='')
+    linked_at = models.DateTimeField(auto_now_add=True)
+    last_login_at = models.DateTimeField(null=True, blank=True)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    provider_claims = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['provider', 'provider_subject'],
+                name='uniq_external_identity_provider_subject',
+            ),
+            models.UniqueConstraint(
+                fields=['user', 'provider'],
+                name='uniq_external_identity_per_user_provider',
+            ),
+        ]
+        ordering = ['provider', '-linked_at']
+
+    def __str__(self) -> str:
+        label = self.display_name or self.email or self.provider_subject
+        return f'{self.get_provider_display()} - {label}'
+
+
+class LegalDocumentVersion(models.Model):
+    """Versão auditável de um documento jurídico exibido ao usuário."""
+
+    class DocumentType(models.TextChoices):
+        TERMS_OF_USE = 'terms_of_use', 'Terms of use'
+        PRIVACY_POLICY = 'privacy_policy', 'Privacy policy'
+
+    document_type = models.CharField(max_length=32, choices=DocumentType.choices)
+    version = models.CharField(max_length=64)
+    title = models.CharField(max_length=200)
+    content_html = models.TextField()
+    content_sha256 = models.CharField(max_length=64, blank=True, editable=False)
+    is_active = models.BooleanField(default=False)
+    published_at = models.DateTimeField(null=True, blank=True)
+    enforcement_starts_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['document_type', 'version'],
+                name='uniq_legal_document_type_version',
+            ),
+            models.UniqueConstraint(
+                fields=['document_type'],
+                condition=models.Q(is_active=True),
+                name='uniq_active_legal_document_per_type',
+            ),
+        ]
+        ordering = ['document_type', '-published_at', '-created_at']
+
+    @property
+    def is_published(self) -> bool:
+        return self.published_at is not None
+
+    def _should_skip_active_constraint_validation(self, constraint) -> bool:
+        return (
+            self.is_active
+            and getattr(constraint, 'name', '') == 'uniq_active_legal_document_per_type'
+            and tuple(getattr(constraint, 'fields', ())) == ('document_type',)
+        )
+
+    def clean(self):
+        if not self.pk:
+            return
+
+        previous = type(self).objects.filter(pk=self.pk).only(
+            'document_type',
+            'version',
+            'title',
+            'content_html',
+            'published_at',
+        ).first()
+        if not previous or not previous.published_at:
+            return
+
+        immutable_field_names = ('document_type', 'version', 'title', 'content_html')
+        changed_fields = [
+            field_name
+            for field_name in immutable_field_names
+            if getattr(previous, field_name) != getattr(self, field_name)
+        ]
+        if changed_fields:
+            raise ValidationError(
+                {
+                    field_name: 'Esta versão já foi publicada e não pode mais alterar o conteúdo auditável.'
+                    for field_name in changed_fields
+                }
+            )
+
+    def validate_constraints(self, exclude=None):
+        constraints = self.get_constraints()
+        using = router.db_for_write(self.__class__, instance=self)
+
+        errors = {}
+        for model_class, model_constraints in constraints:
+            for constraint in model_constraints:
+                if self._should_skip_active_constraint_validation(constraint):
+                    continue
+                try:
+                    constraint.validate(model_class, self, exclude=exclude, using=using)
+                except ValidationError as e:
+                    if (
+                        getattr(e, 'code', None) == 'unique'
+                        and len(getattr(constraint, 'fields', ())) == 1
+                    ):
+                        errors.setdefault(constraint.fields[0], []).append(e)
+                    else:
+                        errors = e.update_error_dict(errors)
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.content_sha256 = hashlib.sha256((self.content_html or '').encode('utf-8')).hexdigest()
+        if self.is_active and self.published_at is None:
+            self.published_at = timezone.now()
+        if self.is_active and self.enforcement_starts_at is None:
+            self.enforcement_starts_at = self.published_at or timezone.now()
+
+        with transaction.atomic():
+            if self.is_active:
+                type(self).objects.filter(
+                    document_type=self.document_type,
+                    is_active=True,
+                ).exclude(pk=self.pk).update(is_active=False)
+            super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f'{self.get_document_type_display()} v{self.version}'
+
+
+class UserLegalAcceptance(models.Model):
+    """Aceite auditável de uma versão específica de documento legal."""
+
+    class Source(models.TextChoices):
+        LOGIN_GATE = 'login_gate', 'Login gate'
+        ACCOUNT_SETTINGS = 'account_settings', 'Account settings'
+        ADMIN = 'admin', 'Admin'
+
+    class AppPlatform(models.TextChoices):
+        WEB = 'web', 'Web'
+        ANDROID = 'android', 'Android'
+        IOS = 'ios', 'iOS'
+        SYSTEM = 'system', 'System'
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='legal_acceptances',
+    )
+    document = models.ForeignKey(
+        LegalDocumentVersion,
+        on_delete=models.PROTECT,
+        related_name='acceptances',
+    )
+    accepted_at = models.DateTimeField(auto_now_add=True)
+    source = models.CharField(max_length=32, choices=Source.choices, default=Source.LOGIN_GATE)
+    app_platform = models.CharField(max_length=16, choices=AppPlatform.choices, default=AppPlatform.WEB)
+    app_version = models.CharField(max_length=64, blank=True, default='')
+    ip_address = models.GenericIPAddressField(blank=True, null=True)
+    user_agent = models.TextField(blank=True, default='')
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'document'],
+                name='uniq_user_legal_acceptance_per_document',
+            ),
+        ]
+        ordering = ['-accepted_at']
+
+    def __str__(self) -> str:
+        return f'{self.user} - {self.document}'
 
 
 class NotificationPreference(models.Model):

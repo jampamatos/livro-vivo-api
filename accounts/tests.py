@@ -1,4 +1,5 @@
 from datetime import timedelta
+import hashlib
 import io
 import json
 import os
@@ -8,8 +9,9 @@ from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.db import connections
+from django.db import IntegrityError, connections, transaction
 from django.test import Client, RequestFactory, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -35,11 +37,14 @@ from config.storage import build_media_reference
 
 from .models import (
     DataPrivacyRequest,
+    ExternalIdentity,
+    LegalDocumentVersion,
     NotificationDispatch,
     NotificationEvent,
     NotificationPreference,
     Profile,
     PushDevice,
+    UserLegalAcceptance,
 )
 from .services import dispatch_pending_push_notifications, enqueue_notification_event
 from .signals import cleanup_legacy_user_token_rows
@@ -2424,6 +2429,116 @@ class NotificationDeliveryTests(TestCase):
         send_mock.assert_called_once()
 
 
+class AccountsDomainFoundationTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='domain@example.com',
+            email='domain@example.com',
+            password='StrongPass123',
+        )
+        Profile.objects.get_or_create(user=self.user)
+
+    def test_external_identity_enforces_user_provider_and_subject_uniqueness(self):
+        ExternalIdentity.objects.create(
+            user=self.user,
+            provider=ExternalIdentity.Provider.GOOGLE,
+            provider_subject='google-subject-1',
+            email='domain@example.com',
+        )
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                ExternalIdentity.objects.create(
+                    user=self.user,
+                    provider=ExternalIdentity.Provider.GOOGLE,
+                    provider_subject='google-subject-2',
+                    email='other@example.com',
+                )
+
+        other_user = User.objects.create_user(
+            username='other-domain@example.com',
+            email='other-domain@example.com',
+            password='StrongPass123',
+        )
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                ExternalIdentity.objects.create(
+                    user=other_user,
+                    provider=ExternalIdentity.Provider.GOOGLE,
+                    provider_subject='google-subject-1',
+                    email='other-domain@example.com',
+                )
+
+    def test_legal_document_version_computes_hash_and_deactivates_previous_active_version(self):
+        previous = LegalDocumentVersion.objects.create(
+            document_type=LegalDocumentVersion.DocumentType.TERMS_OF_USE,
+            version='2026.04.01',
+            title='Termos do beta',
+            content_html='<p>Primeira versão</p>',
+            is_active=True,
+        )
+
+        current = LegalDocumentVersion(
+            document_type=LegalDocumentVersion.DocumentType.TERMS_OF_USE,
+            version='2026.04.28',
+            title='Termos do beta atualizados',
+            content_html='<p>Segunda versão</p>',
+            is_active=True,
+        )
+        current.full_clean()
+        current.save()
+
+        previous.refresh_from_db()
+        self.assertFalse(previous.is_active)
+        self.assertTrue(current.is_active)
+        self.assertEqual(
+            current.content_sha256,
+            hashlib.sha256('<p>Segunda versão</p>'.encode('utf-8')).hexdigest(),
+        )
+        self.assertIsNotNone(current.published_at)
+        self.assertIsNotNone(current.enforcement_starts_at)
+
+    def test_published_legal_document_rejects_core_content_edits(self):
+        document = LegalDocumentVersion.objects.create(
+            document_type=LegalDocumentVersion.DocumentType.PRIVACY_POLICY,
+            version='2026.04.28',
+            title='Política inicial',
+            content_html='<p>Texto original</p>',
+            is_active=True,
+        )
+
+        document.title = 'Política alterada'
+        document.content_html = '<p>Texto alterado</p>'
+
+        with self.assertRaises(ValidationError) as context:
+            document.clean()
+
+        self.assertIn('title', context.exception.message_dict)
+        self.assertIn('content_html', context.exception.message_dict)
+
+    def test_user_legal_acceptance_is_unique_per_user_and_document(self):
+        document = LegalDocumentVersion.objects.create(
+            document_type=LegalDocumentVersion.DocumentType.TERMS_OF_USE,
+            version='2026.04.28',
+            title='Termos',
+            content_html='<p>Texto</p>',
+            is_active=True,
+        )
+        UserLegalAcceptance.objects.create(
+            user=self.user,
+            document=document,
+            source=UserLegalAcceptance.Source.LOGIN_GATE,
+        )
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                UserLegalAcceptance.objects.create(
+                    user=self.user,
+                    document=document,
+                    source=UserLegalAcceptance.Source.ACCOUNT_SETTINGS,
+                )
+
+
 class AccountsAdminTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -2524,6 +2639,101 @@ class AccountsAdminTests(TestCase):
         self.assertEqual(change_response.status_code, 200)
         self.assertContains(change_response, 'Envio')
         self.assertNotContains(change_response, 'name="_save"', html=False)
+
+    def test_auth_domain_foundation_models_are_registered_in_admin(self):
+        target_user = User.objects.create_user(
+            username='legal-admin@example.com',
+            email='legal-admin@example.com',
+            password='StrongPass123',
+        )
+        Profile.objects.create(user=target_user, full_name='Usuário Legal')
+        identity = ExternalIdentity.objects.create(
+            user=target_user,
+            provider=ExternalIdentity.Provider.GOOGLE,
+            provider_subject='google-admin-subject',
+            email='legal-admin@example.com',
+            email_verified=True,
+            display_name='Usuário Google',
+        )
+        document = LegalDocumentVersion.objects.create(
+            document_type=LegalDocumentVersion.DocumentType.TERMS_OF_USE,
+            version='2026.04.28',
+            title='Termos Beta',
+            content_html='<p>Termos beta</p>',
+            is_active=True,
+        )
+        acceptance = UserLegalAcceptance.objects.create(
+            user=target_user,
+            document=document,
+            source=UserLegalAcceptance.Source.LOGIN_GATE,
+        )
+
+        identity_response = self.client.get(reverse('admin:accounts_externalidentity_changelist'))
+        document_response = self.client.get(reverse('admin:accounts_legaldocumentversion_changelist'))
+        acceptance_response = self.client.get(reverse('admin:accounts_userlegalacceptance_changelist'))
+
+        self.assertEqual(identity_response.status_code, 200)
+        self.assertEqual(document_response.status_code, 200)
+        self.assertEqual(acceptance_response.status_code, 200)
+        self.assertContains(identity_response, identity.display_name)
+        self.assertContains(document_response, 'Termos Beta')
+        self.assertContains(acceptance_response, f'{document.get_document_type_display()} v{document.version}')
+        self.assertContains(acceptance_response, acceptance.user.email)
+
+    def test_external_identity_and_legal_acceptance_admin_are_read_only(self):
+        target_user = User.objects.create_user(
+            username='readonly-admin@example.com',
+            email='readonly-admin@example.com',
+            password='StrongPass123',
+        )
+        identity = ExternalIdentity.objects.create(
+            user=target_user,
+            provider=ExternalIdentity.Provider.GOOGLE,
+            provider_subject='google-readonly-subject',
+        )
+        document = LegalDocumentVersion.objects.create(
+            document_type=LegalDocumentVersion.DocumentType.PRIVACY_POLICY,
+            version='2026.04.28',
+            title='Política Beta',
+            content_html='<p>Política beta</p>',
+            is_active=True,
+        )
+        acceptance = UserLegalAcceptance.objects.create(
+            user=target_user,
+            document=document,
+            source=UserLegalAcceptance.Source.LOGIN_GATE,
+        )
+
+        identity_add_response = self.client.get(reverse('admin:accounts_externalidentity_add'))
+        identity_change_response = self.client.get(reverse('admin:accounts_externalidentity_change', args=[identity.id]))
+        acceptance_add_response = self.client.get(reverse('admin:accounts_userlegalacceptance_add'))
+        acceptance_change_response = self.client.get(reverse('admin:accounts_userlegalacceptance_change', args=[acceptance.id]))
+
+        self.assertEqual(identity_add_response.status_code, 403)
+        self.assertEqual(identity_change_response.status_code, 200)
+        self.assertNotContains(identity_change_response, 'name="_save"', html=False)
+        self.assertEqual(acceptance_add_response.status_code, 403)
+        self.assertEqual(acceptance_change_response.status_code, 200)
+        self.assertNotContains(acceptance_change_response, 'name="_save"', html=False)
+
+    def test_legal_document_admin_change_form_explains_active_version_rollover(self):
+        active_document = LegalDocumentVersion.objects.create(
+            document_type=LegalDocumentVersion.DocumentType.TERMS_OF_USE,
+            version='2026.04.28',
+            title='Termos Beta',
+            content_html='<p>Texto</p>',
+            is_active=True,
+        )
+
+        response = self.client.get(reverse('admin:accounts_legaldocumentversion_add'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            'Se voce publicar uma nova versao ativa do mesmo tipo de documento, a versao ativa anterior sera desativada automaticamente.',
+        )
+        self.assertContains(response, 'lv-legal-document-version-admin-state')
+        self.assertContains(response, active_document.title)
 
 
 class HealthAndReadinessTests(TestCase):

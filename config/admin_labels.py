@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from accounts.models import (
     DataPrivacyRequest,
+    ExternalIdentity,
+    LegalDocumentVersion,
     NotificationDispatch,
     NotificationEvent,
     NotificationPreference,
     Profile,
     PushDevice,
+    UserLegalAcceptance,
 )
 from annotations.models import Annotation
 from caselaw.models import CaseLaw
@@ -203,6 +206,84 @@ def install_admin_labels() -> None:
     )
     _set_choice_labels(DataPrivacyRequest, 'request_type', {'export': 'Exportação', 'erasure': 'Eliminação'})
     _set_choice_labels(DataPrivacyRequest, 'status', {'requested': 'Solicitada', 'completed': 'Concluída', 'failed': 'Falhou'})
+
+    _set_model_labels(ExternalIdentity, 'identidade externa', 'identidades externas')
+    _set_field_labels(
+        ExternalIdentity,
+        {
+            'user': 'Usuário',
+            'provider': 'Provedor',
+            'provider_subject': 'ID do provedor',
+            'email': 'E-mail do provedor',
+            'email_verified': 'E-mail verificado',
+            'display_name': 'Nome exibido',
+            'avatar_url': 'URL do avatar',
+            'linked_at': 'Vinculada em',
+            'last_login_at': 'Último login social',
+            'last_synced_at': 'Última sincronização',
+            'provider_claims': 'Claims do provedor',
+        },
+    )
+    _set_choice_labels(ExternalIdentity, 'provider', {'google': 'Google', 'linkedin': 'LinkedIn'})
+
+    _set_model_labels(LegalDocumentVersion, 'documento legal', 'documentos legais')
+    _set_field_labels(
+        LegalDocumentVersion,
+        {
+            'document_type': 'Tipo de documento',
+            'version': 'Versão',
+            'title': 'Título',
+            'content_html': 'Conteúdo HTML',
+            'content_sha256': 'Hash SHA-256',
+            'is_active': 'Versão ativa',
+            'published_at': 'Publicado em',
+            'enforcement_starts_at': 'Exigência inicia em',
+            'created_at': 'Criado em',
+            'updated_at': 'Atualizado em',
+        },
+    )
+    _set_choice_labels(
+        LegalDocumentVersion,
+        'document_type',
+        {
+            'terms_of_use': 'Termos de uso',
+            'privacy_policy': 'Política de privacidade',
+        },
+    )
+
+    _set_model_labels(UserLegalAcceptance, 'aceite legal', 'aceites legais')
+    _set_field_labels(
+        UserLegalAcceptance,
+        {
+            'user': 'Usuário',
+            'document': 'Documento',
+            'accepted_at': 'Aceito em',
+            'source': 'Origem',
+            'app_platform': 'Plataforma',
+            'app_version': 'Versão do app',
+            'ip_address': 'Endereço IP',
+            'user_agent': 'User agent',
+        },
+    )
+    _set_choice_labels(
+        UserLegalAcceptance,
+        'source',
+        {
+            'login_gate': 'Barreira de aceite',
+            'account_settings': 'Minha conta',
+            'admin': 'Admin',
+        },
+    )
+    _set_choice_labels(
+        UserLegalAcceptance,
+        'app_platform',
+        {
+            'web': 'Web',
+            'android': 'Android',
+            'ios': 'iOS',
+            'system': 'Sistema',
+        },
+    )
 
     _set_model_labels(NotificationPreference, 'preferência de notificação', 'preferências de notificação')
     _set_field_labels(

@@ -1,0 +1,10 @@
+{% extends "admin/change_form.html" %}
+
+{% block form_top %}
+{{ block.super }}
+{{ legal_document_version_admin_state|json_script:"lv-legal-document-version-admin-state" }}
+<div class="help" style="margin: 0 0 1rem;">
+    Se voce publicar uma nova versao ativa do mesmo tipo de documento, a versao ativa anterior sera desativada automaticamente.
+</div>
+<div class="help" id="lv-legal-document-rollover-warning" hidden style="margin: 0 0 1rem; color: #fbbf24;"></div>
+{% endblock %}
