@@ -92,6 +92,7 @@ _NAV_GROUPS = (
         'name': 'Usuários e assinaturas',
         'entries': (
             {'source': ('accounts', 'Profile'), 'name': 'Perfis de usuários'},
+            {'source': ('accounts', 'ExternalIdentity'), 'name': 'Identidades externas'},
         ),
     },
     {
@@ -106,6 +107,8 @@ _NAV_GROUPS = (
         'name': 'Privacidade e compliance',
         'entries': (
             {'source': ('accounts', 'DataPrivacyRequest'), 'name': 'Solicitações de privacidade'},
+            {'source': ('accounts', 'LegalDocumentVersion'), 'name': 'Documentos legais'},
+            {'source': ('accounts', 'UserLegalAcceptance'), 'name': 'Aceites legais'},
         ),
     },
     {
