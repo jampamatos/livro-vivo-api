@@ -19,6 +19,7 @@ from .models import (
     PushDevice,
     UserLegalAcceptance,
 )
+from .social import SocialIntent, load_social_result_token, validate_social_redirect_uri
 
 User = get_user_model()
 
@@ -270,6 +271,44 @@ class MePasswordChangeSerializer(serializers.Serializer):
         if attrs['current_password'] == attrs['new_password']:
             raise serializers.ValidationError({'new_password': ['A nova senha deve ser diferente da senha atual.']})
         return attrs
+
+
+class SocialAuthStartSerializer(serializers.Serializer):
+    redirect_uri = serializers.CharField(max_length=500)
+    intent = serializers.ChoiceField(
+        choices=tuple((choice, choice) for choice in sorted(SocialIntent.CHOICES)),
+        default=SocialIntent.LOGIN,
+    )
+
+    def validate_redirect_uri(self, value: str) -> str:
+        try:
+            return validate_social_redirect_uri(value)
+        except Exception as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+
+
+class SocialAuthCompleteSerializer(serializers.Serializer):
+    result_token = serializers.CharField(max_length=4096)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        try:
+            attrs['result_payload'] = load_social_result_token(attrs['result_token'])
+        except Exception as exc:
+            raise serializers.ValidationError({'result_token': ['result_token inválido ou expirado.']}) from exc
+        return attrs
+
+
+class MePasswordSetSerializer(serializers.Serializer):
+    new_password = serializers.CharField(write_only=True, min_length=8, trim_whitespace=False)
+
+    def validate_new_password(self, value: str) -> str:
+        user = self.context['user']
+        try:
+            validate_password(value, user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages))
+        return value
 
 
 class NotificationPreferenceSerializer(serializers.ModelSerializer):

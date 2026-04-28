@@ -254,6 +254,65 @@ TEMPLATES_BANK_REMOTE_FILE_FETCH_TIMEOUT_SECONDS = int(
 TEMPLATES_BANK_REMOTE_FILE_MAX_BYTES = int(
     os.getenv('TEMPLATES_BANK_REMOTE_FILE_MAX_BYTES', str(30 * 1024 * 1024))
 )
+SOCIAL_AUTH_ALLOWED_REDIRECT_URIS = env_list(
+    'SOCIAL_AUTH_ALLOWED_REDIRECT_URIS',
+    'http://localhost:8081/auth/callback,http://127.0.0.1:8081/auth/callback,livrovivo://auth/callback',
+)
+SOCIAL_AUTH_STATE_MAX_AGE_SECONDS = int(
+    os.getenv('SOCIAL_AUTH_STATE_MAX_AGE_SECONDS', '600')
+)
+SOCIAL_AUTH_RESULT_TOKEN_MAX_AGE_SECONDS = int(
+    os.getenv('SOCIAL_AUTH_RESULT_TOKEN_MAX_AGE_SECONDS', '300')
+)
+SOCIAL_AUTH_HTTP_TIMEOUT_SECONDS = int(
+    os.getenv('SOCIAL_AUTH_HTTP_TIMEOUT_SECONDS', '8')
+)
+SOCIAL_AUTH_GOOGLE_ENABLED = env_bool('SOCIAL_AUTH_GOOGLE_ENABLED', default=False)
+SOCIAL_AUTH_GOOGLE_CLIENT_ID = (os.getenv('SOCIAL_AUTH_GOOGLE_CLIENT_ID') or '').strip()
+SOCIAL_AUTH_GOOGLE_CLIENT_SECRET = (os.getenv('SOCIAL_AUTH_GOOGLE_CLIENT_SECRET') or '').strip()
+SOCIAL_AUTH_GOOGLE_AUTHORIZATION_URL = (
+    os.getenv('SOCIAL_AUTH_GOOGLE_AUTHORIZATION_URL')
+    or 'https://accounts.google.com/o/oauth2/v2/auth'
+).strip()
+SOCIAL_AUTH_GOOGLE_TOKEN_URL = (
+    os.getenv('SOCIAL_AUTH_GOOGLE_TOKEN_URL')
+    or 'https://oauth2.googleapis.com/token'
+).strip()
+SOCIAL_AUTH_GOOGLE_USERINFO_URL = (
+    os.getenv('SOCIAL_AUTH_GOOGLE_USERINFO_URL')
+    or 'https://openidconnect.googleapis.com/v1/userinfo'
+).strip()
+SOCIAL_AUTH_GOOGLE_SCOPES = tuple(
+    item.strip()
+    for item in env_list(
+        'SOCIAL_AUTH_GOOGLE_SCOPES',
+        'openid,email,profile',
+    )
+    if item.strip()
+)
+SOCIAL_AUTH_LINKEDIN_ENABLED = env_bool('SOCIAL_AUTH_LINKEDIN_ENABLED', default=False)
+SOCIAL_AUTH_LINKEDIN_CLIENT_ID = (os.getenv('SOCIAL_AUTH_LINKEDIN_CLIENT_ID') or '').strip()
+SOCIAL_AUTH_LINKEDIN_CLIENT_SECRET = (os.getenv('SOCIAL_AUTH_LINKEDIN_CLIENT_SECRET') or '').strip()
+SOCIAL_AUTH_LINKEDIN_AUTHORIZATION_URL = (
+    os.getenv('SOCIAL_AUTH_LINKEDIN_AUTHORIZATION_URL')
+    or 'https://www.linkedin.com/oauth/v2/authorization'
+).strip()
+SOCIAL_AUTH_LINKEDIN_TOKEN_URL = (
+    os.getenv('SOCIAL_AUTH_LINKEDIN_TOKEN_URL')
+    or 'https://www.linkedin.com/oauth/v2/accessToken'
+).strip()
+SOCIAL_AUTH_LINKEDIN_USERINFO_URL = (
+    os.getenv('SOCIAL_AUTH_LINKEDIN_USERINFO_URL')
+    or 'https://api.linkedin.com/v2/userinfo'
+).strip()
+SOCIAL_AUTH_LINKEDIN_SCOPES = tuple(
+    item.strip()
+    for item in env_list(
+        'SOCIAL_AUTH_LINKEDIN_SCOPES',
+        'openid,profile,email',
+    )
+    if item.strip()
+)
 
 NOTIFICATIONS_ENABLED = env_bool('NOTIFICATIONS_ENABLED', default=True)
 NOTIFICATIONS_PUSH_PROVIDER = (os.getenv('NOTIFICATIONS_PUSH_PROVIDER') or 'noop').strip().lower()
