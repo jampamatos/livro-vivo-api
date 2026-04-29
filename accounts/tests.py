@@ -9,6 +9,7 @@ from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
 from django.contrib.auth import get_user_model
+from django.core import mail
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -120,6 +121,85 @@ class AccountsAPITests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn('password', response.data)
+
+    @override_settings(
+        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+        PASSWORD_RESET_CONFIRM_URL='https://app.example.com/?password_reset=1',
+    )
+    def test_password_reset_request_sends_generic_response_and_email(self):
+        user = User.objects.create_user(
+            username='reset@example.com',
+            email='reset@example.com',
+            password=TEST_PASSWORD,
+        )
+
+        response = self.client.post(
+            reverse('auth-password-reset-request'),
+            {'email': 'reset@example.com'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn('https://app.example.com/?password_reset=1&', mail.outbox[0].body)
+        self.assertIn('uid=', mail.outbox[0].body)
+        self.assertIn('token=', mail.outbox[0].body)
+        self.assertEqual(mail.outbox[0].to, [user.email])
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_password_reset_request_does_not_reveal_unknown_email(self):
+        response = self.client.post(
+            reverse('auth-password-reset-request'),
+            {'email': 'missing@example.com'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(mail.outbox), 0)
+
+    @override_settings(
+        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+        PASSWORD_RESET_CONFIRM_URL='https://app.example.com/?password_reset=1',
+    )
+    def test_password_reset_confirm_changes_password(self):
+        user = User.objects.create_user(
+            username='reset-confirm@example.com',
+            email='reset-confirm@example.com',
+            password=TEST_PASSWORD,
+        )
+        request_response = self.client.post(
+            reverse('auth-password-reset-request'),
+            {'email': user.email},
+            format='json',
+        )
+        self.assertEqual(request_response.status_code, 200)
+        reset_url = next(line for line in mail.outbox[0].body.splitlines() if line.startswith('https://app.example.com/?password_reset=1&'))
+        query = parse_qs(urlparse(reset_url).query)
+
+        confirm_response = self.client.post(
+            reverse('auth-password-reset-confirm'),
+            {
+                'uid': query['uid'][0],
+                'token': query['token'][0],
+                'new_password': NEW_TEST_PASSWORD,
+            },
+            format='json',
+        )
+
+        self.assertEqual(confirm_response.status_code, 200)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password(NEW_TEST_PASSWORD))
+        self.assertFalse(user.check_password(TEST_PASSWORD))
+
+    def test_password_reset_confirm_rejects_invalid_token(self):
+        response = self.client.post(
+            reverse('auth-password-reset-confirm'),
+            {'uid': 'invalid', 'token': 'invalid', 'new_password': NEW_TEST_PASSWORD},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('token', response.data)
 
     def test_owner_or_moderator_profile_promotes_user_to_staff(self):
         user = User.objects.create_user(
