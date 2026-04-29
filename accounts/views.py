@@ -1,5 +1,5 @@
 import logging
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -88,6 +88,17 @@ from community.services import (
 
 User = get_user_model()
 logger = logging.getLogger("livro_vivo.api")
+
+
+class SocialAuthResultRedirect(HttpResponseRedirect):
+    @property
+    def allowed_schemes(self):
+        schemes = set(HttpResponseRedirect.allowed_schemes)
+        for redirect_uri in getattr(settings, 'SOCIAL_AUTH_ALLOWED_REDIRECT_URIS', []):
+            scheme = urlsplit(str(redirect_uri).strip()).scheme
+            if scheme:
+                schemes.add(scheme)
+        return list(schemes)
 
 
 PASSWORD_RESET_REQUEST_MESSAGE = (
@@ -358,7 +369,7 @@ class SocialAuthCallbackView(APIView):
                     message=error_description or f'Provider retornou erro: {error_code}.',
                 )
             )
-            return HttpResponseRedirect(
+            return SocialAuthResultRedirect(
                 append_result_token_to_redirect_uri(redirect_uri, result_token=result_token)
             )
 
@@ -371,7 +382,7 @@ class SocialAuthCallbackView(APIView):
                     message='Provider não retornou authorization code.',
                 )
             )
-            return HttpResponseRedirect(
+            return SocialAuthResultRedirect(
                 append_result_token_to_redirect_uri(redirect_uri, result_token=result_token)
             )
 
@@ -400,7 +411,7 @@ class SocialAuthCallbackView(APIView):
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         result_token = build_social_result_token(resolution)
-        return HttpResponseRedirect(
+        return SocialAuthResultRedirect(
             append_result_token_to_redirect_uri(redirect_uri, result_token=result_token)
         )
 
