@@ -2672,6 +2672,38 @@ class AccountsSocialAuthFlowTests(TestCase):
             ['password', ExternalIdentity.Provider.GOOGLE],
         )
 
+    @override_settings(
+        SOCIAL_AUTH_ALLOWED_REDIRECT_URIS=[
+            'https://app.example.com/auth/callback',
+            'livrovivo://auth/callback',
+        ]
+    )
+    def test_social_callback_redirects_to_native_deep_link_scheme(self):
+        self.redirect_uri = 'livrovivo://auth/callback'
+        ExternalIdentity.objects.create(
+            user=self.user,
+            provider=ExternalIdentity.Provider.GOOGLE,
+            provider_subject='google-existing-subject',
+            email=self.user.email,
+            email_verified=True,
+        )
+        start_response = self._start_social(intent='login')
+        state_token = parse_qs(urlparse(start_response.data['authorization_url']).query)['state'][0]
+
+        callback_response = self._callback_with_identity(
+            state_token=state_token,
+            identity=self._build_identity(
+                provider_subject='google-existing-subject',
+                email=self.user.email,
+                provider_claims={'sub': 'google-existing-subject', 'email': self.user.email},
+            ),
+        )
+
+        self.assertEqual(callback_response.status_code, 302)
+        location = callback_response['Location']
+        self.assertTrue(location.startswith('livrovivo://auth/callback'))
+        self.assertIn('result_token=', location)
+
     def test_social_callback_and_complete_register_success_create_social_only_account(self):
         start_response = self._start_social(intent='login')
         state_token = parse_qs(urlparse(start_response.data['authorization_url']).query)['state'][0]
