@@ -227,6 +227,8 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'auth_register': '5/min',
         'auth_login': '10/min',
+        'auth_password_reset': '5/min',
+        'auth_password_reset_confirm': '10/min',
         'auth_refresh': '30/min',
         'library_search': '60/min',
         'global_search': '45/min',
@@ -248,6 +250,22 @@ SIMPLE_JWT = {
 TEMPLATES_BANK_DOWNLOAD_TOKEN_MAX_AGE_SECONDS = int(
     os.getenv('TEMPLATES_BANK_DOWNLOAD_TOKEN_MAX_AGE_SECONDS', '60')
 )
+
+_default_email_backend = (
+    'django.core.mail.backends.locmem.EmailBackend'
+    if IS_TESTING
+    else 'django.core.mail.backends.console.EmailBackend'
+    if DEBUG
+    else 'django.core.mail.backends.smtp.EmailBackend'
+)
+EMAIL_BACKEND = os.getenv('DJANGO_EMAIL_BACKEND', _default_email_backend)
+EMAIL_HOST = os.getenv('DJANGO_EMAIL_HOST', 'localhost')
+EMAIL_PORT = int(os.getenv('DJANGO_EMAIL_PORT', '25'))
+EMAIL_HOST_USER = os.getenv('DJANGO_EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('DJANGO_EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = env_bool('DJANGO_EMAIL_USE_TLS', default=False)
+EMAIL_USE_SSL = env_bool('DJANGO_EMAIL_USE_SSL', default=False)
+DEFAULT_FROM_EMAIL = os.getenv('DJANGO_DEFAULT_FROM_EMAIL', 'Livro Vivo <no-reply@livrovivo.local>')
 TEMPLATES_BANK_REMOTE_FILE_FETCH_TIMEOUT_SECONDS = int(
     os.getenv('TEMPLATES_BANK_REMOTE_FILE_FETCH_TIMEOUT_SECONDS', '8')
 )
@@ -439,6 +457,13 @@ if (IS_PRODUCTION or IS_STAGE) and not CSRF_TRUSTED_ORIGINS:
     raise ImproperlyConfigured(
         "DJANGO_CSRF_TRUSTED_ORIGINS is required when DJANGO_ENV is stage/production."
     )
+
+APP_PUBLIC_BASE_URL = (os.getenv('APP_PUBLIC_BASE_URL') or (CORS_ALLOWED_ORIGINS[0] if CORS_ALLOWED_ORIGINS else '')).rstrip('/')
+PASSWORD_RESET_CONFIRM_URL = (
+    os.getenv('PASSWORD_RESET_CONFIRM_URL')
+    or (f'{APP_PUBLIC_BASE_URL}/?password_reset=1' if APP_PUBLIC_BASE_URL else 'http://127.0.0.1:8081/?password_reset=1')
+)
+PASSWORD_RESET_CONFIRM_URL = PASSWORD_RESET_CONFIRM_URL.strip()
 
 SECURE_SSL_REDIRECT = env_bool(
     'DJANGO_SECURE_SSL_REDIRECT',

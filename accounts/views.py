@@ -1,10 +1,16 @@
 import logging
+from urllib.parse import urlencode
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.tokens import default_token_generator
+from django.core.mail import send_mail
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.http import HttpResponseRedirect
 from django.urls import reverse
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 from django.utils import timezone
 
 from rest_framework import status
@@ -38,6 +44,8 @@ from .serializers import (
     MeUpdateSerializer,
     NotificationDispatchSerializer,
     NotificationPreferenceSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
     PushDeviceRegisterSerializer,
     PushDeviceSerializer,
     PushDeviceUnregisterSerializer,
@@ -80,6 +88,11 @@ from community.services import (
 
 User = get_user_model()
 logger = logging.getLogger("livro_vivo.api")
+
+
+PASSWORD_RESET_REQUEST_MESSAGE = (
+    'Se o e-mail informado estiver cadastrado, enviaremos instrucoes para redefinir a senha.'
+)
 
 
 def _serialize_auth_context(user, *, request=None) -> dict:
@@ -204,6 +217,55 @@ class LoginView(APIView):
             blocked_event='auth_login_blocked',
             source='password',
         )
+
+
+class PasswordResetRequestView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth_password_reset'
+
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data['email']
+
+        user = User.objects.filter(email__iexact=email, is_active=True).order_by('id').first()
+        if user:
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            token = default_token_generator.make_token(user)
+            query = urlencode({'uid': uid, 'token': token})
+            separator = '&' if '?' in settings.PASSWORD_RESET_CONFIRM_URL else '?'
+            reset_url = f'{settings.PASSWORD_RESET_CONFIRM_URL}{separator}{query}'
+            subject = 'Redefinicao de senha - Livro Vivo'
+            message = (
+                'Recebemos uma solicitacao para redefinir sua senha no Livro Vivo.\n\n'
+                f'Acesse o link abaixo para criar uma nova senha:\n{reset_url}\n\n'
+                'Se voce nao solicitou esta alteracao, ignore este e-mail.'
+            )
+            try:
+                send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [user.email], fail_silently=False)
+                logger.info('auth_password_reset_requested', extra={'user_id': user.id})
+            except Exception:
+                logger.exception('auth_password_reset_email_failed', extra={'user_id': user.id})
+        else:
+            logger.info('auth_password_reset_requested_unknown_email')
+
+        return Response({'detail': PASSWORD_RESET_REQUEST_MESSAGE}, status=status.HTTP_200_OK)
+
+
+class PasswordResetConfirmView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth_password_reset_confirm'
+
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.validated_data['user']
+        user.set_password(serializer.validated_data['new_password'])
+        user.save(update_fields=['password'])
+        logger.info('auth_password_reset_confirmed', extra={'user_id': user.id})
+        return Response({'detail': 'Senha redefinida com sucesso.'}, status=status.HTTP_200_OK)
 
 
 class RefreshView(TokenRefreshView):
