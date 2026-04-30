@@ -6,6 +6,7 @@ import time
 import uuid
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from .metrics import record_request_metrics
 from .request_context import reset_request_context, set_request_context, update_request_user_id
 
 
@@ -77,6 +78,11 @@ class RequestContextMiddleware:
             user_id = getattr(user, "id", None) if user is not None and getattr(user, "is_authenticated", False) else None
             update_request_user_id(user_id)
             duration_ms = int((time.monotonic() - started_at) * 1000)
+            record_request_metrics(
+                request=request,
+                status_code=500,
+                duration_seconds=duration_ms / 1000,
+            )
             logger.exception(
                 "api_request_unhandled_exception",
                 extra={
@@ -90,6 +96,11 @@ class RequestContextMiddleware:
                 reset_request_context(tokens)
 
         duration_ms = int((time.monotonic() - started_at) * 1000)
+        record_request_metrics(
+            request=request,
+            status_code=response.status_code,
+            duration_seconds=duration_ms / 1000,
+        )
         user = getattr(request, "user", None)
         user_id = getattr(user, "id", None) if user is not None and getattr(user, "is_authenticated", False) else None
         update_request_user_id(user_id)

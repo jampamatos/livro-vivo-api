@@ -3483,6 +3483,35 @@ class HealthAndReadinessTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertRegex(response['X-Request-ID'], r'^[a-f0-9]{32}$')
 
+    def test_metrics_returns_404_when_disabled(self):
+        response = self.client.get('/metrics/')
+
+        self.assertEqual(response.status_code, 404)
+
+    @override_settings(METRICS_ENABLED=True, METRICS_BEARER_TOKEN='test-metrics-token')
+    def test_metrics_requires_bearer_token_when_configured(self):
+        response = self.client.get('/metrics/')
+
+        self.assertEqual(response.status_code, 403)
+
+    @override_settings(METRICS_ENABLED=True, METRICS_BEARER_TOKEN='test-metrics-token')
+    def test_metrics_exposes_prometheus_payload_with_api_request_metrics(self):
+        self.client.get('/healthz/')
+
+        response = self.client.get(
+            '/metrics/',
+            HTTP_AUTHORIZATION='Bearer test-metrics-token',
+        )
+        body = response.content.decode('utf-8')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('text/plain', response['Content-Type'])
+        self.assertIn('livro_vivo_api_http_requests_total', body)
+        self.assertIn(
+            'livro_vivo_api_http_requests_total{method="GET",route="/healthz/",status="200"}',
+            body,
+        )
+
 
 class AccountViewHelperTests(TestCase):
     def setUp(self):

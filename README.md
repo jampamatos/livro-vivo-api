@@ -181,6 +181,8 @@ Auth social:
 - `SOCIAL_AUTH_LINKEDIN_TOKEN_URL`
 - `SOCIAL_AUTH_LINKEDIN_USERINFO_URL`
 - `SOCIAL_AUTH_LINKEDIN_SCOPES`
+- `DJANGO_METRICS_ENABLED`
+- `DJANGO_METRICS_BEARER_TOKEN`
 
 Notas:
 
@@ -419,7 +421,7 @@ Decisao atual:
 - Grafana Cloud sera o painel unico do beta.
 - Grafana Alloy sera o agente oficial no VPS.
 - Sentry nao sera painel principal no beta; `SENTRY_DSN` deve continuar vazio salvo decisao explicita.
-- A primeira fase deve cobrir synthetic checks, logs da API/Caddy e metricas basicas da VPS.
+- A primeira fase deve cobrir synthetic checks, logs da API/Caddy, metricas basicas da VPS e metricas HTTP da API em `/metrics/`.
 
 Bootstrap versionado:
 
@@ -441,6 +443,7 @@ Cuidados:
 
 - nao versionar credenciais do Grafana Cloud;
 - nao habilitar access log bruto do Caddy antes de filtrar query strings;
+- nao habilitar `/metrics/` em stage/producao sem `DJANGO_METRICS_BEARER_TOKEN`;
 - manter `DJANGO_LOG_STRUCTURED=true` no beta para facilitar queries por `request_id`;
 - manter a stack de monitoramento separada da stack da API para que deploys da API nao derrubem o Alloy.
 

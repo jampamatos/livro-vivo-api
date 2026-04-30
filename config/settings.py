@@ -332,6 +332,13 @@ SOCIAL_AUTH_LINKEDIN_SCOPES = tuple(
     if item.strip()
 )
 
+METRICS_ENABLED = env_bool('DJANGO_METRICS_ENABLED', default=False)
+METRICS_BEARER_TOKEN = (os.getenv('DJANGO_METRICS_BEARER_TOKEN') or '').strip()
+if (IS_PRODUCTION or IS_STAGE) and METRICS_ENABLED and not METRICS_BEARER_TOKEN:
+    raise ImproperlyConfigured(
+        'DJANGO_METRICS_BEARER_TOKEN is required when metrics are enabled in stage/production.'
+    )
+
 NOTIFICATIONS_ENABLED = env_bool('NOTIFICATIONS_ENABLED', default=True)
 NOTIFICATIONS_PUSH_PROVIDER = (os.getenv('NOTIFICATIONS_PUSH_PROVIDER') or 'noop').strip().lower()
 NOTIFICATIONS_FCM_PROJECT_ID = (os.getenv('NOTIFICATIONS_FCM_PROJECT_ID') or '').strip()

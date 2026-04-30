@@ -78,6 +78,27 @@ prometheus.scrape "host" {
   forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
 }
 
+prometheus.scrape "api" {
+  targets = [
+    {
+      "__address__"     = sys.env("LIVRO_VIVO_API_METRICS_HOST"),
+      "__scheme__"      = sys.env("LIVRO_VIVO_API_METRICS_SCHEME"),
+      "__metrics_path__" = sys.env("LIVRO_VIVO_API_METRICS_PATH"),
+      "job"             = "livro-vivo-api",
+      "project"         = "livro-vivo",
+      "environment"     = sys.env("GRAFANA_CLOUD_ENVIRONMENT"),
+    },
+  ]
+
+  scrape_interval = "60s"
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+
+  authorization {
+    type        = "Bearer"
+    credentials = sys.env("LIVRO_VIVO_API_METRICS_BEARER_TOKEN")
+  }
+}
+
 prometheus.remote_write "grafana_cloud" {
   endpoint {
     url = sys.env("GRAFANA_CLOUD_PROMETHEUS_REMOTE_WRITE_URL")
