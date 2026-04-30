@@ -2,6 +2,7 @@
 
 Data base: 2026-04-30
 Escopo: API, app web, app Android beta, LP, VPS, Cloudflare, e custos operacionais do beta.
+Status atual: plano de implementacao aprovado; implementacao operacional ainda pendente.
 
 ## 1. Decisao principal
 
@@ -731,4 +732,3 @@ Monitoramento beta esta pronto quando:
 - existe alerta para disco alto;
 - existe alerta para custo/cota;
 - existe rotina documentada de incidente.
-
