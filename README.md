@@ -7,6 +7,9 @@ Backend Django/DRF do app Livro Vivo.
 Implementado e ativo em `main`:
 
 - Auth JWT (`register`, `login`, `refresh`, `logout`).
+- Reset de senha por e-mail transacional.
+- Auth social Google para web e Android beta, com vinculo/desvinculo de contas em Minha Conta.
+- Fluxo de documentos legais vigentes com aceite obrigatorio antes do uso da plataforma.
 - Perfil/roles e resumo de moderacao na resposta de entitlements.
 - Acoes LGPD self-service com exportacao de dados e solicitacao de anonimização/exclusao logica da conta.
 - Entitlements por assinatura (`essential` / `professional`) com suporte a founder.
@@ -20,18 +23,27 @@ Implementado e ativo em `main`:
 - Comunidade com categorias, posts, comentarios, reports, follow/unfollow de posts, fila de moderacao, trilha de acoes e banimento por escopo.
 - Notificacoes com preferencias por usuario, `NotificationEvent`, `NotificationDispatch`, inbox in-app, registro de devices e dispatcher de push.
 - Health/readiness, `check --deploy`, logs estruturados com sanitizacao de segredos em query string e Sentry opcional.
+- Base documental para monitoramento beta com Grafana Cloud como painel unico.
 - Hardening de avatar com validacao de formato/MIME, limite de tamanho, limite de dimensoes e recorte seguro.
 - Cadastro endurecido contra enumeracao de e-mail, registro estavel de dispositivo push por `installation_id` e limpeza de backlog antigo no registro do device atual.
 
-## Status pre-deploy
+## Status operacional beta
 
-Ultima varredura completa validada em `2026-04-15`:
+Ultima revisao documental validada em `2026-04-30`:
 
-- `python manage.py test` aprovado com `340` testes.
-- `python manage.py check --deploy --fail-level WARNING` aprovado com ambiente de producao simulado.
-- `pip-audit -r requirements.txt` sem vulnerabilidades conhecidas.
-- Registro nao revela mais se um e-mail ja existe.
-- Push autodispatch segue habilitado por padrao, com dispatcher manual recomendado como redundancia operacional.
+- API beta publica: `https://api-178-104-197-8.nip.io`.
+- Django admin beta: `https://api-178-104-197-8.nip.io/admin/`.
+- Deploy da `main` para VPS via GitHub Actions.
+- `readyz/` deve retornar `database: ok` e `cache: ok`.
+- Google social auth exige `SOCIAL_AUTH_ALLOWED_REDIRECT_URIS` com app web e `livrovivo://auth/callback`.
+- SMTP transacional esta configurado no VPS via Brevo para reset de senha.
+- Monitoramento oficial do beta deve seguir `docs/FONTE_DA_VERDADE_MONITORAMENTO_BETA_2026-04-30.md`.
+
+Checks de referencia antes de PR/deploy:
+
+- `python manage.py test`
+- `python manage.py check --deploy --fail-level WARNING` com ambiente de producao simulado
+- `pip-audit -r requirements.txt`
 
 ## Stack
 
@@ -88,6 +100,15 @@ Variaveis principais:
 - `DJANGO_CORS_ALLOWED_ORIGINS`: obrigatoria em stage/prod
 - `DJANGO_CSRF_TRUSTED_ORIGINS`: obrigatoria em stage/prod
 - `APP_VERSION`: versao exibida em health/readiness
+- `PASSWORD_RESET_CONFIRM_URL`: URL do app para concluir reset de senha
+- `DJANGO_EMAIL_BACKEND`
+- `DJANGO_EMAIL_HOST`
+- `DJANGO_EMAIL_PORT`
+- `DJANGO_EMAIL_HOST_USER`
+- `DJANGO_EMAIL_HOST_PASSWORD`
+- `DJANGO_EMAIL_USE_TLS`
+- `DJANGO_EMAIL_USE_SSL`
+- `DJANGO_DEFAULT_FROM_EMAIL`
 - `REDIS_URL`: obrigatoria em stage/prod; recomendada em desenvolvimento para reproduzir throttle/cache distribuido
 - `DJANGO_LOG_PROFILE`: `dev` | `prod`
 - `DJANGO_LOG_INCLUDE_REQUESTS`: habilita logs request-by-request do `django.server`
@@ -387,6 +408,19 @@ curl -s http://127.0.0.1:8000/health/
 curl -s http://127.0.0.1:8000/readyz/
 ```
 
+## Monitoramento beta
+
+Fonte da verdade:
+
+- `docs/FONTE_DA_VERDADE_MONITORAMENTO_BETA_2026-04-30.md`
+
+Decisao atual:
+
+- Grafana Cloud sera o painel unico do beta.
+- Grafana Alloy sera o agente oficial no VPS.
+- Sentry nao sera painel principal no beta; `SENTRY_DSN` deve continuar vazio salvo decisao explicita.
+- A primeira fase deve cobrir synthetic checks, logs da API/Caddy e metricas basicas da VPS.
+
 ## Operacao minima de homologacao
 
 ### Subida minima
@@ -576,9 +610,10 @@ Norteador UX do Admin para operacao juridica (nao-tech):
 
 ## Limites conhecidos
 
-- A busca global atual cobre biblioteca, jurisprudencia e comunidade; cursos e banco de pecas ainda nao entram nesse agregador.
+- A busca global cobre biblioteca, curso, banco de pecas, jurisprudencia e comunidade, respeitando gating por tier.
 - `NOTIFICATIONS_PUSH_PROVIDER` continua `noop` por padrao em dev; FCM/APNs seguem dependentes da configuracao de deploy.
 - Para uploads protegidos do Banco de Pecas em producao, a configuracao recomendada continua sendo object storage S3-compativel.
+- O gate da LP para APK Android e operacional, nao seguranca forte; o link do APK deve ser rotacionado antes de expirar.
 
 ## CI
 
