@@ -421,6 +421,29 @@ Decisao atual:
 - Sentry nao sera painel principal no beta; `SENTRY_DSN` deve continuar vazio salvo decisao explicita.
 - A primeira fase deve cobrir synthetic checks, logs da API/Caddy e metricas basicas da VPS.
 
+Bootstrap versionado:
+
+- `deploy/monitoring/README.md`
+- `deploy/monitoring/docker-compose.monitoring.example.yml`
+- `deploy/monitoring/config.alloy.example`
+- `deploy/monitoring/monitoring.env.example`
+
+Primeira implantacao recomendada:
+
+1. criar stack `livro-vivo-beta` no Grafana Cloud;
+2. criar Synthetic Monitoring para API, app web, LP e admin;
+3. copiar os exemplos de `deploy/monitoring/` para `/opt/livro-vivo-monitoring` no VPS;
+4. preencher `/opt/livro-vivo-monitoring/.env` com credenciais reais do Grafana Cloud;
+5. subir Alloy com `docker compose up -d`;
+6. confirmar logs no Loki e metricas de host no Grafana.
+
+Cuidados:
+
+- nao versionar credenciais do Grafana Cloud;
+- nao habilitar access log bruto do Caddy antes de filtrar query strings;
+- manter `DJANGO_LOG_STRUCTURED=true` no beta para facilitar queries por `request_id`;
+- manter a stack de monitoramento separada da stack da API para que deploys da API nao derrubem o Alloy.
+
 ## Operacao minima de homologacao
 
 ### Subida minima

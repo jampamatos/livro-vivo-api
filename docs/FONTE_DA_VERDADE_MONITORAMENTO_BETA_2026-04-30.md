@@ -2,7 +2,7 @@
 
 Data base: 2026-04-30
 Escopo: API, app web, app Android beta, LP, VPS, Cloudflare, e custos operacionais do beta.
-Status atual: plano de implementacao aprovado; implementacao operacional ainda pendente.
+Status atual: plano de implementacao aprovado; bootstrap operacional do Alloy versionado em `deploy/monitoring/`; implantacao real no VPS/Grafana ainda pendente.
 
 ## 1. Decisao principal
 
