@@ -1,6 +1,6 @@
 # Monitoramento beta no VPS
 
-Estes arquivos iniciam a Fase 1/2 do monitoramento beta com Grafana Cloud e Grafana Alloy.
+Estes arquivos iniciam as Fases 1 a 3 do monitoramento beta com Grafana Cloud e Grafana Alloy.
 
 O objetivo deste pacote e coletar:
 
@@ -8,6 +8,8 @@ O objetivo deste pacote e coletar:
 - logs emitidos pela API em JSON quando `DJANGO_LOG_STRUCTURED=true`;
 - logs operacionais do Caddy disponiveis no stdout do container;
 - metricas basicas da VPS via exporter Unix: CPU, memoria, disco, rede e filesystem.
+- metricas HTTP da API quando `DJANGO_METRICS_ENABLED=true`;
+- metricas de eventos criticos da API quando os fluxos instrumentados forem acionados.
 
 Nao ha segredo versionado aqui. Credenciais reais do Grafana Cloud ficam somente no VPS.
 
@@ -48,6 +50,12 @@ chmod 600 /opt/livro-vivo-monitoring/.env
 
 Editar `/opt/livro-vivo-monitoring/.env` com os valores reais do Grafana Cloud.
 
+Para habilitar metricas da API, definir tambem:
+
+- `DJANGO_METRICS_ENABLED=true` no `.env` da API;
+- `DJANGO_METRICS_BEARER_TOKEN=<token-forte>` no `.env` da API;
+- `LIVRO_VIVO_API_METRICS_BEARER_TOKEN=<mesmo-token>` no `.env` do monitoramento.
+
 Confirmar o nome do projeto Docker Compose da API:
 
 ```bash
@@ -72,6 +80,8 @@ O esperado:
 - logs sem erro de autenticacao no Grafana Cloud;
 - logs da API/Caddy aparecendo no Loki;
 - metricas de host aparecendo no Grafana Cloud.
+- metricas `livro_vivo_api_http_requests_total` e `livro_vivo_api_http_request_duration_seconds` aparecendo no Grafana Cloud quando `/metrics/` estiver habilitado.
+- metrica `livro_vivo_api_domain_events_total` aparecendo no Grafana Cloud depois de login, aceite legal, reset de senha ou download de peca.
 
 ## 3.1. Validar Compose localmente
 

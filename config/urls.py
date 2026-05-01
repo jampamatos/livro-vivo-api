@@ -3,9 +3,11 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.core.cache import cache
 from django.db import connection
-from django.http import JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.urls import include, path
+from django.utils.crypto import constant_time_compare
 from django.views.decorators.http import require_GET
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from . import admin_navigation  # noqa: F401
 import logging
@@ -67,10 +69,27 @@ def readiness(_request):
         status=http_status,
     )
 
+
+@require_GET
+def metrics(request):
+    """Endpoint Prometheus para scrape interno do Alloy."""
+    if not settings.METRICS_ENABLED:
+        raise Http404()
+
+    configured_token = settings.METRICS_BEARER_TOKEN
+    if configured_token:
+        authorization = (request.headers.get('Authorization') or '').strip()
+        expected = f'Bearer {configured_token}'
+        if not constant_time_compare(authorization, expected):
+            return HttpResponse(status=403)
+
+    return HttpResponse(generate_latest(), content_type=CONTENT_TYPE_LATEST)
+
 urlpatterns = [
     path('health/', health),
     path('healthz/', health),
     path('readyz/', readiness),
+    path('metrics/', metrics),
     path('admin/', admin.site.urls),
 
     path('', include('accounts.urls')),

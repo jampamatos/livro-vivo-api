@@ -14,3 +14,4 @@ Pillow>=12,<13
 django-storages>=1.14,<2
 boto3>=1.34,<2
 PyJWT>=2.12,<3
+prometheus-client>=0.23,<1
