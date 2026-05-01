@@ -100,6 +100,7 @@ urlpatterns = [
     path('', include('library.urls')),
     path('', include('search.urls')),
     path('', include('templates_bank.urls')),
+    path('', include('telemetry.urls')),
 ]
 
 if settings.DEBUG:

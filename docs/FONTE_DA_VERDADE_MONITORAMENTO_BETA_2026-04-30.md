@@ -2,7 +2,7 @@
 
 Data base: 2026-04-30
 Escopo: API, app web, app Android beta, LP, VPS, Cloudflare, e custos operacionais do beta.
-Status atual: plano de implementacao aprovado; bootstrap operacional do Alloy versionado em `deploy/monitoring/`; `/metrics/` da API e metricas de eventos criticos instrumentados no codigo; implantacao real no VPS/Grafana ainda pendente.
+Status atual: plano de implementacao aprovado; bootstrap operacional do Alloy versionado em `deploy/monitoring/`; `/metrics/` da API, metricas de eventos criticos e endpoint de telemetria client-side instrumentados no codigo; implantacao real no VPS/Grafana ainda pendente.
 
 ## 1. Decisao principal
 
@@ -170,7 +170,7 @@ Decisao:
 - O app Android enviara telemetria leve para a API por endpoint proprio.
 - A API registrara esses eventos como logs estruturados e metricas, chegando no Grafana via Alloy.
 
-Endpoint a implementar:
+Endpoint implementado na API:
 
 - `POST /telemetry/client-events/`
 
@@ -627,6 +627,22 @@ Tarefas:
 4. Capturar unhandled errors no app e enviar evento sanitizado.
 5. Criar dashboard `Android Beta`.
 
+Implementado no codigo da API:
+
+- endpoint anonimo com throttle proprio;
+- limite de payload por `CLIENT_TELEMETRY_MAX_BYTES`;
+- secret opcional por `CLIENT_TELEMETRY_SHARED_SECRET`, enviado no header `X-Client-Telemetry-Secret`;
+- allowlist de eventos e propriedades;
+- rejeicao de `user_id_hash` que nao seja SHA-256;
+- log estruturado `client_telemetry_event`;
+- metrica `livro_vivo_api_domain_events_total{event="client_telemetry_event", ...}`.
+
+Pendente:
+
+- criar o cliente de telemetria no app Android;
+- enviar os eventos obrigatorios reais do APK;
+- montar o dashboard `Android Beta`.
+
 Pronto quando:
 
 - login Google, login senha e erro Android aparecem no Grafana.
@@ -725,7 +741,7 @@ Ordem obrigatoria:
 7. Eventos customizados da API.
 8. Faro no app web.
 9. Faro na LP.
-10. Endpoint `/telemetry/client-events/`.
+10. Endpoint `/telemetry/client-events/` da API.
 11. Telemetria Android.
 12. Dashboard de custos/cotas.
 
