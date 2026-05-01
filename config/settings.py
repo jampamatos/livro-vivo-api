@@ -113,6 +113,7 @@ INSTALLED_APPS = [
     'library',
     'search',
     'templates_bank',
+    'telemetry',
 ]
 
 MIDDLEWARE = [
@@ -214,6 +215,11 @@ if IS_TESTING:
         }
     }
 
+CLIENT_TELEMETRY_ENABLED = env_bool('CLIENT_TELEMETRY_ENABLED', default=True)
+CLIENT_TELEMETRY_SHARED_SECRET = (os.getenv('CLIENT_TELEMETRY_SHARED_SECRET') or '').strip()
+CLIENT_TELEMETRY_MAX_BYTES = int(os.getenv('CLIENT_TELEMETRY_MAX_BYTES', '8192'))
+CLIENT_TELEMETRY_RATE_LIMIT = (os.getenv('CLIENT_TELEMETRY_RATE_LIMIT') or '120/min').strip()
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -236,6 +242,7 @@ REST_FRAMEWORK = {
         'templates_bank_api': '90/min',
         'notifications_sensitive': '60/min',
         'community_api': '120/min',
+        'client_telemetry': CLIENT_TELEMETRY_RATE_LIMIT,
     },
 }
 
