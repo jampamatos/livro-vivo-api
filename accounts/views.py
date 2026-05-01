@@ -24,6 +24,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework.views import APIView
 
+from config.metrics import record_domain_event
 from entitlements.models import Entitlement
 from entitlements.services import get_effective_tier, get_subscription_snapshot
 
@@ -138,6 +139,7 @@ def _issue_authenticated_session_response(
             blocked_event,
             extra={"reason": "account_banned", "user_id": user.id, "source": source},
         )
+        record_domain_event(event=blocked_event, result='account_banned', source=source)
         return Response(
             {"detail": message, "code": "account_banned"},
             status=status.HTTP_403_FORBIDDEN,
@@ -147,6 +149,7 @@ def _issue_authenticated_session_response(
             blocked_event,
             extra={"reason": "inactive_account", "user_id": user.id, "source": source},
         )
+        record_domain_event(event=blocked_event, result='inactive_account', source=source)
         return Response(
             {"detail": "Esta conta está inativa."},
             status=status.HTTP_403_FORBIDDEN,
@@ -168,6 +171,7 @@ def _issue_authenticated_session_response(
         success_event,
         extra={"user_id": user.id, "source": source, "has_moderation_notice": bool(moderation_notice)},
     )
+    record_domain_event(event=success_event, result='success', source=source)
     return Response(payload, status=status.HTTP_200_OK)
 
 
@@ -186,10 +190,12 @@ class RegisterView(APIView):
             user = serializer.save()
         except IntegrityError:
             logger.warning("auth_register_failed", extra={"reason": "registration_conflict"})
+            record_domain_event(event='auth_register_failed', result='registration_conflict', source='password')
             raise ValidationError({"detail": "Nao foi possivel concluir o cadastro com os dados informados."})
         profile, _ = Profile.objects.get_or_create(user=user)
         tokens = issue_tokens_for_user(user)
         logger.info("auth_register_success", extra={"user_id": user.id})
+        record_domain_event(event='auth_register_success', result='success', source='password')
 
         return Response(
             {
@@ -214,12 +220,14 @@ class LoginView(APIView):
 
         if not email or not password:
             logger.warning("auth_login_failed", extra={"reason": "missing_credentials"})
+            record_domain_event(event='auth_login_failed', result='missing_credentials', source='password')
             return Response({"detail": "Email e senha são obrigatórios."}, status=status.HTTP_400_BAD_REQUEST)
 
         user = authenticate_user_by_email(request, email, password)
 
         if not user:
             logger.warning("auth_login_failed", extra={"reason": "invalid_credentials"})
+            record_domain_event(event='auth_login_failed', result='invalid_credentials', source='password')
             return Response({"detail": "Credenciais inválidas."}, status=status.HTTP_401_UNAUTHORIZED)
         return _issue_authenticated_session_response(
             user,
@@ -256,10 +264,17 @@ class PasswordResetRequestView(APIView):
             try:
                 send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [user.email], fail_silently=False)
                 logger.info('auth_password_reset_requested', extra={'user_id': user.id})
+                logger.info('email_send_success', extra={'kind': 'password_reset', 'user_id': user.id})
+                record_domain_event(event='auth_password_reset_requested', result='success', source='password_reset')
+                record_domain_event(event='email_send_success', result='success', source='password_reset')
             except Exception:
                 logger.exception('auth_password_reset_email_failed', extra={'user_id': user.id})
+                logger.warning('email_send_failed', extra={'kind': 'password_reset', 'user_id': user.id})
+                record_domain_event(event='auth_password_reset_requested', result='email_failed', source='password_reset')
+                record_domain_event(event='email_send_failed', result='failed', source='password_reset')
         else:
             logger.info('auth_password_reset_requested_unknown_email')
+            record_domain_event(event='auth_password_reset_requested', result='unknown_email', source='password_reset')
 
         return Response({'detail': PASSWORD_RESET_REQUEST_MESSAGE}, status=status.HTTP_200_OK)
 
@@ -276,6 +291,7 @@ class PasswordResetConfirmView(APIView):
         user.set_password(serializer.validated_data['new_password'])
         user.save(update_fields=['password'])
         logger.info('auth_password_reset_confirmed', extra={'user_id': user.id})
+        record_domain_event(event='auth_password_reset_confirmed', result='success', source='password_reset')
         return Response({'detail': 'Senha redefinida com sucesso.'}, status=status.HTTP_200_OK)
 
 
@@ -343,15 +359,18 @@ class SocialAuthCallbackView(APIView):
     def get(self, request, provider: str):
         state_token = (request.query_params.get('state') or '').strip()
         if not state_token:
+            record_domain_event(event='auth_social_callback_failed', result='missing_state', source=provider)
             return Response({'detail': 'state é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             state_payload = load_social_state_token(state_token)
         except Exception:
+            record_domain_event(event='auth_social_callback_failed', result='invalid_state', source=provider)
             return Response({'detail': 'state inválido ou expirado.'}, status=status.HTTP_400_BAD_REQUEST)
 
         state_provider = (state_payload.get('provider') or '').strip().lower()
         if state_provider != (provider or '').strip().lower():
+            record_domain_event(event='auth_social_callback_failed', result='provider_mismatch', source=provider)
             return Response(
                 {'detail': 'Provider do callback não confere com o state.'},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -362,6 +381,7 @@ class SocialAuthCallbackView(APIView):
         error_description = (request.query_params.get('error_description') or '').strip()
 
         if error_code:
+            record_domain_event(event='auth_social_callback_failed', result='provider_auth_failed', source=state_provider)
             result_token = build_social_result_token(
                 SocialCallbackResolution(
                     result_code=SocialResultCode.PROVIDER_AUTH_FAILED,
@@ -375,6 +395,7 @@ class SocialAuthCallbackView(APIView):
 
         code = (request.query_params.get('code') or '').strip()
         if not code:
+            record_domain_event(event='auth_social_callback_failed', result='missing_code', source=state_provider)
             result_token = build_social_result_token(
                 SocialCallbackResolution(
                     result_code=SocialResultCode.PROVIDER_AUTH_FAILED,
@@ -408,7 +429,17 @@ class SocialAuthCallbackView(APIView):
                 message=str(exc),
             )
         except SocialAuthConfigurationError as exc:
+            record_domain_event(event='auth_social_callback_failed', result='configuration_error', source=state_provider)
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if resolution.result_code in {
+            SocialResultCode.LOGIN_SUCCESS,
+            SocialResultCode.REGISTER_SUCCESS,
+            SocialResultCode.LINK_SUCCESS,
+        }:
+            record_domain_event(event='auth_social_callback_success', result=resolution.result_code, source=state_provider)
+        else:
+            record_domain_event(event='auth_social_callback_failed', result=resolution.result_code, source=state_provider)
 
         result_token = build_social_result_token(resolution)
         return SocialAuthResultRedirect(
@@ -433,6 +464,11 @@ class SocialAuthCompleteView(APIView):
         if result_code in {SocialResultCode.LOGIN_SUCCESS, SocialResultCode.REGISTER_SUCCESS}:
             user = User.objects.filter(id=user_id).first()
             if user is None:
+                logger.warning(
+                    'auth_social_complete_failed',
+                    extra={'provider': provider, 'result_code': result_code, 'reason': 'user_not_found'},
+                )
+                record_domain_event(event='auth_social_complete_failed', result='user_not_found', source=provider)
                 return Response(
                     {'detail': 'Usuário do fluxo social não encontrado.'},
                     status=status.HTTP_400_BAD_REQUEST,
@@ -451,15 +487,30 @@ class SocialAuthCompleteView(APIView):
 
         if result_code == SocialResultCode.LINK_SUCCESS:
             if not request.user.is_authenticated:
+                logger.warning(
+                    'auth_social_complete_failed',
+                    extra={'provider': provider, 'result_code': result_code, 'reason': 'unauthenticated_link'},
+                )
+                record_domain_event(event='auth_social_complete_failed', result='unauthenticated_link', source=provider)
                 return Response(
                     {'detail': 'Autentique-se antes de concluir o vínculo do provider social.'},
                     status=status.HTTP_401_UNAUTHORIZED,
                 )
             if request.user.id != user_id:
+                logger.warning(
+                    'auth_social_complete_failed',
+                    extra={'provider': provider, 'result_code': result_code, 'reason': 'session_user_mismatch'},
+                )
+                record_domain_event(event='auth_social_complete_failed', result='session_user_mismatch', source=provider)
                 return Response(
                     {'detail': 'O vínculo retornado não pertence à sessão autenticada atual.'},
                     status=status.HTTP_403_FORBIDDEN,
                 )
+            logger.info(
+                'auth_social_complete_success',
+                extra={'provider': provider, 'result_code': result_code, 'user_id': request.user.id},
+            )
+            record_domain_event(event='auth_social_complete_success', result=result_code, source=provider)
             return Response(
                 {
                     'result_code': result_code,
@@ -469,6 +520,11 @@ class SocialAuthCompleteView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        logger.warning(
+            'auth_social_complete_failed',
+            extra={'provider': provider, 'result_code': result_code},
+        )
+        record_domain_event(event='auth_social_complete_failed', result=result_code, source=provider)
         return Response(
             {
                 'result_code': result_code,
@@ -608,6 +664,20 @@ class MeLegalAcceptancesAcceptView(APIView):
             user_agent=(request.META.get('HTTP_USER_AGENT') or '').strip(),
         )
         setattr(request, '_lv_legal_status_cache', None)
+        logger.info(
+            'legal_acceptance_completed',
+            extra={
+                'user_id': request.user.id,
+                'source': serializer.validated_data['source'],
+                'app_platform': serializer.validated_data['app_platform'],
+                'document_count': len(acceptances),
+            },
+        )
+        record_domain_event(
+            event='legal_acceptance_completed',
+            result='success',
+            source=serializer.validated_data['source'],
+        )
 
         return Response(
             {

@@ -235,20 +235,27 @@ class TemplatesBankApiTests(TestCase):
 
     def test_professional_can_generate_download_token(self):
         self._auth(self.professional_token)
-        response = self.client.get(f'/templates-bank/templates/{self.piece_v2.id}/download-token/')
+        with patch('templates_bank.views.record_domain_event') as record_metric:
+            response = self.client.get(f'/templates-bank/templates/{self.piece_v2.id}/download-token/')
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('token', response.data)
         self.assertIn('download_url', response.data)
         self.assertIn('/templates-bank/templates/', response.data['download_url'])
         self.assertIn('/download/', response.data['download_url'])
+        record_metric.assert_called_once_with(
+            event='template_download_token_created',
+            result='success',
+            source='api',
+        )
 
     def test_download_returns_file_metadata_with_valid_token(self):
         self._auth(self.professional_token)
         token_response = self.client.get(f'/templates-bank/templates/{self.piece_v2.id}/download-token/')
         token = token_response.data['token']
 
-        response = self.client.get(f'/templates-bank/templates/{self.piece_v2.id}/download/', {'token': token})
+        with patch('templates_bank.views.record_domain_event') as record_metric:
+            response = self.client.get(f'/templates-bank/templates/{self.piece_v2.id}/download/', {'token': token})
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['id'], self.piece_v2.id)
@@ -258,6 +265,11 @@ class TemplatesBankApiTests(TestCase):
         self.assertNotIn('file_storage_key', response.data)
         self.assertNotIn('file_storage_backend', response.data)
         self.assertNotIn('file_cache_control', response.data)
+        record_metric.assert_called_once_with(
+            event='template_download_success',
+            result='success',
+            source='remote_url',
+        )
 
     def test_download_blocks_essential_even_with_token_from_other_user(self):
         self._auth(self.professional_token)
@@ -276,8 +288,14 @@ class TemplatesBankApiTests(TestCase):
 
     def test_download_rejects_invalid_token(self):
         self._auth(self.professional_token)
-        response = self.client.get(f'/templates-bank/templates/{self.piece_v1.id}/download/', {'token': 'invalid'})
+        with patch('templates_bank.views.record_domain_event') as record_metric:
+            response = self.client.get(f'/templates-bank/templates/{self.piece_v1.id}/download/', {'token': 'invalid'})
         self.assertEqual(response.status_code, 403)
+        record_metric.assert_called_once_with(
+            event='template_download_failed',
+            result='permission_denied',
+            source='metadata',
+        )
 
     def test_download_rejects_token_for_other_piece(self):
         self._auth(self.professional_token)

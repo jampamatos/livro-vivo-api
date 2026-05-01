@@ -2,7 +2,7 @@
 
 Data base: 2026-04-30
 Escopo: API, app web, app Android beta, LP, VPS, Cloudflare, e custos operacionais do beta.
-Status atual: plano de implementacao aprovado; bootstrap operacional do Alloy versionado em `deploy/monitoring/`; implantacao real no VPS/Grafana ainda pendente.
+Status atual: plano de implementacao aprovado; bootstrap operacional do Alloy versionado em `deploy/monitoring/`; `/metrics/` da API e metricas de eventos criticos instrumentados no codigo; implantacao real no VPS/Grafana ainda pendente.
 
 ## 1. Decisao principal
 
@@ -579,6 +579,18 @@ Tarefas:
 2. Instrumentar requests por rota/status/duracao.
 3. Instrumentar eventos de auth, legal, download, e-mail.
 4. Criar dashboard `Experiencia do Usuario`.
+
+Implementado no codigo:
+
+- `livro_vivo_api_http_requests_total`
+- `livro_vivo_api_http_request_duration_seconds`
+- `livro_vivo_api_domain_events_total` para auth, callback social, aceite legal, reset de senha, e-mail transacional e download de pecas.
+
+Pendente:
+
+- publicar a stack no VPS/Grafana Cloud;
+- montar o dashboard `Experiencia do Usuario`;
+- adicionar metricas de tamanho de `media/` e uso de storage do banco.
 
 Pronto quando:
 

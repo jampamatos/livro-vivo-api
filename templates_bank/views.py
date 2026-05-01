@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 from urllib.parse import urlencode
 
@@ -16,11 +17,13 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 
 from accounts.permissions import HasAcceptedRequiredLegalDocuments
+from config.metrics import record_domain_event
 from .models import PublicationStatus, TemplatePiece
 from .permissions import IsProfessionalSubscriberOrStaff
 from .serializers import TemplatePieceSerializer
 
 DOWNLOAD_TOKEN_SALT = 'templates-bank-download-v1'
+logger = logging.getLogger("livro_vivo.api")
 
 
 def _parse_date_or_error(raw_value: str | None, *, field_name: str):
@@ -139,6 +142,16 @@ class TemplatePieceViewSet(viewsets.ModelViewSet):
             salt=DOWNLOAD_TOKEN_SALT,
         )
 
+        record_domain_event(event='template_download_token_created', result='success', source='api')
+        logger.info(
+            'template_download_token_created',
+            extra={
+                'template_piece_id': piece.id,
+                'template_code': piece.template_code,
+                'user_id': request.user.id,
+            },
+        )
+
         download_path = reverse('template-piece-download', kwargs={'pk': piece.id})
         query = urlencode({'token': token})
 
@@ -155,7 +168,33 @@ class TemplatePieceViewSet(viewsets.ModelViewSet):
     def download(self, request, pk=None):
         piece = self.get_object()
         token = (request.query_params.get('token') or '').strip()
-        _validate_download_token(piece=piece, request=request, token=token)
+        try:
+            _validate_download_token(piece=piece, request=request, token=token)
+        except ValidationError:
+            result = 'missing_token' if not token else 'invalid_request'
+            record_domain_event(event='template_download_failed', result=result, source='metadata')
+            logger.warning(
+                'template_download_failed',
+                extra={
+                    'result': result,
+                    'source': 'metadata',
+                    'template_piece_id': piece.id,
+                    'template_code': piece.template_code,
+                },
+            )
+            raise
+        except PermissionDenied:
+            record_domain_event(event='template_download_failed', result='permission_denied', source='metadata')
+            logger.warning(
+                'template_download_failed',
+                extra={
+                    'result': 'permission_denied',
+                    'source': 'metadata',
+                    'template_piece_id': piece.id,
+                    'template_code': piece.template_code,
+                },
+            )
+            raise
 
         file_reference = piece.resolve_file_reference(request=request)
         if piece.file_upload and getattr(settings, 'MEDIA_STORAGE_PROVIDER', 'filesystem') == 'filesystem':
@@ -163,6 +202,16 @@ class TemplatePieceViewSet(viewsets.ModelViewSet):
                 'url': _protected_filesystem_download_url(piece=piece, request=request, token=token),
                 'source': 'upload',
             }
+        record_domain_event(event='template_download_success', result='success', source=file_reference['source'])
+        logger.info(
+            'template_download_success',
+            extra={
+                'source': file_reference['source'],
+                'template_piece_id': piece.id,
+                'template_code': piece.template_code,
+                'user_id': request.user.id,
+            },
+        )
         return Response(
             {
                 'id': piece.id,
@@ -182,14 +231,50 @@ class TemplatePieceViewSet(viewsets.ModelViewSet):
     def download_file(self, request, pk=None):
         piece = self.get_object()
         token = (request.query_params.get('token') or '').strip()
-        _validate_download_token(
-            piece=piece,
-            request=request,
-            token=token,
-            require_authenticated_user=False,
-        )
+        try:
+            _validate_download_token(
+                piece=piece,
+                request=request,
+                token=token,
+                require_authenticated_user=False,
+            )
+        except ValidationError:
+            result = 'missing_token' if not token else 'invalid_request'
+            record_domain_event(event='template_download_file_failed', result=result, source='filesystem')
+            logger.warning(
+                'template_download_file_failed',
+                extra={
+                    'result': result,
+                    'source': 'filesystem',
+                    'template_piece_id': piece.id,
+                    'template_code': piece.template_code,
+                },
+            )
+            raise
+        except PermissionDenied:
+            record_domain_event(event='template_download_file_failed', result='permission_denied', source='filesystem')
+            logger.warning(
+                'template_download_file_failed',
+                extra={
+                    'result': 'permission_denied',
+                    'source': 'filesystem',
+                    'template_piece_id': piece.id,
+                    'template_code': piece.template_code,
+                },
+            )
+            raise
 
         if not piece.file_upload or getattr(settings, 'MEDIA_STORAGE_PROVIDER', 'filesystem') != 'filesystem':
+            record_domain_event(event='template_download_file_failed', result='unavailable', source='filesystem')
+            logger.warning(
+                'template_download_file_failed',
+                extra={
+                    'result': 'unavailable',
+                    'source': 'filesystem',
+                    'template_piece_id': piece.id,
+                    'template_code': piece.template_code,
+                },
+            )
             raise Http404('Arquivo local protegido indisponível para esta peça.')
 
         file_handle = piece.file_upload.open('rb')
@@ -206,4 +291,13 @@ class TemplatePieceViewSet(viewsets.ModelViewSet):
         )
         if piece.file_size_bytes:
             response['Content-Length'] = str(piece.file_size_bytes)
+        record_domain_event(event='template_download_file_success', result='success', source='filesystem')
+        logger.info(
+            'template_download_file_success',
+            extra={
+                'source': 'filesystem',
+                'template_piece_id': piece.id,
+                'template_code': piece.template_code,
+            },
+        )
         return response

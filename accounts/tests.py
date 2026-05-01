@@ -35,6 +35,7 @@ from community.models import (
     UserModerationStatus,
 )
 from courses.models import CourseAsset, CoursePost, LiveEvent, PublicationStatus
+from config.metrics import record_domain_event
 from config.storage import build_media_reference
 
 from .models import (
@@ -248,11 +249,12 @@ class AccountsAPITests(TestCase):
             password=TEST_PASSWORD,
         )
 
-        response = self.client.post(
-            reverse('auth-login'),
-            {'email': 'USER@example.com', 'password': TEST_PASSWORD},
-            format='json',
-        )
+        with mock.patch('accounts.views.record_domain_event') as record_metric:
+            response = self.client.post(
+                reverse('auth-login'),
+                {'email': 'USER@example.com', 'password': TEST_PASSWORD},
+                format='json',
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('access', response.data)
@@ -260,6 +262,7 @@ class AccountsAPITests(TestCase):
         self.assertNotIn('token', response.data)
         refresh = RefreshToken(response.data['refresh'])
         self.assertEqual(int(refresh['user_id']), user.id)
+        record_metric.assert_called_once_with(event='auth_login_success', result='success', source='password')
 
     def test_login_invalid_credentials_returns_401(self):
         User.objects.create_user(
@@ -268,13 +271,15 @@ class AccountsAPITests(TestCase):
             password=TEST_PASSWORD,
         )
 
-        response = self.client.post(
-            reverse('auth-login'),
-            {'email': 'user@example.com', 'password': 'wrong'},
-            format='json',
-        )
+        with mock.patch('accounts.views.record_domain_event') as record_metric:
+            response = self.client.post(
+                reverse('auth-login'),
+                {'email': 'user@example.com', 'password': 'wrong'},
+                format='json',
+            )
 
         self.assertEqual(response.status_code, 401)
+        record_metric.assert_called_once_with(event='auth_login_failed', result='invalid_credentials', source='password')
 
     def test_login_returns_pending_moderation_notice_and_clears_it(self):
         user = User.objects.create_user(
@@ -3038,8 +3043,9 @@ class AccountsLegalAcceptanceFlowTests(TestCase):
         self.assertFalse(response.data['documents'][0]['accepted'])
 
     def test_accept_endpoint_creates_acceptances_and_is_idempotent(self):
-        first_response = self._accept_all_documents()
-        second_response = self._accept_all_documents()
+        with mock.patch('accounts.views.record_domain_event') as record_metric:
+            first_response = self._accept_all_documents()
+            second_response = self._accept_all_documents()
 
         self.assertEqual(first_response.status_code, 200)
         self.assertEqual(second_response.status_code, 200)
@@ -3049,6 +3055,12 @@ class AccountsLegalAcceptanceFlowTests(TestCase):
             UserLegalAcceptance.objects.filter(user=self.user).count(),
             2,
         )
+        expected_call = mock.call(
+            event='legal_acceptance_completed',
+            result='success',
+            source=UserLegalAcceptance.Source.LOGIN_GATE,
+        )
+        self.assertEqual(record_metric.call_args_list, [expected_call, expected_call])
 
     def test_accept_endpoint_rejects_stale_or_partial_document_set(self):
         self._authenticate()
@@ -3509,6 +3521,23 @@ class HealthAndReadinessTests(TestCase):
         self.assertIn('livro_vivo_api_http_requests_total', body)
         self.assertIn(
             'livro_vivo_api_http_requests_total{method="GET",route="/healthz/",status="200"}',
+            body,
+        )
+
+    @override_settings(METRICS_ENABLED=True, METRICS_BEARER_TOKEN='test-metrics-token')
+    def test_metrics_exposes_prometheus_payload_with_domain_event_metrics(self):
+        record_domain_event(event='auth_login_success', result='success', source='password')
+
+        response = self.client.get(
+            '/metrics/',
+            HTTP_AUTHORIZATION='Bearer test-metrics-token',
+        )
+        body = response.content.decode('utf-8')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('livro_vivo_api_domain_events_total', body)
+        self.assertIn(
+            'livro_vivo_api_domain_events_total{event="auth_login_success",result="success",source="password"}',
             body,
         )
 

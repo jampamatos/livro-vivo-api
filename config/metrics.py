@@ -3,6 +3,9 @@ from __future__ import annotations
 from prometheus_client import Counter, Histogram
 
 
+MAX_LABEL_VALUE_LENGTH = 80
+UNKNOWN_LABEL_VALUE = 'unknown'
+
 REQUESTS_TOTAL = Counter(
     'livro_vivo_api_http_requests_total',
     'Total de respostas HTTP emitidas pela API.',
@@ -15,6 +18,19 @@ REQUEST_DURATION_SECONDS = Histogram(
     ['method', 'route'],
     buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
 )
+
+DOMAIN_EVENTS_TOTAL = Counter(
+    'livro_vivo_api_domain_events_total',
+    'Total de eventos criticos de dominio emitidos pela API.',
+    ['event', 'result', 'source'],
+)
+
+
+def _normalize_label_value(value, *, default: str = UNKNOWN_LABEL_VALUE) -> str:
+    label = str(value or '').strip().lower()
+    if not label:
+        return default
+    return label[:MAX_LABEL_VALUE_LENGTH]
 
 
 def build_route_label(request) -> str:
@@ -39,3 +55,11 @@ def record_request_metrics(*, request, status_code: int, duration_seconds: float
 
     REQUESTS_TOTAL.labels(method=method, route=route, status=status).inc()
     REQUEST_DURATION_SECONDS.labels(method=method, route=route).observe(duration_seconds)
+
+
+def record_domain_event(*, event: str, result: str = 'success', source: str = 'api') -> None:
+    DOMAIN_EVENTS_TOTAL.labels(
+        event=_normalize_label_value(event),
+        result=_normalize_label_value(result),
+        source=_normalize_label_value(source),
+    ).inc()

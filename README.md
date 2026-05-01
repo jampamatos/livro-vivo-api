@@ -421,7 +421,7 @@ Decisao atual:
 - Grafana Cloud sera o painel unico do beta.
 - Grafana Alloy sera o agente oficial no VPS.
 - Sentry nao sera painel principal no beta; `SENTRY_DSN` deve continuar vazio salvo decisao explicita.
-- A primeira fase deve cobrir synthetic checks, logs da API/Caddy, metricas basicas da VPS e metricas HTTP da API em `/metrics/`.
+- A primeira fase deve cobrir synthetic checks, logs da API/Caddy, metricas basicas da VPS e metricas HTTP/eventos criticos da API em `/metrics/`.
 
 Bootstrap versionado:
 
@@ -437,7 +437,7 @@ Primeira implantacao recomendada:
 3. copiar os exemplos de `deploy/monitoring/` para `/opt/livro-vivo-monitoring` no VPS;
 4. preencher `/opt/livro-vivo-monitoring/.env` com credenciais reais do Grafana Cloud;
 5. subir Alloy com `docker compose up -d`;
-6. confirmar logs no Loki e metricas de host no Grafana.
+6. confirmar logs no Loki, metricas de host e metricas `livro_vivo_api_*` no Grafana.
 
 Cuidados:
 
