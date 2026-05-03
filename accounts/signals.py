@@ -1,6 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.db import connections
-from django.db.models.signals import pre_delete
+from django.db.models.signals import post_migrate, pre_delete
 from django.dispatch import receiver
 
 
@@ -23,3 +23,10 @@ def cleanup_legacy_user_token_rows(*, user_id: int, using: str):
 @receiver(pre_delete, sender=get_user_model())
 def cleanup_legacy_tokens_before_user_delete(sender, instance, using, **kwargs):
     cleanup_legacy_user_token_rows(user_id=instance.pk, using=using)
+
+
+@receiver(post_migrate)
+def sync_admin_role_groups_after_migrate(sender, **kwargs):
+    from .admin_roles import sync_existing_owner_profiles
+
+    sync_existing_owner_profiles()

@@ -216,6 +216,70 @@ class AccountsAPITests(TestCase):
         user.refresh_from_db()
         self.assertTrue(user.is_staff)
 
+    def test_owner_profile_grants_content_admin_permissions(self):
+        user = User.objects.create_user(
+            username='owner-content@example.com',
+            email='owner-content@example.com',
+            password=TEST_PASSWORD,
+            is_staff=False,
+        )
+        profile, _ = Profile.objects.get_or_create(user=user)
+        profile.role = Profile.Role.OWNER
+        profile.save()
+
+        user = User.objects.get(pk=user.pk)
+
+        self.assertTrue(user.is_staff)
+        self.assertTrue(user.groups.filter(name='Livro Vivo - Dono').exists())
+        self.assertTrue(user.has_perm('courses.add_coursepost'))
+        self.assertTrue(user.has_perm('library.add_book'))
+        self.assertTrue(user.has_perm('library.add_bookchapter'))
+        self.assertTrue(user.has_perm('templates_bank.add_templatepiece'))
+        self.assertTrue(user.has_perm('caselaw.add_caselaw'))
+        self.assertFalse(user.has_perm('courses.delete_coursepost'))
+
+    def test_owner_profile_can_open_content_admin_add_pages(self):
+        user = User.objects.create_user(
+            username='owner-admin@example.com',
+            email='owner-admin@example.com',
+            password=TEST_PASSWORD,
+            is_staff=False,
+        )
+        profile, _ = Profile.objects.get_or_create(user=user)
+        profile.role = Profile.Role.OWNER
+        profile.save()
+        self.client.force_login(user)
+
+        admin_urls = (
+            reverse('admin:courses_coursepost_add'),
+            reverse('admin:library_book_add'),
+            reverse('admin:templates_bank_templatepiece_add'),
+            reverse('admin:caselaw_caselaw_add'),
+        )
+
+        for admin_url in admin_urls:
+            with self.subTest(admin_url=admin_url):
+                self.assertEqual(self.client.get(admin_url).status_code, 200)
+
+    def test_member_profile_removes_owner_admin_group(self):
+        user = User.objects.create_user(
+            username='former-owner@example.com',
+            email='former-owner@example.com',
+            password=TEST_PASSWORD,
+            is_staff=False,
+        )
+        profile, _ = Profile.objects.get_or_create(user=user)
+        profile.role = Profile.Role.OWNER
+        profile.save()
+        profile.role = Profile.Role.MEMBER
+        profile.save()
+
+        user = User.objects.get(pk=user.pk)
+
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.groups.filter(name='Livro Vivo - Dono').exists())
+        self.assertFalse(user.has_perm('courses.add_coursepost'))
+
     def test_member_profile_revokes_staff_from_non_superuser(self):
         user = User.objects.create_user(
             username='member@example.com',
