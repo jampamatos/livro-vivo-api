@@ -39,6 +39,9 @@ class Profile(models.Model):
         if self.user.is_staff != should_be_staff:
             self.user.is_staff = should_be_staff
             self.user.save(update_fields=['is_staff'])
+        from .admin_roles import sync_role_groups_for_user
+
+        sync_role_groups_for_user(self.user, role=self.role)
 
     def delete(self, *args, **kwargs):
         avatar_storage = self.avatar.storage if self.avatar and self.avatar.name else None
