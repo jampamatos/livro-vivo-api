@@ -430,6 +430,7 @@ Decisao atual:
 Bootstrap versionado:
 
 - `deploy/monitoring/README.md`
+- `deploy/monitoring/GRAFANA_QUERIES.md`
 - `deploy/monitoring/docker-compose.monitoring.example.yml`
 - `deploy/monitoring/config.alloy.example`
 - `deploy/monitoring/monitoring.env.example`
