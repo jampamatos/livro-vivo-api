@@ -1,111 +1,146 @@
 logging {
-  level  = "info"
-  format = "logfmt"
+	level  = "info"
+	format = "logfmt"
 }
 
 discovery.docker "containers" {
-  host = "unix:///var/run/docker.sock"
+	host = "unix:///var/run/docker.sock"
 }
 
 discovery.relabel "api_stack_logs" {
-  targets = discovery.docker.containers.targets
+	targets = discovery.docker.containers.targets
 
-  rule {
-    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
-    regex         = sys.env("MONITORED_DOCKER_COMPOSE_PROJECT")
-    action        = "keep"
-  }
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+		regex         = sys.env("MONITORED_DOCKER_COMPOSE_PROJECT")
+		action        = "keep"
+	}
 
-  rule {
-    source_labels = ["__meta_docker_container_name"]
-    regex         = "/(.*)"
-    target_label  = "container"
-  }
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+		regex         = sys.env("MONITORED_DOCKER_COMPOSE_SERVICE_REGEX")
+		action        = "keep"
+	}
 
-  rule {
-    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
-    target_label  = "compose_service"
-  }
+	rule {
+		source_labels = ["__meta_docker_container_name"]
+		regex         = "/(.*)"
+		target_label  = "container"
+	}
 
-  rule {
-    target_label = "project"
-    replacement  = "livro-vivo"
-  }
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+		target_label  = "compose_service"
+	}
 
-  rule {
-    target_label = "environment"
-    replacement  = sys.env("GRAFANA_CLOUD_ENVIRONMENT")
-  }
+	rule {
+		target_label = "project"
+		replacement  = "livro-vivo"
+	}
+
+	rule {
+		target_label = "environment"
+		replacement  = sys.env("GRAFANA_CLOUD_ENVIRONMENT")
+	}
 }
 
 loki.source.docker "api_stack" {
-  host       = "unix:///var/run/docker.sock"
-  targets    = discovery.relabel.api_stack_logs.output
-  forward_to = [loki.process.api_stack.receiver]
+	host       = "unix:///var/run/docker.sock"
+	targets    = discovery.relabel.api_stack_logs.output
+	forward_to = [loki.process.api_stack.receiver]
 }
 
 loki.process "api_stack" {
-  stage.static_labels {
-    values = {
-      project     = "livro-vivo",
-      environment = sys.env("GRAFANA_CLOUD_ENVIRONMENT"),
-    }
-  }
+	stage.json {
+		expressions = {
+			level  = "level",
+			logger = "logger",
+		}
+		drop_malformed = false
+	}
 
-  forward_to = [loki.write.grafana_cloud.receiver]
+	stage.labels {
+		values = {
+			level  = "level",
+			logger = "logger",
+		}
+	}
+
+	stage.static_labels {
+		values = {
+			project     = "livro-vivo",
+			environment = sys.env("GRAFANA_CLOUD_ENVIRONMENT"),
+		}
+	}
+
+	forward_to = [loki.write.grafana_cloud.receiver]
 }
 
 loki.write "grafana_cloud" {
-  endpoint {
-    url = sys.env("GRAFANA_CLOUD_LOKI_URL")
+	endpoint {
+		url = sys.env("GRAFANA_CLOUD_LOKI_URL")
 
-    basic_auth {
-      username = sys.env("GRAFANA_CLOUD_LOKI_USERNAME")
-      password = sys.env("GRAFANA_CLOUD_LOKI_PASSWORD")
-    }
-  }
+		basic_auth {
+			username = sys.env("GRAFANA_CLOUD_LOKI_USERNAME")
+			password = sys.env("GRAFANA_CLOUD_LOKI_PASSWORD")
+		}
+	}
 }
 
 prometheus.exporter.unix "host" {
-  rootfs_path = "/host/root"
-  procfs_path = "/host/proc"
-  sysfs_path  = "/host/sys"
+	rootfs_path = "/host/root"
+	procfs_path = "/host/proc"
+	sysfs_path  = "/host/sys"
 }
 
 prometheus.scrape "host" {
-  targets         = prometheus.exporter.unix.host.targets
-  scrape_interval = "60s"
-  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+	targets         = prometheus.exporter.unix.host.targets
+	scrape_interval = "60s"
+	forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.scrape "alloy" {
+	targets = [
+		{
+			"__address__" = "127.0.0.1:12345",
+			"job"         = "grafana-alloy",
+			"project"     = "livro-vivo",
+			"environment" = sys.env("GRAFANA_CLOUD_ENVIRONMENT"),
+		},
+	]
+
+	scrape_interval = "60s"
+	forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
 }
 
 prometheus.scrape "api" {
-  targets = [
-    {
-      "__address__"     = sys.env("LIVRO_VIVO_API_METRICS_HOST"),
-      "__scheme__"      = sys.env("LIVRO_VIVO_API_METRICS_SCHEME"),
-      "__metrics_path__" = sys.env("LIVRO_VIVO_API_METRICS_PATH"),
-      "job"             = "livro-vivo-api",
-      "project"         = "livro-vivo",
-      "environment"     = sys.env("GRAFANA_CLOUD_ENVIRONMENT"),
-    },
-  ]
+	targets = [
+		{
+			"__address__"      = sys.env("LIVRO_VIVO_API_METRICS_HOST"),
+			"__scheme__"       = sys.env("LIVRO_VIVO_API_METRICS_SCHEME"),
+			"__metrics_path__" = sys.env("LIVRO_VIVO_API_METRICS_PATH"),
+			"job"              = "livro-vivo-api",
+			"project"          = "livro-vivo",
+			"environment"      = sys.env("GRAFANA_CLOUD_ENVIRONMENT"),
+		},
+	]
 
-  scrape_interval = "60s"
-  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+	scrape_interval = "60s"
+	forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
 
-  authorization {
-    type        = "Bearer"
-    credentials = sys.env("LIVRO_VIVO_API_METRICS_BEARER_TOKEN")
-  }
+	authorization {
+		type        = "Bearer"
+		credentials = sys.env("LIVRO_VIVO_API_METRICS_BEARER_TOKEN")
+	}
 }
 
 prometheus.remote_write "grafana_cloud" {
-  endpoint {
-    url = sys.env("GRAFANA_CLOUD_PROMETHEUS_REMOTE_WRITE_URL")
+	endpoint {
+		url = sys.env("GRAFANA_CLOUD_PROMETHEUS_REMOTE_WRITE_URL")
 
-    basic_auth {
-      username = sys.env("GRAFANA_CLOUD_PROMETHEUS_USERNAME")
-      password = sys.env("GRAFANA_CLOUD_PROMETHEUS_PASSWORD")
-    }
-  }
+		basic_auth {
+			username = sys.env("GRAFANA_CLOUD_PROMETHEUS_USERNAME")
+			password = sys.env("GRAFANA_CLOUD_PROMETHEUS_PASSWORD")
+		}
+	}
 }
