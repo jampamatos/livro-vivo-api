@@ -434,6 +434,7 @@ Bootstrap versionado:
 - `deploy/monitoring/README.md`
 - `deploy/monitoring/GRAFANA_QUERIES.md`
 - `deploy/monitoring/dashboards/livro-vivo-beta-overview.json`
+- `deploy/monitoring/alerts/livro-vivo-beta-alerts.json`
 - `deploy/monitoring/docker-compose.monitoring.example.yml`
 - `deploy/monitoring/config.alloy.example`
 - `deploy/monitoring/monitoring.env.example`
@@ -446,6 +447,7 @@ Primeira implantacao recomendada:
 4. preencher `/opt/livro-vivo-monitoring/.env` com credenciais reais do Grafana Cloud;
 5. subir Alloy com `docker compose up -d`;
 6. confirmar logs no Loki, metricas de host e metricas `livro_vivo_api_*` no Grafana.
+7. criar alertas beta a partir de `deploy/monitoring/alerts/`.
 
 Cuidados:
 

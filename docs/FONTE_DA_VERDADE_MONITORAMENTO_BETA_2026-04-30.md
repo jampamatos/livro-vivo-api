@@ -2,7 +2,7 @@
 
 Data base: 2026-04-30
 Escopo: API, app web, app Android beta, LP, VPS, Cloudflare, e custos operacionais do beta.
-Status atual: plano de implementacao aprovado; Alloy implantado no VPS/Grafana Cloud validado manualmente; bootstrap operacional do Alloy, runbook de implantacao, consultas iniciais e dashboard beta versionados em `deploy/monitoring/`; `/metrics/` da API, metricas de eventos criticos e endpoint de telemetria client-side instrumentados no codigo.
+Status atual: plano de implementacao aprovado; Alloy implantado no VPS/Grafana Cloud validado manualmente; bootstrap operacional do Alloy, runbook de implantacao, consultas iniciais, dashboard beta e catalogo de alertas versionados em `deploy/monitoring/`; `/metrics/` da API, metricas de eventos criticos e endpoint de telemetria client-side instrumentados no codigo.
 
 ## 1. Decisao principal
 
@@ -548,6 +548,8 @@ Pronto quando:
 
 - Grafana mostra API/LP/app web online;
 - logs da API aparecem por `request_id`;
+- dashboard beta mostra API e Alloy como `UP`;
+- catalogo de alertas criticos esta versionado em `deploy/monitoring/alerts/`;
 - alerta dispara se `/readyz/` falhar.
 
 ### Fase 2: metricas de infraestrutura
