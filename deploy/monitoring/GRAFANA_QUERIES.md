@@ -37,15 +37,15 @@ alloy_component_controller_running_components{job="grafana-alloy"}
 Confirmar CPU/memoria/disco da VPS:
 
 ```promql
-node_load1{environment="beta"}
+node_load1
 ```
 
 ```promql
-node_memory_MemAvailable_bytes{environment="beta"}
+node_memory_MemAvailable_bytes
 ```
 
 ```promql
-node_filesystem_avail_bytes{environment="beta", mountpoint="/"}
+node_filesystem_avail_bytes{mountpoint="/"}
 ```
 
 ## Logs / LogQL

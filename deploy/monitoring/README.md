@@ -233,6 +233,32 @@ Depois de importar `deploy/monitoring/dashboards/livro-vivo-beta-overview.json`,
 configurar `GRAFANA_BETA_DASHBOARD_URL=<url-final-do-dashboard>` no `.env` da API
 para exibir o atalho `Monitoramento beta` no Django Admin.
 
+## 3.6. Configurar alertas beta
+
+Depois que metricas, logs, dashboard e atalho do Admin estiverem validados,
+criar a primeira leva de alertas no Grafana Cloud usando:
+
+```text
+deploy/monitoring/alerts/livro-vivo-beta-alerts.json
+```
+
+Runbook detalhado:
+
+```text
+deploy/monitoring/alerts/README.md
+```
+
+Ordem recomendada:
+
+1. API down;
+2. Alloy down;
+3. disco raiz baixo no VPS;
+4. respostas 5xx da API;
+5. logs de erro da API.
+
+As regras de Android e telemetria silenciosa devem ser revisadas com mais
+cuidado para evitar alerta falso fora de janelas de teste.
+
 ## 4. Backup operacional dos segredos
 
 Depois de validar o envio:
