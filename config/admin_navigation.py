@@ -3,8 +3,10 @@ from __future__ import annotations
 from copy import deepcopy
 import re
 from urllib.parse import parse_qsl
+from urllib.parse import urlparse
 
 from django.contrib import admin
+from django.conf import settings
 from django.urls import reverse
 
 from .admin_labels import install_admin_labels
@@ -158,6 +160,8 @@ _ADMIN_MODEL_URL_NAME_RE = re.compile(
     r'^(?P<app_label>[a-z0-9_]+)_(?P<model_name>[a-z0-9_]+)_(?P<action>changelist|add|change|delete|history)$'
 )
 
+_EXTERNAL_URL_SCHEMES = {'http', 'https'}
+
 
 def _with_query(url: str | None, query: str | None) -> str | None:
     if not url or not query:
@@ -253,6 +257,34 @@ def _get_object_label(model, object_id: str | None) -> str | None:
 
 def _fallback_group_label(app_label: str) -> str:
     return _FALLBACK_APP_NAME_OVERRIDES.get(app_label, app_label.replace('_', ' ').title())
+
+
+def _valid_external_url(url: str | None) -> str | None:
+    value = (url or '').strip()
+    if not value:
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme not in _EXTERNAL_URL_SCHEMES or not parsed.netloc:
+        return None
+    return value
+
+
+def _operational_external_links() -> list[dict]:
+    grafana_url = _valid_external_url(getattr(settings, 'GRAFANA_BETA_DASHBOARD_URL', ''))
+    if not grafana_url:
+        return []
+
+    return [
+        {
+            'name': 'Monitoramento beta',
+            'object_name': 'GrafanaBetaDashboard',
+            'perms': {'view': True, 'add': False, 'change': False, 'delete': False},
+            'admin_url': grafana_url,
+            'add_url': None,
+            'view_only': True,
+            'external': True,
+        }
+    ]
 
 
 def _navigation_query_string(request, action: str) -> str:
@@ -365,6 +397,9 @@ def _build_grouped_app_list(base_app_list: list[dict]) -> list[dict]:
             grouped_models.append(model_item)
             if not entry.get('duplicate'):
                 consumed_models.add(source_key)
+
+        if group.get('app_label') == 'operacao' and grouped_models:
+            grouped_models.extend(_operational_external_links())
 
         if not grouped_models:
             continue

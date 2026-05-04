@@ -341,6 +341,7 @@ SOCIAL_AUTH_LINKEDIN_SCOPES = tuple(
 
 METRICS_ENABLED = env_bool('DJANGO_METRICS_ENABLED', default=False)
 METRICS_BEARER_TOKEN = (os.getenv('DJANGO_METRICS_BEARER_TOKEN') or '').strip()
+GRAFANA_BETA_DASHBOARD_URL = (os.getenv('GRAFANA_BETA_DASHBOARD_URL') or '').strip()
 if (IS_PRODUCTION or IS_STAGE) and METRICS_ENABLED and not METRICS_BEARER_TOKEN:
     raise ImproperlyConfigured(
         'DJANGO_METRICS_BEARER_TOKEN is required when metrics are enabled in stage/production.'
