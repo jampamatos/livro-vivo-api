@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth import get_user_model
-from django.test import Client, RequestFactory, TestCase
+from django.test import Client, RequestFactory, TestCase, override_settings
 from django.urls import reverse
 
 from config import admin_navigation  # noqa: F401
@@ -8,6 +8,7 @@ from courses.models import CourseAsset, CoursePost, PublicationStatus
 from library.models import Book, BookChapter, BookVersion
 
 
+@override_settings(GRAFANA_BETA_DASHBOARD_URL='')
 class AdminNavigationTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -67,6 +68,30 @@ class AdminNavigationTests(TestCase):
         self.assertIn('status__exact=open', shortcuts['Fila de denúncias abertas'])
         self.assertIn('status__exact=draft', shortcuts['Peças jurídicas em rascunho'])
         self.assertIn('status__exact=requested', shortcuts['Solicitações de privacidade pendentes'])
+        self.assertNotIn('Monitoramento beta', shortcuts)
+
+    @override_settings(GRAFANA_BETA_DASHBOARD_URL='https://grafana.example/d/livro-vivo-beta-overview')
+    def test_operational_panel_includes_grafana_dashboard_when_configured(self):
+        app_list = self._get_app_list_for_user(self.superuser)
+        self.assertEqual(app_list[0]['name'], 'Painel operacional')
+
+        shortcuts = {item['name']: item for item in app_list[0]['models']}
+        grafana_shortcut = shortcuts['Monitoramento beta']
+
+        self.assertEqual(
+            grafana_shortcut['admin_url'],
+            'https://grafana.example/d/livro-vivo-beta-overview',
+        )
+        self.assertIsNone(grafana_shortcut['add_url'])
+        self.assertTrue(grafana_shortcut['view_only'])
+        self.assertTrue(grafana_shortcut['external'])
+
+    @override_settings(GRAFANA_BETA_DASHBOARD_URL='javascript:alert(1)')
+    def test_operational_panel_ignores_invalid_grafana_dashboard_url(self):
+        app_list = self._get_app_list_for_user(self.superuser)
+        shortcuts = {item['name']: item for item in app_list[0]['models']}
+
+        self.assertNotIn('Monitoramento beta', shortcuts)
 
     def test_admin_index_renders_new_groups(self):
         self.client.force_login(self.superuser)
@@ -90,6 +115,17 @@ class AdminNavigationTests(TestCase):
         self.assertNotContains(response, 'Cursos e eventos')
         self.assertNotContains(response, '>Versões do livro<', html=False)
         self.assertNotContains(response, '>Versões do livro em rascunho<', html=False)
+
+    @override_settings(GRAFANA_BETA_DASHBOARD_URL='https://grafana.example/d/livro-vivo-beta-overview')
+    def test_admin_index_renders_grafana_dashboard_external_link(self):
+        self.client.force_login(self.superuser)
+        response = self.client.get(reverse('admin:index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Monitoramento beta')
+        self.assertContains(response, 'https://grafana.example/d/livro-vivo-beta-overview')
+        self.assertContains(response, 'target="_blank"')
+        self.assertContains(response, 'rel="noopener noreferrer"')
 
     def test_non_staff_user_keeps_empty_admin_navigation(self):
         User = get_user_model()

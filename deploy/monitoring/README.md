@@ -125,7 +125,33 @@ O esperado:
 - metricas `livro_vivo_api_http_requests_total` e `livro_vivo_api_http_request_duration_seconds` aparecendo no Grafana Cloud quando `/metrics/` estiver habilitado.
 - metrica `livro_vivo_api_domain_events_total` aparecendo no Grafana Cloud depois de login, aceite legal, reset de senha ou download de peca.
 
-## 3.1. Validar Alloy no VPS
+## 3.1. Importar dashboard beta
+
+Depois de validar metricas e logs no Explore, importar o dashboard versionado:
+
+```text
+deploy/monitoring/dashboards/livro-vivo-beta-overview.json
+```
+
+No Grafana Cloud:
+
+1. abrir `Dashboards`;
+2. clicar em `New` > `Import`;
+3. escolher `Upload dashboard JSON file`;
+4. selecionar `livro-vivo-beta-overview.json`;
+5. mapear `DS_PROMETHEUS` para `grafanacloud-livrovivo-prom`;
+6. mapear `DS_LOKI` para `grafanacloud-livrovivo-logs`;
+7. clicar em `Import`.
+
+O dashboard esperado chama `Livro Vivo Beta Overview` e concentra:
+
+- saude da API e do Alloy;
+- volume HTTP, status e latencia da API;
+- telemetria Android;
+- eventos criticos de login, legal, e-mail e templates;
+- logs recentes da API e Caddy.
+
+## 3.2. Validar Alloy no VPS
 
 O painel HTTP do Alloy fica exposto apenas no localhost do VPS:
 
@@ -149,7 +175,7 @@ curl -s http://127.0.0.1:12345/metrics | grep -E "alloy_build_info|alloy_compone
 
 Se aparecer erro de autenticacao nos logs do Alloy, revisar usuarios/tokens de Loki e Prometheus no `.env` do monitoramento.
 
-## 3.2. Validar API metrics antes do Grafana
+## 3.3. Validar API metrics antes do Grafana
 
 Antes de procurar no Grafana, confirmar no proprio VPS que a API ainda responde metricas:
 
@@ -167,7 +193,7 @@ curl -s -H "Authorization: Bearer <DJANGO_METRICS_BEARER_TOKEN>" \
   | grep -E "client_telemetry_event|screen_view|chapter_open|login_success|template_download"
 ```
 
-## 3.3. Validar Compose localmente
+## 3.4. Validar Compose localmente
 
 No repo, sem usar segredos reais:
 
@@ -199,9 +225,13 @@ docker run --rm \
   validate /etc/alloy/config.alloy
 ```
 
-## 3.4. Validar no Grafana
+## 3.5. Validar no Grafana
 
 Usar as consultas iniciais de `deploy/monitoring/GRAFANA_QUERIES.md`.
+
+Depois de importar `deploy/monitoring/dashboards/livro-vivo-beta-overview.json`,
+configurar `GRAFANA_BETA_DASHBOARD_URL=<url-final-do-dashboard>` no `.env` da API
+para exibir o atalho `Monitoramento beta` no Django Admin.
 
 ## 4. Backup operacional dos segredos
 

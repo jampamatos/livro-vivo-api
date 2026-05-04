@@ -125,6 +125,7 @@ Variaveis principais:
 - `SENTRY_DSN`
 - `SENTRY_ENVIRONMENT`
 - `SENTRY_TRACES_SAMPLE_RATE`
+- `GRAFANA_BETA_DASHBOARD_URL`: atalho opcional exibido no Admin para abrir o dashboard beta do Grafana
 - `DJANGO_STORAGE_PROVIDER`: `filesystem` | `s3`
 - `DJANGO_MEDIA_URL`
 - `DJANGO_MEDIA_ROOT`
@@ -183,6 +184,7 @@ Auth social:
 - `SOCIAL_AUTH_LINKEDIN_SCOPES`
 - `DJANGO_METRICS_ENABLED`
 - `DJANGO_METRICS_BEARER_TOKEN`
+- `GRAFANA_BETA_DASHBOARD_URL`
 - `CLIENT_TELEMETRY_ENABLED`
 - `CLIENT_TELEMETRY_SHARED_SECRET`
 - `CLIENT_TELEMETRY_MAX_BYTES`
@@ -431,6 +433,7 @@ Bootstrap versionado:
 
 - `deploy/monitoring/README.md`
 - `deploy/monitoring/GRAFANA_QUERIES.md`
+- `deploy/monitoring/dashboards/livro-vivo-beta-overview.json`
 - `deploy/monitoring/docker-compose.monitoring.example.yml`
 - `deploy/monitoring/config.alloy.example`
 - `deploy/monitoring/monitoring.env.example`
