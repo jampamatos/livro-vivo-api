@@ -37,6 +37,7 @@ Ultima revisao documental validada em `2026-04-30`:
 - `readyz/` deve retornar `database: ok` e `cache: ok`.
 - Google social auth exige `SOCIAL_AUTH_ALLOWED_REDIRECT_URIS` com app web e `livrovivo://auth/callback`.
 - SMTP transacional esta configurado no VPS via Brevo para reset de senha.
+- Inventario consolidado do beta: `docs/FONTE_DA_VERDADE_ESTADO_BETA_2026-05-04.md`.
 - Monitoramento oficial do beta deve seguir `docs/FONTE_DA_VERDADE_MONITORAMENTO_BETA_2026-04-30.md`.
 
 Checks de referencia antes de PR/deploy:
