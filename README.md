@@ -23,13 +23,13 @@ Implementado e ativo em `main`:
 - Comunidade com categorias, posts, comentarios, reports, follow/unfollow de posts, fila de moderacao, trilha de acoes e banimento por escopo.
 - Notificacoes com preferencias por usuario, `NotificationEvent`, `NotificationDispatch`, inbox in-app, registro de devices e dispatcher de push.
 - Health/readiness, `check --deploy`, logs estruturados com sanitizacao de segredos em query string e Sentry opcional.
-- Base documental para monitoramento beta com Grafana Cloud como painel unico.
+- Monitoramento beta com Grafana Cloud como painel unico, Alloy no VPS, dashboard operacional, atalho no Admin e alertas iniciais.
 - Hardening de avatar com validacao de formato/MIME, limite de tamanho, limite de dimensoes e recorte seguro.
 - Cadastro endurecido contra enumeracao de e-mail, registro estavel de dispositivo push por `installation_id` e limpeza de backlog antigo no registro do device atual.
 
 ## Status operacional beta
 
-Ultima revisao documental validada em `2026-04-30`:
+Ultima revisao documental validada em `2026-05-04`:
 
 - API beta publica: `https://api-178-104-197-8.nip.io`.
 - Django admin beta: `https://api-178-104-197-8.nip.io/admin/`.
@@ -37,6 +37,9 @@ Ultima revisao documental validada em `2026-04-30`:
 - `readyz/` deve retornar `database: ok` e `cache: ok`.
 - Google social auth exige `SOCIAL_AUTH_ALLOWED_REDIRECT_URIS` com app web e `livrovivo://auth/callback`.
 - SMTP transacional esta configurado no VPS via Brevo para reset de senha.
+- Grafana Cloud recebe metricas da API, metricas do VPS, logs da API/Caddy e telemetria Android.
+- Dashboard `Livro Vivo Beta Overview` esta importado no Grafana e linkado no Admin por `GRAFANA_BETA_DASHBOARD_URL`.
+- Primeira leva de 8 alertas Grafana esta ativa e em estado `Normal`.
 - Inventario consolidado do beta: `docs/FONTE_DA_VERDADE_ESTADO_BETA_2026-05-04.md`.
 - Monitoramento oficial do beta deve seguir `docs/FONTE_DA_VERDADE_MONITORAMENTO_BETA_2026-04-30.md`.
 
@@ -428,7 +431,25 @@ Decisao atual:
 - Grafana Cloud sera o painel unico do beta.
 - Grafana Alloy sera o agente oficial no VPS.
 - Sentry nao sera painel principal no beta; `SENTRY_DSN` deve continuar vazio salvo decisao explicita.
-- A primeira fase deve cobrir synthetic checks, logs da API/Caddy, metricas basicas da VPS e metricas HTTP/eventos criticos da API em `/metrics/`.
+- A operacao inicial cobre logs da API/Caddy, metricas basicas da VPS, metricas HTTP/eventos criticos da API em `/metrics/` e telemetria Android enviada pela API.
+
+Estado atual validado em `2026-05-04`:
+
+- Alloy roda no VPS em `/opt/livro-vivo-monitoring`, separado da stack da API.
+- Logs da API/Caddy chegam no datasource Loki `grafanacloud-livrovivo-logs`.
+- Metricas da API, do Alloy e do VPS chegam no datasource Prometheus `grafanacloud-livrovivo-prom`.
+- O dashboard `Livro Vivo Beta Overview` esta importado no Grafana.
+- O Admin exibe o atalho `Monitoramento beta` quando `GRAFANA_BETA_DASHBOARD_URL` esta configurado.
+- O contact point `Livro Vivo Ops` recebe os alertas do beta.
+- 8 alertas iniciais estao ativos e em estado `Normal`: API down, Alloy down, disco baixo, 5xx, logs de erro, p95 alto, memoria baixa e erros Android.
+- O alerta `Android telemetry silent` permanece apenas catalogado, sem ativacao padrao, para evitar falso positivo fora de janelas de teste.
+
+Ainda pendente:
+
+- criar Synthetic Monitoring para API, app web, LP e admin;
+- instrumentar app web e LP com Grafana Faro/Frontend Observability;
+- consolidar dashboard/alertas de custos e cotas;
+- definir rotina operacional diaria, escalation e registro de incidentes.
 
 Bootstrap versionado:
 
@@ -440,7 +461,7 @@ Bootstrap versionado:
 - `deploy/monitoring/config.alloy.example`
 - `deploy/monitoring/monitoring.env.example`
 
-Primeira implantacao recomendada:
+Bootstrap/reproducao em novo ambiente:
 
 1. criar stack `livro-vivo-beta` no Grafana Cloud;
 2. criar Synthetic Monitoring para API, app web, LP e admin;

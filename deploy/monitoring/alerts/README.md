@@ -10,6 +10,24 @@ catalogo para regras gerenciadas do Grafana.
 
 - `livro-vivo-beta-alerts.json`: catalogo operacional dos alertas beta.
 
+## Estado atual em 2026-05-04
+
+Foram criados no Grafana Cloud, com contact point `Livro Vivo Ops`, e validados
+em estado `Normal`:
+
+- `Livro Vivo beta API down`;
+- `Livro Vivo beta Alloy down`;
+- `Livro Vivo beta VPS root disk low`;
+- `Livro Vivo beta API 5xx detected`;
+- `Livro Vivo beta API error logs`;
+- `Livro Vivo beta API p95 latency high`;
+- `Livro Vivo beta VPS memory low`;
+- `Livro Vivo beta Android client errors`.
+
+O alerta `Livro Vivo beta Android telemetry silent` continua catalogado, mas nao
+deve ficar ativo por padrao enquanto nao houver uma janela de teste ou rotina
+operacional clara para evitar falso positivo.
+
 ## Premissas
 
 Antes de criar os alertas, confirmar que:

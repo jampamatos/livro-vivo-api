@@ -14,6 +14,24 @@ O objetivo deste pacote e coletar:
 
 Nao ha segredo versionado aqui. Credenciais reais do Grafana Cloud ficam somente no VPS.
 
+## Estado atual validado em 2026-05-04
+
+- Alloy esta rodando no VPS em `/opt/livro-vivo-monitoring`.
+- O endpoint local do Alloy responde `Alloy is ready.` e `All Alloy components are healthy.`.
+- Logs da API/Caddy aparecem no Loki em `grafanacloud-livrovivo-logs`.
+- Metricas da API, Alloy e VPS aparecem no Prometheus em `grafanacloud-livrovivo-prom`.
+- O dashboard `Livro Vivo Beta Overview` foi importado no Grafana Cloud.
+- O Admin Django tem o atalho `Monitoramento beta` via `GRAFANA_BETA_DASHBOARD_URL`.
+- O contact point `Livro Vivo Ops` esta configurado.
+- 8 alertas iniciais estao ativos e em estado `Normal`.
+
+Ainda pendente:
+
+- Synthetic Monitoring externo para API, app web, LP e admin.
+- Grafana Faro/Frontend Observability no app web e na LP.
+- Dashboard/alertas de custos e cotas.
+- Rotina formal de incidentes e escalation.
+
 ## Estado esperado antes desta fase
 
 No VPS da API:
@@ -258,6 +276,11 @@ Ordem recomendada:
 
 As regras de Android e telemetria silenciosa devem ser revisadas com mais
 cuidado para evitar alerta falso fora de janelas de teste.
+
+Estado validado em 2026-05-04:
+
+- ativos e `Normal`: API down, Alloy down, VPS root disk low, API 5xx detected, API error logs, API p95 latency high, VPS memory low e Android client errors;
+- catalogado, mas nao ativo por padrao: Android telemetry silent.
 
 ## 4. Backup operacional dos segredos
 

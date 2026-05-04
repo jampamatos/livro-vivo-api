@@ -2,7 +2,7 @@
 
 Data base: 2026-04-30
 Escopo: API, app web, app Android beta, LP, VPS, Cloudflare, e custos operacionais do beta.
-Status atual: plano de implementacao aprovado; Alloy implantado no VPS/Grafana Cloud validado manualmente; bootstrap operacional do Alloy, runbook de implantacao, consultas iniciais, dashboard beta e catalogo de alertas versionados em `deploy/monitoring/`; `/metrics/` da API, metricas de eventos criticos e endpoint de telemetria client-side instrumentados no codigo.
+Status atual: plano de implementacao aprovado; Alloy implantado no VPS e validado no Grafana Cloud; dashboard beta importado; atalho do Admin configurado; 8 alertas iniciais ativos e em estado `Normal`; bootstrap operacional do Alloy, runbook de implantacao, consultas iniciais, dashboard beta e catalogo de alertas versionados em `deploy/monitoring/`; `/metrics/` da API, metricas de eventos criticos e endpoint de telemetria client-side instrumentados no codigo.
 
 ## 1. Decisao principal
 
@@ -29,6 +29,25 @@ Motivo:
 - Grafana Cloud concentra logs, metricas, alertas, sinteticos e frontend observability no mesmo lugar.
 - O free tier atual e suficiente para o beta inicial se o volume for controlado.
 - Dividir erro em Sentry, infra em outro lugar e custo em planilha aumenta o risco de ninguem olhar tudo.
+
+Estado operacional validado em 2026-05-04:
+
+- stack Grafana Cloud `livro-vivo-beta` criada e recebendo dados;
+- Alloy rodando no VPS em `/opt/livro-vivo-monitoring`;
+- API, Alloy e VPS visiveis no datasource Prometheus `grafanacloud-livrovivo-prom`;
+- logs da API/Caddy visiveis no datasource Loki `grafanacloud-livrovivo-logs`;
+- dashboard `Livro Vivo Beta Overview` importado;
+- Admin Django exibe o atalho `Monitoramento beta` via `GRAFANA_BETA_DASHBOARD_URL`;
+- contact point `Livro Vivo Ops` configurado para alertas do beta;
+- 8 alertas iniciais configurados e em estado `Normal`;
+- alerta `Android telemetry silent` catalogado, mas nao ativo por padrao.
+
+Ainda pendente no monitoramento:
+
+- criar Synthetic Monitoring externo para API, app web, LP e admin;
+- instrumentar app web e LP com Grafana Faro/Frontend Observability;
+- consolidar dashboard/alertas de custos e cotas;
+- formalizar escalation e rotina de incidentes.
 
 Referencias oficiais consultadas:
 
@@ -60,7 +79,7 @@ Ferramenta:
 
 Dashboards obrigatorios:
 
-- `Livro Vivo - Overview Beta`
+- `Livro Vivo Beta Overview`
 - `Livro Vivo - API e VPS`
 - `Livro Vivo - Experiencia do Usuario`
 - `Livro Vivo - Android Beta`
@@ -269,7 +288,7 @@ Motivo:
 
 ## 4. Dashboards obrigatorios
 
-### `Livro Vivo - Overview Beta`
+### `Livro Vivo Beta Overview`
 
 Painel de abertura diaria.
 
@@ -541,16 +560,22 @@ Tarefas:
 3. Configurar Synthetic Monitoring dos 5 endpoints obrigatorios.
 4. Instalar Grafana Alloy no VPS.
 5. Enviar logs Docker da API e Caddy para Loki.
-6. Criar dashboard `Overview Beta`.
+6. Criar dashboard `Livro Vivo Beta Overview`.
 7. Criar alertas criticos de disponibilidade.
+
+Estado em 2026-05-04:
+
+- Grafana Cloud, stack `livro-vivo-beta`, Alloy, logs, metricas e dashboard inicial estao ativos;
+- 8 alertas iniciais estao ativos e em estado `Normal`;
+- Synthetic Monitoring externo ainda esta pendente.
 
 Pronto quando:
 
-- Grafana mostra API/LP/app web online;
+- Grafana mostra API e Alloy online;
 - logs da API aparecem por `request_id`;
 - dashboard beta mostra API e Alloy como `UP`;
 - catalogo de alertas criticos esta versionado em `deploy/monitoring/alerts/`;
-- alerta dispara se `/readyz/` falhar.
+- alertas ativos estao em estado `Normal`.
 
 ### Fase 2: metricas de infraestrutura
 
@@ -587,11 +612,17 @@ Implementado no codigo:
 - `livro_vivo_api_http_requests_total`
 - `livro_vivo_api_http_request_duration_seconds`
 - `livro_vivo_api_domain_events_total` para auth, callback social, aceite legal, reset de senha, e-mail transacional e download de pecas.
+- exposicao protegida de `/metrics/` com `DJANGO_METRICS_BEARER_TOKEN`.
+
+Publicado/validado em 2026-05-04:
+
+- metricas `livro_vivo_api_*` chegam ao Grafana Cloud via Alloy;
+- dashboard `Livro Vivo Beta Overview` mostra requests, 5xx, latencia e eventos Android/API;
+- eventos Android `app_open`, `screen_view` e `chapter_open` foram vistos no Grafana.
 
 Pendente:
 
-- publicar a stack no VPS/Grafana Cloud;
-- montar o dashboard `Experiencia do Usuario`;
+- montar dashboard dedicado `Experiencia do Usuario`, se o Overview deixar de ser suficiente;
 - adicionar metricas de tamanho de `media/` e uso de storage do banco.
 
 Pronto quando:
@@ -639,11 +670,18 @@ Implementado no codigo da API:
 - log estruturado `client_telemetry_event`;
 - metrica `livro_vivo_api_domain_events_total{event="client_telemetry_event", ...}`.
 
+Publicado/validado em 2026-05-04:
+
+- cliente de telemetria Android ativo na build beta;
+- API recebe eventos reais do APK em `POST /telemetry/client-events/`;
+- Grafana mostra eventos Android no dashboard beta;
+- alerta `Livro Vivo beta Android client errors` ativo e em estado `Normal`.
+
 Pendente:
 
-- criar o cliente de telemetria no app Android;
-- enviar os eventos obrigatorios reais do APK;
-- montar o dashboard `Android Beta`.
+- capturar mais tipos de erro do app conforme aparecerem no beta;
+- montar dashboard dedicado `Android Beta`, se o Overview deixar de ser suficiente;
+- decidir se o alerta `Android telemetry silent` deve ser ativado apenas em janelas de teste.
 
 Pronto quando:
 
@@ -672,7 +710,7 @@ Pronto quando:
 
 ### Diaria durante beta fechado
 
-Abrir `Livro Vivo - Overview Beta` e conferir:
+Abrir `Livro Vivo Beta Overview` e conferir:
 
 - API readiness;
 - 5xx;
@@ -734,31 +772,41 @@ Nao ampliar beta se:
 
 Ordem obrigatoria:
 
-1. Grafana Cloud + Synthetic Monitoring.
+1. Grafana Cloud.
 2. Alloy no VPS para logs.
 3. Dashboard Overview.
-4. Alertas criticos.
+4. Alertas criticos iniciais.
 5. Metricas VPS.
 6. Endpoint `/metrics/` da API.
 7. Eventos customizados da API.
-8. Faro no app web.
-9. Faro na LP.
-10. Endpoint `/telemetry/client-events/` da API.
-11. Telemetria Android.
-12. Dashboard de custos/cotas.
+8. Endpoint `/telemetry/client-events/` da API.
+9. Telemetria Android.
+10. Synthetic Monitoring.
+11. Faro no app web.
+12. Faro na LP.
+13. Dashboard de custos/cotas.
 
-Nao iniciar Sentry antes do item 12.
+Concluido ate 2026-05-04:
+
+- itens 1 a 9.
+
+Ainda pendente:
+
+- itens 10 a 13.
+
+Nao iniciar Sentry antes de concluir a lista acima e decidir explicitamente que ele agrega valor alem do Grafana Cloud.
 
 ## 13. Definicao de pronto do monitoramento beta
 
 Monitoramento beta esta pronto quando:
 
 - Grafana e a primeira tela operacional do dia;
-- API, app web, LP e VPS aparecem em um dashboard;
+- API, Alloy, VPS e Android beta aparecem em um dashboard;
 - erros da API chegam com `request_id`;
 - falhas de login e social login aparecem como grafico;
-- app Android envia pelo menos `app_open`, `login_success`, `login_failed`, `unhandled_error`;
+- app Android envia eventos reais para a API e para o Grafana;
 - existe alerta para API down;
 - existe alerta para disco alto;
-- existe alerta para custo/cota;
+- existe alerta para Alloy down, 5xx, erro em log, p95 alto, memoria baixa e erro Android;
+- existe alerta ou rotina para custo/cota;
 - existe rotina documentada de incidente.
