@@ -28,6 +28,17 @@ O alerta `Livro Vivo beta Android telemetry silent` continua catalogado, mas nao
 deve ficar ativo por padrao enquanto nao houver uma janela de teste ou rotina
 operacional clara para evitar falso positivo.
 
+## Alertas adicionados para Synthetic Monitoring
+
+Depois de criar os checks de `deploy/monitoring/synthetics/`, criar tambem:
+
+- `Livro Vivo beta public API health down`;
+- `Livro Vivo beta public API readiness down`.
+
+Esses dois alertas usam `probe_success` do Grafana Synthetic Monitoring e testam
+a API de fora do VPS. Eles complementam `Livro Vivo beta API down`, que mede o
+scrape interno feito pelo Alloy.
+
 ## Premissas
 
 Antes de criar os alertas, confirmar que:
@@ -91,10 +102,12 @@ horario de homologacao.
 Criar primeiro:
 
 1. `Livro Vivo beta API down`;
-2. `Livro Vivo beta Alloy down`;
-3. `Livro Vivo beta VPS root disk low`;
-4. `Livro Vivo beta API 5xx detected`;
-5. `Livro Vivo beta API error logs`.
+2. `Livro Vivo beta public API health down`, depois que o Synthetic Monitoring existir;
+3. `Livro Vivo beta public API readiness down`, depois que o Synthetic Monitoring existir;
+4. `Livro Vivo beta Alloy down`;
+5. `Livro Vivo beta VPS root disk low`;
+6. `Livro Vivo beta API 5xx detected`;
+7. `Livro Vivo beta API error logs`.
 
 Depois criar:
 
@@ -112,6 +125,8 @@ Validar cada regra pela tela de preview do Grafana. O esperado para o estado
 normal do beta:
 
 - API down: `Normal`;
+- public API health down: `Normal`, depois que o check existir;
+- public API readiness down: `Normal`, depois que o check existir;
 - Alloy down: `Normal`;
 - disco baixo: `Normal`;
 - memoria baixa: `Normal`;

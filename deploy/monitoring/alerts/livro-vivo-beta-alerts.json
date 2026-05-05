@@ -23,6 +23,36 @@
       "runbook": "Abrir o VPS, rodar `cd /opt/livro-vivo-api && docker compose ps`, verificar health da API e logs do container `api`."
     },
     {
+      "uid": "livro-vivo-beta-public-api-health-down",
+      "title": "Livro Vivo beta public API health down",
+      "datasource": "prometheus",
+      "enabled_by_default": true,
+      "severity": "critical",
+      "service": "api",
+      "for": "2m",
+      "query": "min(probe_success{job=\"livro-vivo-beta-api-health\"})",
+      "condition": "last < 1",
+      "no_data_state": "Alerting",
+      "exec_error_state": "Error",
+      "summary": "O healthcheck publico da API beta falhou no Synthetic Monitoring.",
+      "runbook": "Abrir o dashboard beta, comparar Synthetic Monitoring com `API Up`, testar `curl -i https://api-178-104-197-8.nip.io/health/` e revisar Caddy/API no VPS."
+    },
+    {
+      "uid": "livro-vivo-beta-public-api-readyz-down",
+      "title": "Livro Vivo beta public API readiness down",
+      "datasource": "prometheus",
+      "enabled_by_default": true,
+      "severity": "critical",
+      "service": "api",
+      "for": "2m",
+      "query": "min(probe_success{job=\"livro-vivo-beta-api-readyz\"})",
+      "condition": "last < 1",
+      "no_data_state": "Alerting",
+      "exec_error_state": "Error",
+      "summary": "O readiness publico da API beta falhou no Synthetic Monitoring.",
+      "runbook": "Abrir o dashboard beta, comparar Synthetic Monitoring com `API Up`, testar `curl -i https://api-178-104-197-8.nip.io/readyz/` e revisar banco/cache/API no VPS."
+    },
+    {
       "uid": "livro-vivo-beta-alloy-down",
       "title": "Livro Vivo beta Alloy down",
       "datasource": "prometheus",

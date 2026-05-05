@@ -20,8 +20,17 @@ No dashboard `Livro Vivo Beta Overview`, confirmar:
 
 - `API Up` com valor `1`;
 - `Alloy Up` com valor `1`;
+- secao `Synthetic Monitoring` com os checks externos em `UP`, depois que
+  `deploy/monitoring/synthetics/` for configurado no Grafana Cloud;
 - grafico `Android telemetry events by type` com eventos como `app_open`, `screen_view` e `chapter_open`;
 - painel `Recent API logs` com logs da API.
+
+Se a secao `Synthetic Monitoring` ficar vazia, isso significa que os checks
+externos ainda nao foram criados ou ainda nao enviaram metricas. Validar com:
+
+```promql
+sm_check_info{label_project="livro-vivo", label_environment="beta"}
+```
 
 Se os paineis de telemetria Android ficarem vazios, abrir o APK beta no celular,
 navegar por algumas telas e aguardar 1 a 2 minutos.
