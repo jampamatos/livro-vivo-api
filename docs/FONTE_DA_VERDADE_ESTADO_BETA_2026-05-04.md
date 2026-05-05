@@ -24,6 +24,8 @@ Documentos relacionados:
 - `../deploy/monitoring/dashboards/README.md`
 - `../deploy/monitoring/alerts/README.md`
 - `../deploy/monitoring/alerts/livro-vivo-beta-alerts.json`
+- `../deploy/monitoring/synthetics/README.md`
+- `../deploy/monitoring/synthetics/livro-vivo-beta-synthetic-checks.json`
 
 ## 2. Publicacoes e URLs atuais
 
@@ -530,6 +532,7 @@ Implementado/versionado:
 - exemplo de configuracao Grafana Alloy
 - dashboard beta versionado
 - catalogo de alertas versionado
+- catalogo e runbook de Synthetic Monitoring versionados
 - consultas Grafana/Loki/Prometheus documentadas
 - endpoint `/metrics/` na API
 - metricas de eventos criticos na API
@@ -556,6 +559,17 @@ Implantado/validado no ambiente beta:
   - `Livro Vivo beta API p95 latency high`
   - `Livro Vivo beta VPS memory low`
   - `Livro Vivo beta Android client errors`
+- 5 checks externos de Synthetic Monitoring criados e `UP`:
+  - `livro-vivo-beta-api-health`
+  - `livro-vivo-beta-api-readyz`
+  - `livro-vivo-beta-app-web-home`
+  - `livro-vivo-beta-lp-home`
+  - `livro-vivo-beta-django-admin`
+
+Alertas sinteticos ativos e em estado `Normal`:
+
+- `Livro Vivo beta public API health down`
+- `Livro Vivo beta public API readiness down`
 
 Alerta catalogado, mas ainda nao ativo por padrao:
 
@@ -563,7 +577,6 @@ Alerta catalogado, mas ainda nao ativo por padrao:
 
 Ainda planejado:
 
-- Synthetic Monitoring para API, app web, LP e admin
 - Grafana Faro/Frontend Observability para app web e LP
 - dashboard/alertas de custos e cotas
 - rotina formal de incidentes e escalation
@@ -588,7 +601,7 @@ Antes da producao final:
 - validar rotina diaria de olhar Grafana
 - consolidar escalation, horarios de resposta e registro de incidentes
 - revisar se o alerta `Android telemetry silent` deve ser ativado em janelas controladas
-- criar Synthetic Monitoring externo para endpoints publicos
+- validar periodicamente os checks externos de Synthetic Monitoring
 - instrumentar app web e LP com Faro se o beta exigir visibilidade de navegador
 - revisar retencao e sampling
 - revisar dados pessoais em telemetria

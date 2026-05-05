@@ -48,6 +48,30 @@ node_memory_MemAvailable_bytes
 node_filesystem_avail_bytes{mountpoint="/"}
 ```
 
+Confirmar que os checks sinteticos foram criados:
+
+```promql
+sm_check_info{label_project="livro-vivo", label_environment="beta"}
+```
+
+Confirmar sucesso dos checks sinteticos:
+
+```promql
+min by (job, instance) (probe_success{job=~"livro-vivo-beta-.*"})
+```
+
+Confirmar status HTTP visto de fora do VPS:
+
+```promql
+max by (job, instance) (probe_http_status_code{job=~"livro-vivo-beta-.*"})
+```
+
+Confirmar latencia externa por check:
+
+```promql
+avg by (job) (probe_duration_seconds{job=~"livro-vivo-beta-.*"})
+```
+
 ## Logs / LogQL
 
 Logs da API:

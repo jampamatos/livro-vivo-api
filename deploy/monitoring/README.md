@@ -24,10 +24,12 @@ Nao ha segredo versionado aqui. Credenciais reais do Grafana Cloud ficam somente
 - O Admin Django tem o atalho `Monitoramento beta` via `GRAFANA_BETA_DASHBOARD_URL`.
 - O contact point `Livro Vivo Ops` esta configurado.
 - 8 alertas iniciais estao ativos e em estado `Normal`.
+- 5 checks externos de Synthetic Monitoring estao criados e `UP`.
+- 2 alertas sinteticos de API publica estao ativos e em estado `Normal`.
+- Catalogo/runbook de Synthetic Monitoring esta versionado em `deploy/monitoring/synthetics/`.
 
 Ainda pendente:
 
-- Synthetic Monitoring externo para API, app web, LP e admin.
 - Grafana Faro/Frontend Observability no app web e na LP.
 - Dashboard/alertas de custos e cotas.
 - Rotina formal de incidentes e escalation.
@@ -64,6 +66,18 @@ Criar tambem os Synthetic Monitoring checks definidos em `docs/FONTE_DA_VERDADE_
 - App web home: `GET https://livro-vivo-app.jampa-matos.workers.dev/`
 - LP home: `GET https://livro-vivo-lp.jampa-matos.workers.dev/`
 - Django admin: `GET https://api-178-104-197-8.nip.io/admin/`
+
+Runbook detalhado:
+
+```text
+deploy/monitoring/synthetics/README.md
+```
+
+Catalogo dos checks:
+
+```text
+deploy/monitoring/synthetics/livro-vivo-beta-synthetic-checks.json
+```
 
 ## 2. Preparar arquivos no VPS
 
@@ -281,6 +295,28 @@ Estado validado em 2026-05-04:
 
 - ativos e `Normal`: API down, Alloy down, VPS root disk low, API 5xx detected, API error logs, API p95 latency high, VPS memory low e Android client errors;
 - catalogado, mas nao ativo por padrao: Android telemetry silent.
+
+## 3.7. Configurar Synthetic Monitoring externo
+
+Depois de validar Alloy, dashboard e alertas internos, criar checks HTTP
+externos no Grafana Cloud usando:
+
+```text
+deploy/monitoring/synthetics/livro-vivo-beta-synthetic-checks.json
+```
+
+Runbook:
+
+```text
+deploy/monitoring/synthetics/README.md
+```
+
+Depois que os checks aparecerem em `sm_check_info`, criar os alertas:
+
+- `Livro Vivo beta public API health down`
+- `Livro Vivo beta public API readiness down`
+
+Esses alertas estao no mesmo catalogo `deploy/monitoring/alerts/livro-vivo-beta-alerts.json`.
 
 ## 4. Backup operacional dos segredos
 

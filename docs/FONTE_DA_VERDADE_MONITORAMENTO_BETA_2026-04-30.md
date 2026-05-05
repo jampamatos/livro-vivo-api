@@ -2,7 +2,7 @@
 
 Data base: 2026-04-30
 Escopo: API, app web, app Android beta, LP, VPS, Cloudflare, e custos operacionais do beta.
-Status atual: plano de implementacao aprovado; Alloy implantado no VPS e validado no Grafana Cloud; dashboard beta importado; atalho do Admin configurado; 8 alertas iniciais ativos e em estado `Normal`; bootstrap operacional do Alloy, runbook de implantacao, consultas iniciais, dashboard beta e catalogo de alertas versionados em `deploy/monitoring/`; `/metrics/` da API, metricas de eventos criticos e endpoint de telemetria client-side instrumentados no codigo.
+Status atual: plano de implementacao aprovado; Alloy implantado no VPS e validado no Grafana Cloud; dashboard beta importado; atalho do Admin configurado; 8 alertas iniciais + 2 alertas sinteticos de API publica ativos e em estado `Normal`; 5 checks externos de Synthetic Monitoring criados e `UP`; bootstrap operacional do Alloy, runbook de implantacao, consultas iniciais, dashboard beta, catalogo de alertas e catalogo de checks sinteticos versionados em `deploy/monitoring/`; `/metrics/` da API, metricas de eventos criticos e endpoint de telemetria client-side instrumentados no codigo.
 
 ## 1. Decisao principal
 
@@ -40,11 +40,13 @@ Estado operacional validado em 2026-05-04:
 - Admin Django exibe o atalho `Monitoramento beta` via `GRAFANA_BETA_DASHBOARD_URL`;
 - contact point `Livro Vivo Ops` configurado para alertas do beta;
 - 8 alertas iniciais configurados e em estado `Normal`;
+- 2 alertas sinteticos de API publica configurados e em estado `Normal`;
+- 5 checks externos de Synthetic Monitoring criados e `UP`;
+- catalogo/runbook de Synthetic Monitoring versionado em `deploy/monitoring/synthetics/`;
 - alerta `Android telemetry silent` catalogado, mas nao ativo por padrao.
 
 Ainda pendente no monitoramento:
 
-- criar Synthetic Monitoring externo para API, app web, LP e admin;
 - instrumentar app web e LP com Grafana Faro/Frontend Observability;
 - consolidar dashboard/alertas de custos e cotas;
 - formalizar escalation e rotina de incidentes.
@@ -563,11 +565,13 @@ Tarefas:
 6. Criar dashboard `Livro Vivo Beta Overview`.
 7. Criar alertas criticos de disponibilidade.
 
-Estado em 2026-05-04:
+Estado em 2026-05-05:
 
 - Grafana Cloud, stack `livro-vivo-beta`, Alloy, logs, metricas e dashboard inicial estao ativos;
 - 8 alertas iniciais estao ativos e em estado `Normal`;
-- Synthetic Monitoring externo ainda esta pendente.
+- 2 alertas sinteticos de API publica estao ativos e em estado `Normal`;
+- catalogo/runbook de Synthetic Monitoring esta versionado;
+- 5 checks externos de Synthetic Monitoring estao criados e `UP`.
 
 Pronto quando:
 
@@ -786,13 +790,14 @@ Ordem obrigatoria:
 12. Faro na LP.
 13. Dashboard de custos/cotas.
 
-Concluido ate 2026-05-04:
+Concluido ate 2026-05-05:
 
 - itens 1 a 9.
+- item 10 completo: catalogo, runbook, queries, dashboard, checks reais e alertas de API health/readiness.
 
 Ainda pendente:
 
-- itens 10 a 13.
+- itens 11 a 13.
 
 Nao iniciar Sentry antes de concluir a lista acima e decidir explicitamente que ele agrega valor alem do Grafana Cloud.
 

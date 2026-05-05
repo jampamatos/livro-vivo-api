@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "project": "livro-vivo",
+  "environment": "beta",
+  "provider": "grafana-cloud-synthetic-monitoring",
+  "defaults": {
+    "type": "http",
+    "method": "GET",
+    "timeout_seconds": 10,
+    "follow_redirects": true,
+    "publish_full_metrics": false,
+    "labels": {
+      "project": "livro-vivo",
+      "environment": "beta",
+      "component": "synthetic"
+    }
+  },
+  "checks": [
+    {
+      "job_name": "livro-vivo-beta-api-health",
+      "target": "https://api-178-104-197-8.nip.io/health/",
+      "frequency_seconds": 60,
+      "service": "api",
+      "expected_status_codes": [200],
+      "body_regex_must_match": "\"status\""
+    },
+    {
+      "job_name": "livro-vivo-beta-api-readyz",
+      "target": "https://api-178-104-197-8.nip.io/readyz/",
+      "frequency_seconds": 60,
+      "service": "api",
+      "expected_status_codes": [200],
+      "body_regex_must_match": "\"database\"|\"cache\""
+    },
+    {
+      "job_name": "livro-vivo-beta-app-web-home",
+      "target": "https://livro-vivo-app.jampa-matos.workers.dev/",
+      "frequency_seconds": 300,
+      "service": "app-web",
+      "expected_status_codes": [200]
+    },
+    {
+      "job_name": "livro-vivo-beta-lp-home",
+      "target": "https://livro-vivo-lp.jampa-matos.workers.dev/",
+      "frequency_seconds": 300,
+      "service": "lp",
+      "expected_status_codes": [200]
+    },
+    {
+      "job_name": "livro-vivo-beta-django-admin",
+      "target": "https://api-178-104-197-8.nip.io/admin/",
+      "frequency_seconds": 300,
+      "service": "admin",
+      "expected_status_codes": [200]
+    }
+  ]
+}

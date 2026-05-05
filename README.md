@@ -39,7 +39,7 @@ Ultima revisao documental validada em `2026-05-04`:
 - SMTP transacional esta configurado no VPS via Brevo para reset de senha.
 - Grafana Cloud recebe metricas da API, metricas do VPS, logs da API/Caddy e telemetria Android.
 - Dashboard `Livro Vivo Beta Overview` esta importado no Grafana e linkado no Admin por `GRAFANA_BETA_DASHBOARD_URL`.
-- Primeira leva de 8 alertas Grafana esta ativa e em estado `Normal`.
+- Primeira leva de 8 alertas Grafana + 2 alertas sinteticos de API publica estao ativos e em estado `Normal`.
 - Inventario consolidado do beta: `docs/FONTE_DA_VERDADE_ESTADO_BETA_2026-05-04.md`.
 - Monitoramento oficial do beta deve seguir `docs/FONTE_DA_VERDADE_MONITORAMENTO_BETA_2026-04-30.md`.
 
@@ -443,10 +443,12 @@ Estado atual validado em `2026-05-04`:
 - O contact point `Livro Vivo Ops` recebe os alertas do beta.
 - 8 alertas iniciais estao ativos e em estado `Normal`: API down, Alloy down, disco baixo, 5xx, logs de erro, p95 alto, memoria baixa e erros Android.
 - O alerta `Android telemetry silent` permanece apenas catalogado, sem ativacao padrao, para evitar falso positivo fora de janelas de teste.
+- 5 checks externos de Synthetic Monitoring estao criados e `UP`: API health, API readiness, app web home, LP home e Django admin.
+- 2 alertas sinteticos de API publica estao ativos e em estado `Normal`: health down e readiness down.
+- Catalogo e runbook para Synthetic Monitoring estao versionados em `deploy/monitoring/synthetics/`.
 
 Ainda pendente:
 
-- criar Synthetic Monitoring para API, app web, LP e admin;
 - instrumentar app web e LP com Grafana Faro/Frontend Observability;
 - consolidar dashboard/alertas de custos e cotas;
 - definir rotina operacional diaria, escalation e registro de incidentes.
@@ -457,6 +459,7 @@ Bootstrap versionado:
 - `deploy/monitoring/GRAFANA_QUERIES.md`
 - `deploy/monitoring/dashboards/livro-vivo-beta-overview.json`
 - `deploy/monitoring/alerts/livro-vivo-beta-alerts.json`
+- `deploy/monitoring/synthetics/livro-vivo-beta-synthetic-checks.json`
 - `deploy/monitoring/docker-compose.monitoring.example.yml`
 - `deploy/monitoring/config.alloy.example`
 - `deploy/monitoring/monitoring.env.example`
